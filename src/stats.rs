@@ -163,57 +163,6 @@ impl Default for SessionStats {
     }
 }
 
-/// Scoring for target challenge mode.
-#[derive(Debug, Clone, Copy)]
-pub struct TargetScore {
-    /// Which ring the ball landed in (0 = bullseye, increasing = outer rings).
-    /// `None` if the ball missed all rings.
-    pub ring: Option<u32>,
-    /// Points awarded for this shot.
-    pub points: u32,
-    /// Distance from target center in yards.
-    pub distance_yards: f64,
-}
-
-/// Score a shot against a target.
-///
-/// `target_x_m`, `target_z_m`: target center in meters.
-/// `ring_spacing_m`: distance between rings in meters.
-/// `num_rings`: number of scoring rings (including bullseye).
-/// `landing_x_m`, `landing_z_m`: where the ball landed in meters.
-#[must_use]
-pub fn score_target(
-    target_x_m: f64,
-    target_z_m: f64,
-    ring_spacing_m: f64,
-    num_rings: u32,
-    landing_x_m: f64,
-    landing_z_m: f64,
-) -> TargetScore {
-    let dx = landing_x_m - target_x_m;
-    let dz = landing_z_m - target_z_m;
-    let distance_m = (dx * dx + dz * dz).sqrt();
-    let distance_yards = units::meters_to_yards(distance_m);
-
-    let ring_index = (distance_m / ring_spacing_m) as u32;
-
-    if ring_index >= num_rings {
-        return TargetScore {
-            ring: None,
-            points: 0,
-            distance_yards,
-        };
-    }
-
-    let points = (num_rings - ring_index) * 10;
-
-    TargetScore {
-        ring: Some(ring_index),
-        points,
-        distance_yards,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,28 +215,6 @@ mod tests {
         assert_eq!(session.shot_count(), 2);
         assert!((session.avg_carry_yards().unwrap() - 155.0).abs() < 1e-10);
         assert!((session.avg_lateral_yards().unwrap() - 0.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn score_bullseye() {
-        let score = score_target(100.0, 0.0, 5.0, 5, 100.0, 0.0);
-        assert_eq!(score.ring, Some(0));
-        assert_eq!(score.points, 50);
-        assert!(score.distance_yards < 0.1);
-    }
-
-    #[test]
-    fn score_outer_ring() {
-        let score = score_target(100.0, 0.0, 5.0, 5, 117.0, 0.0);
-        assert_eq!(score.ring, Some(3)); // 17m / 5m = ring 3
-        assert_eq!(score.points, 20); // (5 - 3) * 10
-    }
-
-    #[test]
-    fn score_miss() {
-        let score = score_target(100.0, 0.0, 5.0, 5, 200.0, 0.0);
-        assert_eq!(score.ring, None);
-        assert_eq!(score.points, 0);
     }
 
     #[test]
