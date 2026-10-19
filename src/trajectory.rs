@@ -511,10 +511,9 @@ mod tests {
     //  CARRY DISTANCE — published Trackman / PING data (sea level)
     // ══════════════════════════════════════════════════════════════════
     //
-    // Tolerance: ±10 yards. Wider than measurement error (~±2 yds) because
-    // our model still uses Bearman & Harvey coefficients. These tests define
-    // the ATTD targets — when we switch to the patent curve-fit (US6186002B1),
-    // they should pass.
+    // Tolerance: ±10 yards. Wider than measurement error (~±2 yds) to absorb
+    // differences in temperature normalization and source data across
+    // publications; the per-club fit in docs/AERO.md is tighter.
 
     #[test]
     fn carry_pga_driver() {
@@ -569,8 +568,8 @@ mod tests {
     fn carry_trackman_pw() {
         // Source: Trackman PGA Tour Averages (pre-2024, multiple secondary sources)
         // ~102 mph ball speed, ~25° launch, ~9300 rpm backspin → 142 yds carry
-        // Wider tolerance: PW is a known outlier in the current model — subcritical
-        // lift (cl_sub=0.050) limits late-flight carry. See docs/AERO.md.
+        // Wider tolerance: PW is the model's coldest club, a residual limit of
+        // the single-sigmoid Cd/Cl model. See docs/AERO.md.
         let r = flight(102.0, 25.0, 9300.0, 0.0);
         assert_carry(&r, 142.0, 12.0, "Trackman PGA PW");
     }
@@ -589,8 +588,8 @@ mod tests {
         let sea = flight_at(&driver, &Environment::SEA_LEVEL);
         let denver = flight_at(&driver, &Environment::DENVER);
         let gain_pct = (denver.carry_yards - sea.carry_yards) / sea.carry_yards * 100.0;
-        // The 2026-07 joint calibration (saturating spin drag, cd_super=0.186)
-        // reproduces the published altitude response: model ~6-7% vs Titleist ~6.1%.
+        // The TOUR model (saturating spin drag, cd_super=0.186) reproduces the
+        // published altitude response: model ~7% vs Titleist ~6.1%.
         assert!(
             gain_pct > 4.0 && gain_pct < 9.0,
             "Denver gain {gain_pct:.1}%, expected ~6.1% (Titleist: elevation_ft × 0.00116)"
@@ -647,10 +646,9 @@ mod tests {
         let r_hot = flight_at(&driver, &hot);
         let r_cold = flight_at(&driver, &cold);
         let delta = r_hot.carry_yards - r_cold.carry_yards;
-        // Published: ~8 yds per 40°F. We only model air density (not ball COR).
-        // Sharp drag crisis (re_width=125) reduces temperature sensitivity.
-        // Real ~8y delta includes ball COR changes; our density-only model shows ~1-2y.
-        // Known limitation — see docs/AERO.md.
+        // Published: ~8 yds per 40°F, which includes ball COR changes. The model
+        // responds to air density only (ball COR is unmodeled) and gives ~9 yds.
+        // See docs/AERO.md.
         assert!(
             delta > 0.5 && delta < 16.0,
             "hot-cold delta {delta:.1} yds, expected ~8 yds (WeatherWorks)"
@@ -709,8 +707,8 @@ mod tests {
     //
     // Historical context: the USGA distance insight report (2020) attributes
     // roughly 30 yards of driver carry increase since 1995 to ball technology.
-    // Our model reproduces this: TOUR driver ≈ 282 yds, PATENT ≈ 248 yds,
-    // Δ ≈ 34 yards.
+    // The model reproduces this: at 15°C sea level, TOUR driver ≈ 277 yds,
+    // PATENT ≈ 248 yds, Δ ≈ 29 yards.
 
     const PATENT_BALL: BallModel = BallModel::PATENT_1997;
 
@@ -729,7 +727,8 @@ mod tests {
     fn era_driver_carry_gap() {
         // Driver: 171 mph, 10.9°, 2686 rpm (Trackman PGA 2024 conditions).
         //
-        // Modern tour ball: ~282 yds (validated above against Trackman data).
+        // Modern tour ball: ~277 yds at 15°C sea level (validated above against
+        // Trackman data).
         // 1990s patent ball: expected ~245-255 yds — the ~30 yard gap matches
         // USGA Distance Insights (2020) findings on ball technology contribution.
         //
@@ -780,11 +779,10 @@ mod tests {
         // At this SR, spin-dependent drag is large: CD_SPIN × 0.46 adds ~0.07-0.09
         // to Cd in both models.
         //
-        // With cl_sub=0.085 (modern) vs cl_sub=0.12 (patent), the modern ball
-        // actually has LESS subcritical lift than the 1990s ball. Combined with
-        // cd_sub=0.290 (modern) vs cd_sub=0.19 (patent), the modern ball has more
-        // subcritical drag. At PW landing speeds (Re≈45-60k), both effects reduce
-        // carry. The era gap is very small for wedges.
+        // With cl_sub=0.203 (modern) vs cl_sub=0.12 (patent), the modern ball has
+        // more subcritical lift than the 1990s ball, but also more subcritical
+        // drag (cd_sub=0.295 vs 0.19). At PW landing speeds (Re≈45-60k) the two
+        // effects nearly cancel, so the era gap is very small for wedges.
         //
         // Expected: ~0-15 yard gap (may be near zero).
         let modern = flight(102.0, 25.0, 9300.0, 0.0);

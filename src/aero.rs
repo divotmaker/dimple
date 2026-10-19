@@ -111,8 +111,7 @@ impl BallModel {
     /// The high-slope/early-cap form (cd_spin=0.85, sr_sat=0.25) lets high-spin
     /// irons carry heavy late-flight drag (steep 47-52° descent matching
     /// Trackman) without collapsing subcritical lift — cl_sub sits at a
-    /// physically plausible 0.203 (wind tunnel: 0.15-0.28) instead of the 0.050
-    /// the linear-spin-drag model demanded.
+    /// physically plausible 0.203 (wind tunnel: 0.15-0.28).
     ///
     /// Aerodynamic sources:
     /// - Li, Tsubokura & Tsunoda (2017), Flow Turb. Combust. 99(3) — LES CFD at
@@ -151,13 +150,14 @@ impl BallModel {
     /// V=100–250 ft/s, spin=19–47 rev/s. 7 data points, RMSE: Cd=0.008, Cl=0.006.
     ///
     /// Key differences from modern balls:
-    /// - **Base Cd 40% higher** (0.29 vs 0.205): 1990s dimple patterns created more drag.
+    /// - **Base Cd much higher** (0.29 vs 0.186 + spin term): 1990s dimple patterns
+    ///   created more drag.
     ///   This is the dominant factor — accounts for ~80% of the carry distance gap.
-    /// - **Cl saturates almost instantly** (sr_scale=0.01 vs 0.08): patent data shows
+    /// - **Cl saturates almost instantly** (sr_scale=0.01 vs 0.115): patent data shows
     ///   nearly constant Cl≈0.28 across all SR values, meaning lift was independent of
     ///   spin ratio. Modern balls have spin-sensitive lift (low Cl at low SR, high Cl
     ///   at high SR), rewarding the "high launch, low spin" strategy.
-    /// - **Lower subcritical Cl** (0.12 vs 0.20): less late-flight lift, so high-arc
+    /// - **Lower subcritical Cl** (0.12 vs 0.203): less late-flight lift, so high-arc
     ///   shots (wedges) lost more carry relative to modern balls.
     ///
     /// The 250 ft/s, 23 rev/s data point (Cd=0.315) is a known outlier — it's the
