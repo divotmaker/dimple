@@ -46,6 +46,15 @@ along +Z; positive sidespin (clockwise viewed from above) points along -Y:
 so the Magnus direction ω̂ × v̂ is up for backspin and toward +Z (right) for
 positive sidespin on a ball travelling downrange.
 
+On the ground (bounce and rollout) spin is a scalar about the horizontal axis
+across the plane of travel, signed relative to **downrange** travel:
+`backspin` > 0 (bounce input, the flight's `landing_backspin_rads`) opposes
+forward rolling for a ball moving downrange, and `omega` (bounce output,
+rollout input) is its negative, > 0 for topspin on a ball moving downrange.
+A ball rolling back toward the tee has negative `omega`. Each impact is
+solved along the ball's own direction of travel and converted back, so an
+impact mirrored in x gives the mirrored rebound with the spin sign flipped.
+
 ## Force Model
 
 Three forces act on the ball at each timestep:
@@ -242,6 +251,126 @@ Default λ = 0.04 s⁻¹ (~21% loss over 6 seconds). Published data:
 - Lyu et al. (2018): 4%/s trajectory fits
 - Tutelman: τ=30s → λ=0.033 → 82% at 6s
 
+## Bounce Model
+
+Each ground impact follows Penner (2002), "The run of a golf ball", *Can. J.
+Phys.* 80, 931–940. The ball deforms the turf and meets the rising lip of
+its own crater, so the impact is treated as a bounce off a rigid plane
+inclined by an effective contact angle β toward the incoming ball. Working
+in the vertical plane of travel, with `v_h` the horizontal speed, `v_n` the
+downward speed, `v = √(v_h² + v_n²)` the impact speed and
+`φ = atan(v_h / v_n)` the incidence angle from vertical:
+
+```
+θc     = 15.4° · (v / 18.6 m/s) · (φ / 44.4°)        (Penner eq. 8)
+β      = min(compliance · θc, φ)
+v_n'   = v_n cos β + v_h sin β          (into the effective plane, eq. 6)
+v_h'   = v_h cos β − v_n sin β          (along it)
+```
+
+Daish's rigid-surface impact then sets the rebound in the effective frame
+(Penner eqs. 2–4): normal `e · v_n'`, and tangential either full grip (the
+ball leaves rolling, `(5/7)·v_h' − (2/7)·R·ω_back`) or full slip (friction
+impulse `μ(1+e)·v_n'`), whichever the friction limit allows. The rebound is
+rotated back to the world frame (eq. 7):
+
+```
+horizontal = v_h_out cos β − v_n_out sin β
+vertical   = v_n_out cos β + v_h_out sin β
+```
+
+The coefficient of restitution falls with normal impact speed (Penner eq. 5,
+his fit to his own turf measurements):
+
+```
+e = 0.510 − 0.0375·v_n' + 0.000903·v_n'²     v_n' ≤ 20 m/s
+e = 0.120                                    v_n' > 20 m/s
+```
+
+`v_n'` is the normal speed against the effective plane, as in Penner. The two
+branches meet within 0.0012 at 20 m/s. `Restitution::Constant(e)` uses a
+fixed value instead.
+
+The tilt steepens every forward rebound; with `e = 1, μ = 0` it rotates the
+flat-ground mirror direction up by exactly 2β. β is capped at the incidence
+angle, where the ball meets the effective plane head-on; this is a guard for
+extreme `compliance` values, and the presets never reach it. `v_h_out` is
+signed, so backspin can send the ball backward. A rebound whose vertical
+component comes out ≤ 0 stays on the ground and rolls.
+
+### Hops and the bounce-to-roll transition
+
+As in Penner, eq. 8 applies to every impact, not just the first. After the
+first bounce the ball makes a run of progressively smaller hops; each
+shallow impact tilts the effective plane and turns forward speed into a
+small rebound. For a drive these hops cover most of the run, and the ball
+rolls only the last few metres (Penner's Fig. 4). Penner's run model, hops
+plus roll, agrees fairly well with empirical drive runs (Cochran & Stobbs;
+Williams; his Fig. 5), with the model's runs slightly longer.
+
+The ball keeps bouncing while its rebound would rise at least 5 mm,
+`v_y² / (2g) ≥ 5 mm` (`v_y` ≥ ~0.313 m/s), Penner's transition height; he
+tested 1–10 mm and found only a minor effect on the run. It then rolls
+(see the rollout model). A safety bound of 200 impacts guards degenerate
+surfaces (e.g. elastic and frictionless); real shots end by the 5 mm rule
+well before it. Between hops the ball follows a drag-free parabola.
+
+| Surface | Restitution | `μ` | `compliance` |
+|---|---|---|---|
+| `BounceSurface::FAIRWAY` | `Penner2002` | 0.40 | 0.9 |
+| `BounceSurface::GREEN` | `Penner2002` | 0.40 | 1.0 |
+
+| Parameter | Source |
+|---|---|
+| eq. 5 restitution | Penner (2002), from Penner (2001), *Am. J. Phys.* 69, 563, measured on relatively soft turf |
+| θc law (eq. 8), `compliance = 1.0` | Penner (2002): θc = 15.4° best fit to Haake's (1990) green impact at 18.6 m/s, 44.4° from vertical, 484 rad/s backspin; linear in v and φ as a first-order approximation |
+| `μ = 0.40` | Daish (1972), as used by Penner for a ball on a green |
+| 5 mm transition height | Penner (2002), set above the ~2 mm equilibrium sinkage of a ball on a green (Hubbard & Alaways) |
+| `FAIRWAY` `compliance = 0.9` | Chosen, not measured (see below) |
+
+Penner uses one turf model throughout: eq. 8 unchanged, with his green
+restitution and μ, both for drives compared against empirical drive runs
+(Fig. 5) and for iron shots onto greens. He represents a firmer green by a
+lower μ (0.25, Fig. 8) rather than by changing θc, noting that eq. 8 would in
+general need adjusting for such greens. `FAIRWAY` keeps eq. 8 at a chosen
+`compliance = 0.9`, slightly below the green's 1.0, so fairway rebounds
+come off slightly firmer and run further. The run is highly sensitive to
+this value. Fairway run (yards past carry) by `compliance`, with
+`RolloutSurface::FAIRWAY`:
+
+| `compliance` | driver | 7-iron (`seven_iron`) | wedge |
+|---|---|---|---|
+| 1.00 | 25.6 | 3.8 | 0.1 |
+| 0.90 (`FAIRWAY`) | 34.5 | 5.9 | 0.8 |
+| 0.85 | 39.7 | 7.8 | 1.3 |
+| 0.75 | 51.3 | 12.3 | 2.4 |
+| 0.50 | 95.1 | 28.2 | 5.6 |
+
+With `GREEN`, the bounce reproduces Penner's published drive results: a
+landing at 26.8 m/s, 68.0° from vertical, 224 rad/s backspin rises 2.82 m on
+the first bounce, and 26.2 m/s at 46.2° with 315 rad/s rises 1.18 m (Penner
+reports 2.82 m and 1.17 m). Those drives make 43 and 36 impacts before
+rolling and stop 39.0 m and 20.5 m past the landing point with
+`RolloutSurface::GREEN` (Penner's Fig. 4: about 37 m and 19 m). A 9-iron landing at 23.8 m/s, 34.0° bounces backward with 809 rad/s
+backspin, and its backward run grows with backspin at 1000 and 1200 rad/s
+(Penner's Fig. 7). With μ = 0.25 the same landings first bounce forward
+still carrying backspin, then run back (Penner's Fig. 8).
+
+Limitations:
+
+- **Green data only.** The restitution fit and the θc law both come from
+  green-like turf. `FAIRWAY` differs from `GREEN` only by compliance (and by
+  its rollout friction, `RolloutSurface`); its compliance value has no
+  published source, and the run depends strongly on it.
+- **One impact measurement.** θc rests on a single Haake impact and is
+  extrapolated linearly in speed and incidence angle. Spin and turf
+  firmness are not inputs.
+- **No drag between hops.** A drive's first hops leave at up to ~8 m/s and
+  stay airborne for over a second, so drag is not negligible; ignoring it
+  lengthens the run somewhat (an estimated few yards on a drive).
+- **Flat ground.** Every impact is on a level surface. Penner attributes his
+  model's slightly long drive runs to the same assumption.
+
 ## Implementation
 
 The model lives in `src/aero.rs`. Key types:
@@ -274,6 +403,6 @@ Unit tests live beside the code in each module. Test categories:
 - **Altitude/temperature** — Denver gain, hot-cold delta, directional checks
 - **Spin decay** — exponential decay rate against Trackman measurements
 - **Era comparison** — TOUR vs PATENT_1997 carry gaps, Cd reduction, Cl sensitivity
-- **Bounce/rollout** — rebound, spin-back, stimpmeter calibration, surface comparison
+- **Bounce/rollout** — rebound, spin-back, backward-travel mirror symmetry, Penner (2002) restitution, drive bounce heights, 9-iron spin-back (Figs. 7–8) and 5 mm bounce-to-roll transition, stimpmeter calibration, surface comparison
 
 Run: `cargo test`

@@ -81,12 +81,12 @@ pub struct RolloutResult {
 /// Ground-plane state for integration.
 ///
 /// Position (x, z) on the Y=0 plane. Velocity (vx, vz) horizontal.
-/// Angular velocity omega in standard convention:
-///   positive = topspin (promotes rolling for forward motion)
-///   negative = backspin (opposes rolling)
-///
-/// `dir_x, dir_z` track the last meaningful velocity direction for use
-/// when speed is near zero (friction from backspin can reverse the ball).
+/// `dir_x, dir_z` is the fixed forward axis: the line of the initial
+/// velocity, oriented downrange (`dir_x` ≥ 0). Angular velocity omega is
+/// signed relative to travel along it:
+///   positive = topspin for motion along the forward axis
+///   negative = backspin (opposes rolling along the forward axis)
+/// so a ball rolling back toward the tee has negative omega.
 #[derive(Debug, Clone, Copy)]
 struct GroundState {
     x: f64,
@@ -110,7 +110,10 @@ struct GroundState {
 ///
 /// `start_pos`: position at start of rollout (Y=0 plane).
 /// `vel`: horizontal velocity at start (Y component ignored).
-/// `omega`: angular velocity (standard convention: positive=topspin, negative=backspin).
+/// `omega`: angular velocity (rad/s), signed relative to downrange (+X)
+/// travel as in [`BounceResult::omega`](crate::bounce::BounceResult::omega):
+/// positive = topspin for a ball moving downrange; a ball rolling back toward
+/// the tee has negative `omega`.
 /// `surface`: surface friction parameters.
 #[must_use]
 pub fn simulate_rollout(
@@ -122,9 +125,13 @@ pub fn simulate_rollout(
     let dt = 0.001;
     let sample_every = 10;
 
+    // Forward axis: the line of the initial velocity, oriented downrange so
+    // that omega keeps its downrange-signed meaning when the ball starts out
+    // moving back toward the tee.
     let init_speed = (vel.x * vel.x + vel.z * vel.z).sqrt();
     let (init_dir_x, init_dir_z) = if init_speed > 1e-10 {
-        (vel.x / init_speed, vel.z / init_speed)
+        let sign = if vel.x < 0.0 { -1.0 } else { 1.0 };
+        (sign * vel.x / init_speed, sign * vel.z / init_speed)
     } else {
         (1.0, 0.0)
     };
@@ -198,16 +205,16 @@ fn step_ground(state: GroundState, dt: f64, surface: &RolloutSurface) -> GroundS
         return state;
     }
 
-    // Fixed "original forward" direction — set once at init, never updated.
+    // Fixed forward axis — set once at init, never updated.
     // The omega sign convention is defined relative to this direction,
     // so flipping it would corrupt the signed velocity decomposition
     // (especially during spin-back when the ball reverses).
     let dir_x = state.dir_x;
     let dir_z = state.dir_z;
 
-    // Signed forward velocity: projection of velocity onto the saved direction.
-    // Positive = moving in the original forward direction.
-    // Negative = ball has reversed (spin-back).
+    // Signed forward velocity: projection of velocity onto the forward axis.
+    // Positive = moving downrange along it.
+    // Negative = moving back toward the tee (spin-back).
     let v_fwd = state.vx * dir_x + state.vz * dir_z;
 
     // Contact point velocity (signed, in the forward direction).

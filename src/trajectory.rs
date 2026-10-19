@@ -94,7 +94,10 @@ pub struct FlightResult {
     /// Lateral offset of the landing point from the target line (m).
     /// Positive = right, negative = left.
     pub lateral_m: f64,
-    /// Backspin at landing (rad/s, positive = backspin opposing forward motion).
+    /// Backspin at landing (rad/s): the z-component of the angular
+    /// velocity, positive = backspin for a ball moving downrange. This is
+    /// the downrange-signed `backspin` that
+    /// [`compute_bounce`](crate::bounce::compute_bounce) takes.
     pub landing_backspin_rads: f64,
     /// Sidespin at landing (rad/s). Same sign convention as
     /// [`ShotInput::sidespin_rpm`]: positive = curves right.
@@ -931,6 +934,51 @@ mod tests {
     }
 
     #[test]
+    fn shot_driver_first_bounce_height_in_penner_range() {
+        // Penner (2002) §3.1 reports first-bounce heights from 2.82 m
+        // (landing 68.0° from vertical) to 1.17 m (46.2°) for drives on his
+        // green model. The driver preset lands about 49° from vertical.
+        for r in [
+            shot_on_green(&ShotInput::driver()),
+            shot_on_fairway(&ShotInput::driver()),
+        ] {
+            let v = r.bounces[0].vel_out;
+            let peak = v.y * v.y / (2.0 * units::G);
+            assert!(
+                (1.17..=2.82).contains(&peak),
+                "driver first bounce peak {peak:.2} m outside Penner's 1.17-2.82 m"
+            );
+        }
+    }
+
+    #[test]
+    fn shot_bounces_end_by_hop_height_rule() {
+        // Every preset shot stops bouncing by Penner's 5 mm hop-height rule,
+        // well inside the safety bound on impacts.
+        let hop = |v: DVec3| v.y * v.y / (2.0 * units::G);
+        for input in [
+            ShotInput::driver(),
+            ShotInput::seven_iron(),
+            ShotInput::wedge(),
+        ] {
+            for r in [shot_on_fairway(&input), shot_on_green(&input)] {
+                assert!(r.bounces.len() < crate::bounce::MAX_IMPACTS);
+                let (last, rest) = r.bounces.split_last().unwrap();
+                assert!(
+                    rest.iter()
+                        .all(|b| hop(b.vel_out) >= crate::bounce::MIN_HOP_HEIGHT)
+                );
+                assert!(
+                    hop(last.vel_out) < crate::bounce::MIN_HOP_HEIGHT,
+                    "last of {} hops rises {:.2} mm",
+                    r.bounces.len(),
+                    hop(last.vel_out) * 1000.0
+                );
+            }
+        }
+    }
+
+    #[test]
     fn shot_has_bounces() {
         let r = shot_on_fairway(&ShotInput::driver());
         assert!(
@@ -978,9 +1026,11 @@ mod tests {
 
     #[test]
     fn shot_green_less_rollout_than_fairway() {
-        // Same shot on green vs fairway: green should have less total rollout
-        // because lower COR means less bouncy, and ball checks up more.
-        let input = ShotInput::seven_iron();
+        // Same drive on green vs fairway: green should have less total
+        // rollout because its more compliant turf steepens each rebound and
+        // takes more forward speed out of it, which outweighs the green's
+        // lower rolling friction.
+        let input = ShotInput::driver();
         let fairway = shot_on_fairway(&input);
         let green = shot_on_green(&input);
         let rollout_fairway = fairway.total_yards - fairway.flight.carry_yards;

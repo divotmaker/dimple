@@ -13,8 +13,9 @@ shot:
 - **Flight**: fixed-step RK4 integration (1 ms) of gravity, Reynolds- and
   spin-dependent drag, Magnus lift, and exponential spin decay, with air
   density from altitude and temperature.
-- **Bounce**: oblique impact on turf (Penner/Cross model) with restitution,
-  friction, and turf compliance, including spin-back.
+- **Bounce**: oblique impact on turf (Penner/Cross model) with
+  speed-dependent restitution, friction, and turf compliance, including
+  spin-back.
 - **Rollout**: sliding then pure rolling with speed-dependent friction.
 - **Stats**: per-shot carry, total, apex, descent angle, and lateral offset,
   plus session averages and dispersion.
