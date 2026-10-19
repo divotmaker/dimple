@@ -19,8 +19,9 @@ const PENNER_REF_ANGLE: f64 = 44.4 * std::f64::consts::PI / 180.0;
 /// Penner's contact angle is zero.
 const MIN_TILT_SPEED: f64 = 0.01;
 
-/// Contact-point slip speed (m/s) treated as zero. Slides end exactly at
-/// zero slip; this only absorbs rounding.
+/// Contact-point slip speed, or rolling speed, (m/s) treated as zero.
+/// Slides end exactly at zero slip and rolls exactly at zero speed; this
+/// only absorbs rounding.
 const SLIP_EPS: f64 = 1e-9;
 
 /// Spacing (s) of the sampled [`GroundPoint`]s.
@@ -28,6 +29,22 @@ const SAMPLE_INTERVAL: f64 = 0.01;
 
 /// Time tolerance (s) for reaching sample times and the time limit.
 const TIME_EPS: f64 = 1e-9;
+
+/// Smallest slip speed (m/s) at which a slide on a slope switches to
+/// finishing along a fixed slip direction, whatever
+/// [`GroundPhysics::roll_threshold`] is.
+const MIN_SWITCH_SLIP: f64 = 1e-6;
+
+/// Normal speed, relative to the ball's speed, below which an impact counts
+/// as grazing: rounding of a velocity that lies in the ground plane.
+const GRAZING: f64 = 1e-12;
+
+/// Residual accepted by the crossing solves: metres for ground crossings,
+/// m/s for the slide-to-roll event.
+const ROOT_TOL: f64 = 1e-12;
+
+/// Iteration cap of the crossing solves; they converge in a handful.
+const ROOT_MAX_ITER: usize = 200;
 
 /// Gravity vector (m/s²).
 const GRAVITY: DVec3 = DVec3::new(0.0, -G, 0.0);
@@ -169,25 +186,61 @@ pub struct GroundSample {
     /// added), consistent with the flight's landing; on ground level with
     /// the tee this is 0 and a ball on the ground has `pos.y == 0`.
     pub height: f64,
-    /// Unit outward surface normal, with `normal.y > 0`. [`GroundPhysics`]
-    /// currently requires +Y (see [`Terrain`]).
+    /// Unit outward surface normal at (x, z), with `normal.y > 0`. For a
+    /// heightfield `y = h(x, z)` this is `(−∂h/∂x, 1, −∂h/∂z)` normalised.
+    /// [`GroundPhysics`] uses it for the impact plane, the normal load and
+    /// the downhill pull, so it should match the slope of `height`.
     pub normal: DVec3,
     /// Material at this location.
     pub surface: Surface,
 }
 
+impl GroundSample {
+    /// Whether a ball at rest here stays put: the slope's pull, `g·sin θ`,
+    /// does not exceed the rolling resistance at zero speed,
+    /// `mu_roll·g·cos θ`, i.e. `tan θ ≤ mu_roll` (θ the slope angle). Always
+    /// true on level ground.
+    #[must_use]
+    pub fn holds_at_rest(&self) -> bool {
+        holds_at_rest(self.normal.normalize(), &self.surface)
+    }
+}
+
+/// Whether rolling resistance at zero speed holds a ball against the slope
+/// of ground with unit normal `n`.
+fn holds_at_rest(n: DVec3, surface: &Surface) -> bool {
+    tangential_gravity(n).length() <= surface.mu_roll * G * n.y
+}
+
 /// Layer 1 of the ground API: "what is the ground like here?"
 ///
-/// A heightfield point query. dimple never needs to know how the ground is
+/// A heightfield point query: one ground height, normal and surface per
+/// horizontal position. dimple never needs to know how the ground is
 /// stored: an analytic plane, a grid, a mesh lookup or an engine query all
-/// fit behind `sample`. [`GroundPhysics`] samples the terrain under the
-/// ball's contact point every step, so surfaces can change mid-roll.
+/// fit behind `sample`.
 ///
-/// [`GroundPhysics`] currently requires level terrain: every sample must
-/// have normal +Y and the same height (0 for ground level with the tee).
-/// Other terrain is not rejected but is unsupported until slopes are
-/// modeled: the contact physics would use the sampled normal while the
-/// slide and roll keep the ball at its landing height.
+/// [`GroundPhysics`] tracks the ball's centre and samples the terrain at
+/// the centre's (x, z): the ball is on the ground when `pos.y` equals the
+/// sampled [`height`](GroundSample::height), and the sampled
+/// [`normal`](GroundSample::normal) gives the contact plane, the normal load
+/// and the downhill pull. It samples every step, so surfaces and slopes can
+/// change mid-roll. Each ground step is taken in the tangent plane under
+/// the ball, which is then put back on the heightfield with its velocity
+/// projected onto the new tangent plane. On a plane this is exact; on
+/// curved ground it is a first-order approximation:
+///
+/// - The ball always follows the heightfield. Over a crest where
+///   `v²·κ > g·n_y` (κ the curvature along the path) a real ball would
+///   leave the ground; that launch is not modelled.
+/// - Into a concave transition (the foot of a slope) the velocity component
+///   along the new normal is removed, as in an inelastic contact.
+///
+/// One height per (x, z) means no walls, lips or cup; a step in `height`
+/// is crossed as if the ball were lifted onto it. A ball can roll without
+/// slipping only where `tan θ ≤ ((1+k)/k)·mu_slide` (54° for the presets);
+/// steeper ground is outside the model.
+///
+/// See [`FnTerrain`] for examples.
 pub trait Terrain {
     /// The ground at horizontal position (`x`, `z`) in the crate frame.
     #[must_use]
@@ -208,17 +261,47 @@ impl Terrain for Surface {
 
 /// A [`Terrain`] from a closure `|x, z| -> GroundSample`.
 ///
+/// Per-point surfaces on level ground: a green from 150 m to 170 m
+/// downrange, fairway everywhere else.
+///
 /// ```
 /// use dimple::ground::{FnTerrain, GroundPhysics, GroundSample, Surface};
 /// use glam::DVec3;
 ///
-/// // A green from 150 m to 170 m downrange, fairway everywhere else.
 /// let range = GroundPhysics::new(FnTerrain(|x: f64, _z: f64| GroundSample {
 ///     height: 0.0,
 ///     normal: DVec3::Y,
 ///     surface: if (150.0..170.0).contains(&x) { Surface::GREEN } else { Surface::FAIRWAY },
 /// }));
 /// # let _ = range;
+/// ```
+///
+/// A plane: fairway rising 3° downrange and falling 2° to the right. For
+/// `height = a·x + b·z` the normal is `(−a, 1, −b)` normalised.
+///
+/// ```
+/// use dimple::aero::BallModel;
+/// use dimple::environment::Environment;
+/// use dimple::ground::{FnTerrain, GroundPhysics, GroundSample, Surface};
+/// use dimple::trajectory::{ShotInput, simulate_shot};
+/// use glam::DVec3;
+///
+/// let (a, b) = (3.0_f64.to_radians().tan(), -(2.0_f64.to_radians().tan()));
+/// let normal = DVec3::new(-a, 1.0, -b).normalize();
+/// let hill = GroundPhysics::new(FnTerrain(move |x: f64, z: f64| GroundSample {
+///     height: a * x + b * z,
+///     normal,
+///     surface: Surface::FAIRWAY,
+/// }));
+/// let shot = simulate_shot(
+///     &ShotInput::seven_iron(),
+///     &BallModel::TOUR,
+///     &Environment::SEA_LEVEL,
+///     &hill,
+/// );
+/// let rest = shot.final_pos;
+/// assert!((rest.y - (a * rest.x + b * rest.z)).abs() < 1e-9); // on the plane
+/// assert!(rest.z > 0.0); // drifted right, down the side slope
 /// ```
 #[derive(Clone, Copy)]
 pub struct FnTerrain<F>(pub F);
@@ -400,8 +483,9 @@ impl GroundResult {
 ///
 /// Each impact uses [`impact`]; the ball keeps hopping (gravity-only flight,
 /// RK4) while its rebound would rise at least
-/// [`min_hop_height`](Self::min_hop_height), then slides and rolls
-/// ([`step`](Self::step)) until it stops. The tunables are public fields; start
+/// [`min_hop_height`](Self::min_hop_height) and, on a slope, the hops die
+/// out rather than being sustained by the slope (see `min_hop_height`), then
+/// slides and rolls ([`step`](Self::step)) until it stops. The tunables are public fields; start
 /// from [`GroundPhysics::new`] and override with struct update syntax.
 #[derive(Debug, Clone, Copy)]
 pub struct GroundPhysics<T: Terrain> {
@@ -409,24 +493,39 @@ pub struct GroundPhysics<T: Terrain> {
     pub terrain: T,
     /// Integration step (s) for hops, slides and rolls. Default 1 ms.
     pub dt: f64,
-    /// A rolling ball slower than this (m/s) comes to rest. It also stops
-    /// once its speed is below one step's deceleration. Either way it
-    /// finishes at constant deceleration, so this barely moves the rest
-    /// position. Default 0.01 m/s.
+    /// A rolling ball slower than this (m/s) stops, unless the slope is
+    /// speeding it up. It also stops once its speed is below one step's
+    /// deceleration. Either way it finishes at constant deceleration, so
+    /// this barely moves the stopping point. Where the slope is too steep
+    /// to hold it ([`GroundSample::holds_at_rest`]) the ball starts rolling
+    /// downhill again from there. Default 0.01 m/s.
     pub stop_speed: f64,
     /// Contact-point slip speed (m/s) at or below which a ball that has
     /// stopped bouncing starts out rolling instead of sliding. The residual
     /// slip is removed by the friction impulse that would have finished the
     /// slide, so the rolling velocity is the same either way. Slides are
-    /// otherwise stepped to exactly zero slip. Default 0.01 m/s.
+    /// otherwise stepped to zero slip; on sloped ground this is also the
+    /// slip at which a slide stops following its turning slip direction and
+    /// finishes along a fixed one (see [`step`](Self::step)), at no less
+    /// than 1e-6 m/s whatever this is set to: below that the slip direction
+    /// could flip within one step. Default 0.01 m/s.
     pub roll_threshold: f64,
     /// The ball keeps bouncing while its rebound would rise at least this
-    /// high (m) above the ground: Penner's (2002) bounce-to-roll transition,
+    /// high (m) above the ground, measured along the normal:
+    /// `(v·n)² / (2·g·n_y)`. Penner's (2002) bounce-to-roll transition,
     /// 5 mm. Penner tested 1–10 mm and found only a minor effect on the run.
+    ///
+    /// On a slope the ball also needs the hops to die out: the impact must
+    /// remove at least the energy of a hop this high (`g·min_hop_height` per
+    /// unit mass) more than gravity hands back over the next hop down the
+    /// slope. Otherwise the ball goes to the ground at once, as below the
+    /// height. Without this a downhill hop train settles at a fixed hop
+    /// height just above the transition and never rolls (see
+    /// `docs/AERO.md`). Level ground uses the height alone.
     pub min_hop_height: f64,
     /// Safety bound on impacts. Every hop rises at least
-    /// [`min_hop_height`](Self::min_hop_height) and loses energy, so real
-    /// shots stop bouncing far below this; it guards degenerate surfaces
+    /// [`min_hop_height`](Self::min_hop_height) and the hops die out, so
+    /// real shots stop bouncing far below this; it guards degenerate surfaces
     /// (e.g. `Restitution::Constant(1.0)` with no friction). Default 200.
     pub max_impacts: usize,
     /// Time limit (s) on the ground phase, from landing. Default 30 s.
@@ -450,42 +549,65 @@ impl<T: Terrain> GroundPhysics<T> {
     }
 
     /// Advance a ball that is on the ground by one step of
-    /// [`dt`](Self::dt), on the terrain under its contact point.
+    /// [`dt`](Self::dt), on the terrain under its centre.
     ///
     /// Returns the new state and the phase the ball was in over the step.
-    /// RK4 within each smooth phase:
+    /// With `n` the sampled normal, normal load `g·n_y` and tangential
+    /// gravity `g_t = g − (g·n)n` (zero on level ground), RK4 within each
+    /// smooth phase:
     ///
-    /// - **Slide** (the contact point slips): friction `−μ_slide·m·g·û` and
-    ///   its torque `(−R n) × F`. On flat ground the slip speed falls
-    ///   linearly at `((1+k)/k)·μ_slide·g`, so a slide that would end within
-    ///   the step stops exactly at the slide-to-roll time (the step is
-    ///   shortened) and the ball leaves rolling.
+    /// - **Slide** (the contact point slips): friction `−μ_slide·g·n_y·û`,
+    ///   its torque `(−R n) × F`, and `g_t`. Where `g_t` is zero the slip
+    ///   direction is fixed and the slip speed falls linearly at
+    ///   `((1+k)/k)·μ_slide·g·n_y`, so a slide that would end within the
+    ///   step stops exactly at the slide-to-roll time (the step is
+    ///   shortened) and the ball leaves rolling. On a slope `g_t` turns the
+    ///   slip direction, so û is re-evaluated at every RK4 stage; the time
+    ///   the slip falls to [`roll_threshold`](Self::roll_threshold) is solved
+    ///   within the step, and from there the slide finishes along that slip
+    ///   direction, ending at zero slip as on level ground.
     /// - **Roll**: spin tangential to the ground is locked to the velocity;
-    ///   deceleration `μ_eff·g/(1+k)` with `μ_eff` from
-    ///   [`Surface::rolling_friction`]. A ball whose speed is below one
-    ///   step's deceleration (or [`stop_speed`](Self::stop_speed)) comes to
-    ///   rest: it finishes at constant deceleration, the returned velocity is
-    ///   exactly zero, and the time advances by the stopping time only.
+    ///   deceleration `μ_eff·g·n_y/(1+k)` against the velocity, with
+    ///   `μ_eff` from [`Surface::rolling_friction`], plus `g_t/(1+k)`. A ball
+    ///   that is slowing and slower than one step's deceleration (or
+    ///   [`stop_speed`](Self::stop_speed)) stops: it finishes at constant
+    ///   deceleration, the returned velocity is exactly zero, and the time
+    ///   advances by the stopping time only. Whether it then stays at rest
+    ///   is [`GroundSample::holds_at_rest`]; if not, the next step rolls it
+    ///   downhill.
     /// - In both, pivot friction decays the spin about the normal at
-    ///   `pivot·g/(k R²)`, saturating at zero.
+    ///   `pivot·g·n_y/(k R²)`, saturating at zero.
     ///
-    /// The velocity is kept in the ground plane. Unlike
-    /// [`settle`](GroundModel::settle), this does not apply
-    /// [`max_time`](Self::max_time).
+    /// The ball ends on the terrain at its new (x, z), its velocity in the
+    /// tangent plane there and, when rolling, its tangential spin locked to
+    /// that velocity. Unlike [`settle`](GroundModel::settle), this does not
+    /// apply [`max_time`](Self::max_time).
     #[must_use]
     pub fn step(&self, state: &BallState, ball: &BallModel) -> (BallState, Phase) {
-        let at = self.sample_contact(state.pos, ball.radius_m());
-        contact_step(state, &at, ball, self.dt, self.stop_speed)
+        let at = self.sample(state.pos);
+        let (next, phase, rolling) = contact_step(
+            state,
+            &at,
+            ball,
+            self.dt,
+            self.stop_speed,
+            self.roll_threshold,
+        );
+        let under = self.sample(next.pos);
+        (
+            onto_surface(&next, &under, at.normal, rolling, ball.radius_m()),
+            phase,
+        )
     }
 
-    /// Terrain under the contact point of a ball centred at `pos`.
-    fn sample_contact(&self, pos: DVec3, radius: f64) -> GroundSample {
-        let below = self.terrain.sample(pos.x, pos.z);
-        if below.normal == DVec3::Y {
-            return below;
-        }
-        let contact = pos - radius * below.normal;
-        self.terrain.sample(contact.x, contact.z)
+    /// Terrain under a ball centred at `pos`.
+    fn sample(&self, pos: DVec3) -> GroundSample {
+        self.terrain.sample(pos.x, pos.z)
+    }
+
+    /// Height of a ball centred at `pos` above the terrain under it.
+    fn clearance(&self, pos: DVec3) -> f64 {
+        pos.y - self.sample(pos).height
     }
 
     /// Gravity-only flight from a rebound until the ball meets the ground
@@ -514,9 +636,8 @@ impl<T: Terrain> GroundPhysics<T> {
             }
             let h = self.dt.min(t_end - t);
             let b = rk4::step(s, t, h, |_, _, _| GRAVITY);
-            let below = self.terrain.sample(b.pos.x, b.pos.z).height;
-            if b.pos.y <= below {
-                return Ok(self.hop_arrival(s, t, h, start.spin));
+            if let Some(arrival) = self.hop_arrival(s, t, h, self.clearance(b.pos), start.spin) {
+                return Ok(arrival);
             }
             s = b;
             t += h;
@@ -533,35 +654,40 @@ impl<T: Terrain> GroundPhysics<T> {
         }
     }
 
-    /// Exact ground crossing within a gravity-only step of length `h` from
-    /// `a` (at time `t`), which ends at or below the ground.
+    /// First ground crossing within a gravity-only step of length `h` from
+    /// `a` (at time `t`), if there is one; `end` is the clearance at the end
+    /// of the integrated step.
     ///
-    /// Within the step the motion is the exact parabola RK4 reproduces, so
-    /// the crossing time solves `y(τ) = height(x(τ), z(τ))`; the height is
-    /// iterated to a fixed point (one pass on level ground).
-    fn hop_arrival(&self, a: rk4::State, t: f64, h: f64, spin: DVec3) -> BallState {
+    /// Within the step the motion is the exact parabola RK4 reproduces. The
+    /// clearance `y(τ) − height(x(τ), z(τ))` is checked at
+    /// [`CROSSING_SUBSTEPS`] equal sub-steps for the first at or below the
+    /// ground, and the crossing is the root inside that sub-step, solved by
+    /// [`find_root`] from the drop time onto the height at the end of the
+    /// step (exact on level ground). The arrival is placed exactly on the
+    /// ground.
+    fn hop_arrival(
+        &self,
+        a: rk4::State,
+        t: f64,
+        h: f64,
+        end: f64,
+        spin: DVec3,
+    ) -> Option<BallState> {
         let at = |tau: f64| a.pos + a.vel * tau + 0.5 * GRAVITY * tau * tau;
-        let end = at(h);
-        let mut ground = self.terrain.sample(end.x, end.z).height;
-        let mut tau = h;
-        for _ in 0..8 {
-            tau = drop_time(a.pos.y - ground, a.vel.y).clamp(0.0, h);
-            let p = at(tau);
-            let next = self.terrain.sample(p.x, p.z).height;
-            let converged = (next - ground).abs() <= 1e-12;
-            ground = next;
-            if converged {
-                break;
-            }
-        }
+        let clearance = |tau: f64| self.clearance(at(tau));
+        let (lo, (hi, f_hi)) = first_crossing(clearance, h, clearance(0.0), end)?;
+        let f_hi = if hi == h { clearance(h).min(0.0) } else { f_hi };
+        let end_height = self.sample(at(h)).height;
+        let guess = drop_time(a.pos.y - end_height, a.vel.y).clamp(lo.0, hi);
+        let tau = find_root(clearance, lo, (hi, f_hi), guess);
         let mut pos = at(tau);
-        pos.y = ground;
-        BallState {
+        pos.y = self.sample(pos).height;
+        Some(BallState {
             time: t + tau,
             pos,
             vel: a.vel + GRAVITY * tau,
             spin,
-        }
+        })
     }
 }
 
@@ -578,6 +704,87 @@ fn drop_time(height: f64, vy: f64) -> f64 {
     } else {
         2.0 * height.max(0.0) / (disc - vy)
     }
+}
+
+/// Number of equal sub-steps at which a flight or hop step is checked for
+/// its first ground crossing.
+const CROSSING_SUBSTEPS: u32 = 8;
+
+/// The first of [`CROSSING_SUBSTEPS`] equal sub-steps of `[0, len]` that
+/// ends at or below the ground: its bounds, each with the clearance `f`
+/// there, or `None` if every sub-step ends above it. `f0` is the clearance
+/// at 0 and `f_end` stands in for `f(len)`.
+fn first_crossing(
+    f: impl Fn(f64) -> f64,
+    len: f64,
+    f0: f64,
+    f_end: f64,
+) -> Option<((f64, f64), (f64, f64))> {
+    let mut lo = (0.0, f0);
+    for i in 1..=CROSSING_SUBSTEPS {
+        let hi = if i == CROSSING_SUBSTEPS {
+            (len, f_end)
+        } else {
+            let x = len * f64::from(i) / f64::from(CROSSING_SUBSTEPS);
+            (x, f(x))
+        };
+        if hi.1 <= 0.0 {
+            return Some((lo, hi));
+        }
+        lo = hi;
+    }
+    None
+}
+
+/// A root of `f` on `[lo, hi]` given `f(lo) ≥ 0 ≥ f(hi)` (each bound passed
+/// with its value), starting from `guess`.
+///
+/// The guess is accepted outright if `|f(guess)| ≤ ROOT_TOL`; otherwise the
+/// bracket is narrowed by Illinois-modified regula falsi, bisecting whenever
+/// an iterate leaves the bracket. If the bracket stops shrinking (a jump in
+/// `f`, such as a step in the terrain) the bound with `f ≤ 0` is returned.
+fn find_root(f: impl Fn(f64) -> f64, lo: (f64, f64), hi: (f64, f64), guess: f64) -> f64 {
+    let (mut lo, mut f_lo) = lo;
+    let (mut hi, mut f_hi) = hi;
+    let mut x = guess;
+    let mut last_side = 0_i8;
+    for _ in 0..ROOT_MAX_ITER {
+        if !(lo..=hi).contains(&x) {
+            x = 0.5 * (lo + hi);
+        }
+        let fx = f(x);
+        if fx.abs() <= ROOT_TOL {
+            return x;
+        }
+        if fx > 0.0 {
+            lo = x;
+            f_lo = fx;
+            if last_side == 1 {
+                f_hi *= 0.5;
+            }
+            last_side = 1;
+        } else {
+            hi = x;
+            f_hi = fx;
+            if last_side == -1 {
+                f_lo *= 0.5;
+            }
+            last_side = -1;
+        }
+        let mid = 0.5 * (lo + hi);
+        if !(lo < mid && mid < hi) {
+            break;
+        }
+        x = if f_lo > f_hi {
+            lo + (hi - lo) * (f_lo / (f_lo - f_hi))
+        } else {
+            mid
+        };
+        if !(lo < x && x < hi) {
+            x = mid;
+        }
+    }
+    hi
 }
 
 const DEFAULT_STOP_SPEED: f64 = 0.01;
@@ -600,19 +807,34 @@ pub trait GroundModel {
     /// Where the flight segment from `a` to `b` (one integration step) first
     /// meets the ground, if it does.
     ///
-    /// The default interpolates linearly in `y − height` between the two
-    /// states and returns the interpolated time, velocity and spin, with the
-    /// position placed exactly on the ground. A segment that starts on the
-    /// ground and ends above it does not land. An engine can override this
-    /// with its own sweep test.
+    /// The default treats the segment as straight, with time, velocity and
+    /// spin varying linearly along it. It checks the clearance
+    /// `y − height(x, z)` at 8 equal sub-steps along the segment for the
+    /// first at or below the ground, and solves for the crossing inside that
+    /// sub-step: Illinois-modified regula falsi from the linear
+    /// interpolation of the end clearances (exact on level ground),
+    /// bisecting when needed, to 1e-12 m. It returns the state there with
+    /// the position placed exactly on the ground, so elevated greens,
+    /// downhill landings, curved terrain and ridges thinner than the
+    /// segment all land where the segment first crosses the surface. A
+    /// segment that starts below the ground does not land, nor does one
+    /// above the ground at every sub-step: a feature narrower than a
+    /// sub-step (about 1 cm of a 1 ms flight step at 75 m/s) can be missed.
+    /// An engine can override this with its own sweep test.
     #[must_use]
     fn landing(&self, a: &BallState, b: &BallState) -> Option<BallState> {
         let fa = a.pos.y - self.height(a.pos.x, a.pos.z);
-        let fb = b.pos.y - self.height(b.pos.x, b.pos.z);
-        if fb > 0.0 || fa < 0.0 {
+        if fa < 0.0 {
             return None;
         }
-        let frac = if fa > fb { fa / (fa - fb) } else { 0.0 };
+        let fb = b.pos.y - self.height(b.pos.x, b.pos.z);
+        let clearance = |s: f64| {
+            let p = a.pos.lerp(b.pos, s);
+            p.y - self.height(p.x, p.z)
+        };
+        let (lo, hi) = first_crossing(clearance, 1.0, fa, fb)?;
+        let guess = if fa > fb { fa / (fa - fb) } else { 0.0 };
+        let frac = find_root(clearance, lo, hi, guess.clamp(lo.0, hi.0));
         let mut pos = a.pos.lerp(b.pos, frac);
         pos.y = self.height(pos.x, pos.z);
         Some(BallState {
@@ -652,12 +874,14 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
         let mut state = *landing;
 
         // Impacts and the hops between them.
-        loop {
-            let at = self.sample_contact(state.pos, radius);
-            let n = at.normal;
+        let mut at = loop {
+            let at = self.sample(state.pos);
+            let n = at.normal.normalize();
             let out = impact(&state, &at, ball);
             let v_n = out.vel.dot(n);
-            let hops = v_n > 0.0 && v_n * v_n >= 2.0 * G * n.y * self.min_hop_height;
+            let hops = v_n > 0.0
+                && v_n * v_n >= 2.0 * G * n.y * self.min_hop_height
+                && hops_die_out(&state, &out, n, ball, self.min_hop_height);
             if !hops {
                 // The ball stays on the ground: drop the (small or inward)
                 // normal velocity and slide/roll from here.
@@ -671,7 +895,7 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
                 }
                 contacts.push(Contact::new(&state, &at, &leave));
                 state = leave;
-                break;
+                break at;
             }
             contacts.push(Contact::new(&state, &at, &out));
             points.push(GroundPoint::new(&out, Phase::Hop));
@@ -685,9 +909,9 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
                     return GroundResult::new(contacts, points, stopped, Termination::MaxTime);
                 }
             }
-        }
+        };
 
-        // Slide and roll.
+        // Slide and roll, each step on the terrain under the ball.
         let mut next_sample = state.time;
         let mut last_phase = None;
         loop {
@@ -696,21 +920,62 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
                 points.push(GroundPoint::new(&state, phase));
                 return GroundResult::new(contacts, points, state, Termination::MaxTime);
             }
-            let at = self.sample_contact(state.pos, radius);
             let h = self.dt.min(t_end - state.time);
-            let (next, phase) = contact_step(&state, &at, ball, h, self.stop_speed);
+            let (next, phase, rolling) =
+                contact_step(&state, &at, ball, h, self.stop_speed, self.roll_threshold);
             if state.time >= next_sample - TIME_EPS || last_phase != Some(phase) {
                 points.push(GroundPoint::new(&state, phase));
                 next_sample = state.time + SAMPLE_INTERVAL;
             }
             last_phase = Some(phase);
-            state = next;
-            if phase == Phase::Roll && state.vel == DVec3::ZERO {
+            let stopped = phase == Phase::Roll && next.vel == DVec3::ZERO;
+            let under = self.sample(next.pos);
+            let held = stopped && under.holds_at_rest();
+            state = onto_surface(&next, &under, at.normal, rolling, radius);
+            at = under;
+            if held {
                 points.push(GroundPoint::new(&state, Phase::Roll));
                 return GroundResult::new(contacts, points, state, Termination::Rest);
             }
         }
     }
+}
+
+/// Whether the hops that follow a rebound off ground with unit normal `n`
+/// die out, so that the ball may keep bouncing; otherwise it goes to the
+/// ground at once, as below [`GroundPhysics::min_hop_height`].
+///
+/// Always true on level ground, where every hop loses energy. On a slope
+/// gravity hands energy back over each hop: the potential energy released
+/// over the hop on the local plane, `ΔU = −g·Δy` with flight time
+/// `T = 2(v·n)/(g·n_y)` and `Δy = v_y·T − g·T²/2`, positive downhill. The
+/// impact `arrival → rebound` removed
+/// `ΔE = E(arrival) − E(rebound)`, `E = |v|²/2 + k·R²·|ω|²/2` (per unit
+/// mass). The train dies out if the slope returns nothing (`ΔU ≤ 0`) or the
+/// impact removes at least the energy of a `min_hop_height` hop more than
+/// the slope returns (`ΔE − ΔU ≥ g·min_hop_height`). Below that, gravity
+/// re-supplies what each impact takes and the hops would settle at a fixed
+/// size above the 5 mm transition instead of shrinking through it.
+fn hops_die_out(
+    arrival: &BallState,
+    rebound: &BallState,
+    n: DVec3,
+    ball: &BallModel,
+    min_hop_height: f64,
+) -> bool {
+    if tangential_gravity(n) == DVec3::ZERO {
+        return true;
+    }
+    let t = 2.0 * rebound.vel.dot(n) / (G * n.y);
+    let released = -G * (rebound.vel.y * t - 0.5 * G * t * t);
+    if released <= 0.0 {
+        return true;
+    }
+    let spin_inertia = ball.inertia_factor * ball.radius_m() * ball.radius_m();
+    let energy =
+        |s: &BallState| 0.5 * s.vel.length_squared() + 0.5 * spin_inertia * s.spin.length_squared();
+    let removed = energy(arrival) - energy(rebound);
+    removed - released >= G * min_hop_height
 }
 
 /// One impact of the ball with the ground: the post-impact state (same time
@@ -735,14 +1000,17 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
 ///    `Δω_n = −sign(ω_n) · min(|ω_n|, pivot · j_n / (k R²))`.
 ///
 /// No impulse is applied if the ball is not moving into the ground
-/// (`v·n ≥ 0`, grazing). Whether the ball then hops or stays on the ground
-/// is up to the caller ([`GroundPhysics`] uses the 5 mm hop rule).
+/// (`v·n ≥ 0`, grazing; a normal speed within rounding of zero,
+/// `|v·n| ≤ 1e-12·|v|`, counts as grazing, so a ball moving in a sloped
+/// ground plane is not struck by its own rounding error). Whether the ball then hops or stays on the ground
+/// is up to the caller ([`GroundPhysics`] uses the 5 mm hop rule; see
+/// [`GroundPhysics::min_hop_height`]).
 #[must_use]
 pub fn impact(state: &BallState, at: &GroundSample, ball: &BallModel) -> BallState {
     let n = at.normal.normalize();
     let v = state.vel;
     let v_dot_n = v.dot(n);
-    if v_dot_n >= 0.0 {
+    if v_dot_n >= -GRAZING * v.length() {
         return *state;
     }
     let surface = &at.surface;
@@ -837,15 +1105,110 @@ fn saturate_pivot(start: DVec3, end: DVec3, n: DVec3) -> DVec3 {
     }
 }
 
+/// Tangential gravity `g − (g·n)n` on ground with unit normal `n`: the
+/// downhill pull (m/s²), zero on level ground.
+fn tangential_gravity(n: DVec3) -> DVec3 {
+    GRAVITY - GRAVITY.dot(n) * n
+}
+
+/// Put a ball that has just stepped across the ground back onto it.
+///
+/// `at` is the terrain under the ball's new (x, z) and `prev_normal` the
+/// normal the step was taken on. The centre goes to the terrain height and
+/// the velocity into the tangent plane at `at`; a ball that ended the step
+/// `rolling` (a roll, or a slide that reached zero slip) also gets its
+/// tangential spin re-locked to that velocity, keeping its spin about the
+/// normal. Where the normal and height already match (level ground, a
+/// plane) the state is returned unchanged.
+fn onto_surface(
+    state: &BallState,
+    at: &GroundSample,
+    prev_normal: DVec3,
+    rolling: bool,
+    radius: f64,
+) -> BallState {
+    if at.normal == prev_normal && state.pos.y == at.height {
+        return *state;
+    }
+    let n = at.normal.normalize();
+    let mut out = *state;
+    out.pos.y = at.height;
+    out.vel = state.vel - state.vel.dot(n) * n;
+    if rolling {
+        let w_n = state.spin.dot(prev_normal.normalize());
+        out.spin = n.cross(out.vel) / radius + w_n * n;
+    }
+    out
+}
+
+/// The forces on a ball on one ground sample, per unit mass.
+struct Patch {
+    /// Unit normal.
+    n: DVec3,
+    /// Tangential gravity (m/s²).
+    g_t: DVec3,
+    /// Sliding friction magnitude `μ_slide·g·n_y` (m/s²).
+    friction: f64,
+    /// Ball radius (m).
+    radius: f64,
+    /// Inertia factor k.
+    k: f64,
+    /// Pivot-friction angular acceleration about `n` for this step.
+    pivot_accel: DVec3,
+}
+
+impl Patch {
+    /// Rate of change of a sliding ball with slip direction `u_hat`.
+    fn slide_rate(&self, s: &Motion, u_hat: DVec3) -> Motion {
+        Motion {
+            pos: s.vel,
+            vel: -self.friction * u_hat + self.g_t,
+            spin: self.friction * self.n.cross(u_hat) / (self.k * self.radius) + self.pivot_accel,
+        }
+    }
+
+    /// One RK4 slide step of length `h` along the fixed slip direction
+    /// `u_hat`.
+    fn slide_fixed(&self, s: Motion, t: f64, h: f64, u_hat: DVec3) -> Motion {
+        let accel = -self.friction * u_hat + self.g_t;
+        let spin_accel =
+            self.friction * self.n.cross(u_hat) / (self.k * self.radius) + self.pivot_accel;
+        rk4::step_state(s, t, h, |s, _| Motion {
+            pos: s.vel,
+            vel: accel,
+            spin: spin_accel,
+        })
+    }
+
+    /// One RK4 slide step of length `h`, with the slip direction evaluated
+    /// at every stage (`fallback` where the slip vanishes).
+    fn slide_turning(&self, s: Motion, t: f64, h: f64, fallback: DVec3) -> Motion {
+        rk4::step_state(s, t, h, |s, _| {
+            let u = slip(s.vel, s.spin, self.n, self.radius);
+            let len = u.length();
+            let u_hat = if len > SLIP_EPS { u / len } else { fallback };
+            self.slide_rate(s, u_hat)
+        })
+    }
+
+    /// Contact slip speed of `s`.
+    fn slip_speed(&self, s: &Motion) -> f64 {
+        slip(s.vel, s.spin, self.n, self.radius).length()
+    }
+}
+
 /// One ground step of at most `dt` on the ground sample `at`; see
-/// [`GroundPhysics::step`].
+/// [`GroundPhysics::step`]. Returns the new state, the phase over the step
+/// and whether the ball ends it rolling. The ball is left in the tangent
+/// plane at `at`; putting it back on the terrain is up to the caller.
 fn contact_step(
     state: &BallState,
     at: &GroundSample,
     ball: &BallModel,
     dt: f64,
     stop_speed: f64,
-) -> (BallState, Phase) {
+    roll_threshold: f64,
+) -> (BallState, Phase, bool) {
     let n = at.normal.normalize();
     let surface = &at.surface;
     let radius = ball.radius_m();
@@ -854,45 +1217,39 @@ fn contact_step(
 
     // Normal load and tangential gravity per unit mass.
     let g_n = G * n.y;
-    let g_t = GRAVITY - GRAVITY.dot(n) * n;
+    let g_t = tangential_gravity(n);
 
     let vel = state.vel - state.vel.dot(n) * n;
     let spin = state.spin;
     let w_n = spin.dot(n);
-    let pivot_accel = -w_n.signum() * surface.pivot * g_n / inertia * n;
+    // Pivot friction opposes the spin about the normal; with none (of
+    // either sign of zero) there is none.
+    let pivot_accel = if w_n == 0.0 {
+        DVec3::ZERO
+    } else {
+        -w_n.signum() * surface.pivot * g_n / inertia * n
+    };
 
-    let u = slip(vel, spin, n, radius);
-    let slip_speed = u.length();
+    let slip_speed = slip(vel, spin, n, radius).length();
 
     if slip_speed > SLIP_EPS {
-        let u_hat = u / slip_speed;
-        let friction = surface.mu_slide * g_n;
-        let slip_decay = (1.0 + k) / k * friction;
-        let to_roll = if slip_decay > 0.0 {
-            slip_speed / slip_decay
-        } else {
-            f64::INFINITY
+        let patch = Patch {
+            n,
+            g_t,
+            friction: surface.mu_slide * g_n,
+            radius,
+            k,
+            pivot_accel,
         };
-        let h = dt.min(to_roll);
-        let accel = -friction * u_hat + g_t;
-        let spin_accel = friction * n.cross(u_hat) / (k * radius) + pivot_accel;
-        let m = rk4::step_state(
-            Motion {
-                pos: state.pos,
-                vel,
-                spin,
-            },
-            state.time,
-            h,
-            |s, _| Motion {
-                pos: s.vel,
-                vel: accel,
-                spin: spin_accel,
-            },
-        );
+        let start = Motion {
+            pos: state.pos,
+            vel,
+            spin,
+        };
+        let (m, h, rolls) = slide(&patch, start, state.time, dt, roll_threshold);
         let mut spin_out = saturate_pivot(spin, m.spin, n);
         let mut vel_out = m.vel;
-        if to_roll <= dt {
+        if rolls {
             (vel_out, spin_out) = lock_rolling(vel_out, spin_out, n, radius, k);
         }
         let next = BallState {
@@ -901,28 +1258,47 @@ fn contact_step(
             vel: vel_out,
             spin: spin_out,
         };
-        return (next, Phase::Slide);
+        return (next, Phase::Slide, rolls);
     }
 
     // Rolling: lock the tangential spin to the velocity.
     let (vel, spin) = lock_rolling(vel, spin, n, radius, k);
     let speed = vel.length();
     let decel = |v: f64| surface.rolling_friction(v) * g_n / (1.0 + k);
-    let a0 = decel(speed);
-    if speed <= stop_speed.max(a0 * dt) {
+    let slope = g_t / (1.0 + k);
+    // Direction of motion; from rest (or a rounding-level speed), the way
+    // the slope pulls.
+    let downhill = slope.normalize_or_zero();
+    let heading = if speed > SLIP_EPS {
+        vel / speed
+    } else {
+        downhill
+    };
+    // Net deceleration along the motion: rolling resistance less the
+    // slope's pull along it.
+    let a0 = decel(speed) - slope.dot(heading);
+    // At (rounding-level) zero speed the ball stops exactly when the slope
+    // holds it, the same test the caller uses to end the roll.
+    let stops = if speed <= SLIP_EPS {
+        holds_at_rest(n, surface)
+    } else {
+        a0 >= 0.0 && speed <= stop_speed.max(a0 * dt)
+    };
+    if stops {
         let t_stop = if a0 > 0.0 { speed / a0 } else { 0.0 };
+        // The slope's pull across the motion bends the last stretch.
+        let across = slope - slope.dot(heading) * heading;
         let spin_n = w_n * n;
         let spin_rest = saturate_pivot(spin_n, spin_n + pivot_accel * t_stop, n);
         let rest = BallState {
             time: state.time + t_stop,
-            pos: state.pos + vel * (0.5 * t_stop),
+            pos: state.pos + vel * (0.5 * t_stop) + across * (0.5 * t_stop * t_stop),
             vel: DVec3::ZERO,
             spin: spin_rest,
         };
-        return (rest, Phase::Roll);
+        return (rest, Phase::Roll, true);
     }
 
-    let slope = g_t / (1.0 + k);
     let m = rk4::step_state(
         Motion {
             pos: state.pos,
@@ -933,7 +1309,12 @@ fn contact_step(
         dt,
         |s, _| {
             let v = s.vel.length();
-            let dv = -decel(v) * s.vel / v + slope;
+            let resistance = if v > SLIP_EPS {
+                -decel(v) * s.vel / v
+            } else {
+                -decel(0.0) * downhill
+            };
+            let dv = resistance + slope;
             Motion {
                 pos: s.vel,
                 vel: dv,
@@ -948,10 +1329,90 @@ fn contact_step(
         vel: m.vel,
         spin: n.cross(m.vel) / radius + spin_n,
     };
-    (next, Phase::Roll)
+    (next, Phase::Roll, true)
+}
+
+/// Slide from `start` (slip above `SLIP_EPS`) for at most `dt`: the state
+/// reached, the time taken, and whether the slip reached zero (the caller
+/// then locks the ball to rolling).
+fn slide(
+    patch: &Patch,
+    start: Motion,
+    t: f64,
+    dt: f64,
+    roll_threshold: f64,
+) -> (Motion, f64, bool) {
+    // d|u|/dt = −c + g_t·û: the slip shrinks at `c` less the slope's pull
+    // along it. The switch to finishing along a fixed slip direction is kept
+    // above zero slip, where û would flip within the RK4 stages.
+    let roll_threshold = roll_threshold.max(MIN_SWITCH_SLIP);
+    let c = (1.0 + patch.k) / patch.k * patch.friction;
+    let finish = |s: Motion, t: f64, left: f64| -> (Motion, f64, bool) {
+        // Slide to zero slip along the current slip direction: exact when
+        // that direction cannot turn (level ground, or slip along the fall
+        // line of a plane).
+        let u = slip(s.vel, s.spin, patch.n, patch.radius);
+        let len = u.length();
+        if len <= SLIP_EPS {
+            return (s, 0.0, true);
+        }
+        let u_hat = u / len;
+        let rate = c - patch.g_t.dot(u_hat);
+        let to_roll = if rate > 0.0 {
+            len / rate
+        } else {
+            f64::INFINITY
+        };
+        let h = left.min(to_roll);
+        (patch.slide_fixed(s, t, h, u_hat), h, to_roll <= left)
+    };
+
+    if patch.g_t == DVec3::ZERO {
+        // Level ground: the slip direction is fixed and |u| falls linearly.
+        return finish(start, t, dt);
+    }
+
+    let u0 = slip(start.vel, start.spin, patch.n, patch.radius);
+    let s0 = u0.length();
+    let u_hat0 = u0 / s0;
+    if s0 <= roll_threshold {
+        return finish(start, t, dt);
+    }
+    // The slip cannot reach the threshold within the step: one RK4 step
+    // with the slip direction tracked through the stages.
+    let fastest = c + patch.g_t.length();
+    if s0 - roll_threshold > fastest * dt {
+        return (patch.slide_turning(start, t, dt, u_hat0), dt, false);
+    }
+    let full = patch.slide_turning(start, t, dt, u_hat0);
+    let s_full = patch.slip_speed(&full);
+    if s_full > roll_threshold {
+        return (full, dt, false);
+    }
+    // The slip falls to the threshold within the step: solve for that time,
+    // then finish along the slip direction there.
+    let above =
+        |tau: f64| patch.slip_speed(&patch.slide_turning(start, t, tau, u_hat0)) - roll_threshold;
+    let rate0 = c - patch.g_t.dot(u_hat0);
+    let guess = if rate0 > 0.0 {
+        (s0 - roll_threshold) / rate0
+    } else {
+        dt
+    };
+    let tau = find_root(
+        above,
+        (0.0, s0 - roll_threshold),
+        (dt, s_full - roll_threshold),
+        guess,
+    );
+    let mid = patch.slide_turning(start, t, tau, u_hat0);
+    let (end, h, rolls) = finish(mid, t + tau, dt - tau);
+    (end, tau + h, rolls)
 }
 
 #[cfg(test)]
 mod regression_data;
+#[cfg(test)]
+mod terrain_tests;
 #[cfg(test)]
 mod tests;

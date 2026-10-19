@@ -198,7 +198,8 @@ Environmental response (density-only): Denver +6.9% driver carry (published
    ball while it slides. Gaps: no published measurement of these lateral
    effects to validate against; the pivot (torsional friction) lever is
    uncalibrated; the fairway's compliance is chosen, not measured; drag is
-   ignored between hops; the ground is level (no slopes).
+   ignored between hops; slope behaviour is unvalidated (see
+   [Ground limitations](#limitations)).
 
 ### `BallModel::PATENT_1997` — 1990s Tour Ball
 
@@ -263,8 +264,8 @@ Everything after landing is a rigid sphere with point contact, carrying the
 full spin vector ω through every contact. The tracked point is the ball's
 centre, and the ball touches the ground when its centre reaches the ground
 height (the radius is not added), as in the flight's landing; on ground
-level with the tee a ball touching the ground has `y = 0`. The ground is
-level in this version; slopes are not yet modeled.
+level with the tee a ball touching the ground has `y = 0`. The ground is a
+heightfield with slopes (see [Terrain and slopes](#terrain-and-slopes)).
 
 ### What spin can and cannot do on the ground
 
@@ -274,7 +275,11 @@ slips at `u = v_t + ω × r`; friction acts against `u`.
 - **Spin about the normal can't move the contact point**, so it can't kick
   the ball; pivot (torsional) friction only decays it. On level ground this
   is the launch-monitor *sidespin* component, ω_y. Sidespin therefore does
-  not steer a sliding or rolling ball.
+  not steer a sliding or rolling ball on level ground. On a slope the
+  normal is tilted, so part of ω_y lies in the contact plane and slips the
+  contact point: on rigid gripping ground it kicks the ball by
+  `(k/(1+k))·R·ω_y·(ŷ × n)`, along the line of play on a side slope and
+  across it on an uphill or downhill one.
 - **A curving ball kicks further off-line at its first bounces.** The spin
   axis is fixed in flight, perpendicular to the start line, but a curving
   ball lands heading further off-line than that. The backspin then slips
@@ -386,27 +391,100 @@ plus roll, agrees fairly well with empirical drive runs (Cochran & Stobbs;
 Williams; his Fig. 5), with the model's runs slightly longer.
 
 The ball keeps bouncing while its rebound would rise at least 5 mm above the
-ground, `(v·n)² / (2g) ≥ 5 mm` (`v·n` ≥ ~0.313 m/s), Penner's transition
-height; he tested 1–10 mm and found only a minor effect on the run. Its
-normal velocity is then dropped and it slides or rolls. A safety bound of
-200 impacts guards degenerate surfaces (e.g. elastic and frictionless);
-real shots end by the 5 mm rule well before it. Between impacts the ball
-follows a gravity-only (drag-free) path, integrated with RK4 at 1 ms; the
-next ground crossing is solved exactly within the final step.
+ground, measured along the normal: `(v·n)² / (2·g·n_y) ≥ 5 mm` (on level
+ground `v·n` ≥ ~0.313 m/s), Penner's transition height; he tested 1–10 mm
+and found only a minor effect on the run. On a slope the hops must also die
+out (below). Otherwise its normal velocity is dropped and it slides or
+rolls. A safety bound of 200 impacts guards degenerate surfaces (e.g.
+elastic and frictionless); real shots end by these rules well before it.
+Between impacts the ball follows a gravity-only (drag-free) path,
+integrated with RK4 at 1 ms. Each step is checked for a ground crossing at
+8 equal sub-steps along the exact parabola, and the crossing is solved
+within the first sub-step that ends at or below the ground, as the root of
+the clearance `y(τ) − height(x(τ), z(τ))` (regula falsi with bisection, to
+1e-12 m). The next impact uses the terrain's normal there.
+
+**Hops on a slope.** Downhill, gravity hands energy back between hops, and
+the 5 mm height alone need not end them. At grazing incidence (φ ≈ 90°)
+eq. 8 makes the tilt proportional to the speed, β ≈ C·v with
+C = compliance · 15.4° · (90°/44.4°) / (18.6 m/s) (0.026 s/m on `FAIRWAY`).
+Take a rolling ball moving down a slope θ at speed v and hopping with
+normal speed w. Each impact takes `(1 − e²)·(w + vβ)²/2` per unit mass
+(normal restitution against the tilted plane; the grip friction loss is of
+higher order), and over a hop of time `T = 2w/(g cos θ)` the slope returns
+`g sin θ · vT = 2vw tan θ`. With the hops neither growing nor shrinking,
+the rebound `w = e·w + (1 + e)·vβ` gives `w = vβ·(1 + e)/(1 − e)`, and the
+two energies balance at
+
+```
+β ≈ tan θ ≈ θ,   i.e.   v* ≈ θ / C
+```
+
+There the train is self-sustaining: faster, the tilt takes more than the
+slope returns; slower, less. Its hop height
+
+```
+h* = w² / (2g cos θ) ≈ ((1 + e)/(1 − e))² · θ⁴ / (2g · C²)
+```
+
+grows as θ⁴. With e ≈ 0.5 at these slow impacts it is about 1 mm at 2°,
+5 mm at 3° and 15 mm at 4° on `FAIRWAY`. Once h* passes 5 mm the 5 mm rule
+never triggers: the ball hops down the slope indefinitely at v* (about
+2 m/s at 3°) and never rolls. Under the 5 mm rule alone, a drive landing
+on a 3° downhill fairway is still hopping after 200 impacts.
+
+So on a slope the ball keeps hopping only while the train dies out. With
+the rebound's normal speed `w = v·n`, the hop time on the local plane
+`T = 2w/(g·n_y)`, the potential energy the slope releases over that hop
+`ΔU = −g·(v_y·T − g·T²/2)` (positive downhill) and the energy the impact
+removed `ΔE = E_in − E_out`, with `E = |v|²/2 + k·R²·|ω|²/2` per unit mass,
+it keeps hopping if
+
+```
+ΔU ≤ 0   or   ΔE − ΔU ≥ g · min_hop_height
+```
+
+Each impact must take at least the energy of a 5 mm hop more than the next
+hop gives back. Otherwise the ball goes to the ground exactly as below the
+5 mm height. On level ground the 5 mm height alone decides, so level-ground
+results do not depend on this rule, and a hop that climbs returns nothing.
+
+This stays within Penner's transition. He notes that "the transition
+between bouncing and rolling will, of course, take place over several
+bounces and the 5 mm mark, which was used in the analysis, must be treated
+as a simplification of the actual behaviour of a real golf ball" (p. 935),
+and, since a ball at rest sits about 2 mm into a green (Hubbard & Alaways),
+that "it is expected that the bounce model will break down as bounce
+heights approach the 2 mm value" (pp. 934–935). A train the slope holds at
+a fixed few millimetres is not a transition that decays through 5 mm; it is
+the bounce model run indefinitely where it breaks down, at slow grazing
+impacts where the linear θc law is least certain. Once the impacts no
+longer clearly outrun the slope the ball rolls, and Kensrud's rolling
+resistance, measured on balls rolling on turf, already contains the turf's
+dissipation at that speed.
 
 ### Slide and roll
 
 On the ground the state is position, velocity and the spin vector,
-integrated with RK4 at 1 ms within each smooth phase, with the surface
-sampled under the contact point every step:
+integrated with RK4 at 1 ms within each smooth phase, with the terrain
+sampled under the ball every step. With `n` the normal, the normal load is
+`m·g·n_y` and the slope pulls with the tangential gravity
+`g_t = g − (g·n)n` (zero on level ground):
 
-- **Slide** (the contact point slips): friction `−μ·m·g·û` and its torque
-  `(−R n) × F`. The slip speed falls linearly at `((1+k)/k)·μ·g`
-  (3.5·μ·g for k = 2/5), so the slide is stepped exactly to the moment the
-  slip reaches zero. Backspin can reverse the ball.
+- **Slide** (the contact point slips): friction `−μ·m·g·n_y·û`, its torque
+  `(−R n) × F`, and `g_t`. On level ground the slip direction is fixed and
+  the slip speed falls linearly at `((1+k)/k)·μ·g` (3.5·μ·g for k = 2/5),
+  so the slide is stepped exactly to the moment the slip reaches zero. On a
+  slope `g_t` turns the slip direction (`du/dt = −((1+k)/k)·μ·g·n_y·û + g_t`),
+  so û is re-evaluated at every RK4 stage. The moment the slip falls to
+  `roll_threshold` (0.01 m/s) is solved within the step (regula falsi with
+  bisection), and from there the slide finishes along that slip direction
+  to zero slip, which is exact when the slip lies along the fall line.
+  Backspin can reverse the ball.
 - **Roll**: the spin tangential to the ground is locked to the velocity, and
-  the ball decelerates at `μ_eff·g/(1+k)` with the speed-dependent rolling
-  resistance of Kensrud et al. (2024):
+  the ball decelerates at `μ_eff·g·n_y/(1+k)` against its velocity, with the
+  speed-dependent rolling resistance of Kensrud et al. (2024), while the
+  slope pulls with `g_t/(1+k)`:
 
   ```
   μ_eff = mu_roll · (1 + (v / roll_v_ref)²)
@@ -417,12 +495,86 @@ sampled under the contact point every step:
   at `v₀` stops after `(1+k)·v_ref² / (2·mu_roll·g) · ln(1 + v₀²/v_ref²)`:
   3.48 m (stimp 11.4 ft) on `GREEN` and 1.60 m (5.2 ft) on `FAIRWAY` for
   the stimpmeter's 1.83 m/s.
-- **Spin about the normal** decays at `pivot·g / (k R²)` in both phases,
-  saturating at zero.
-- **Rest**: a rolling ball slower than one step's deceleration (or than
-  `stop_speed`, default 0.01 m/s) finishes at constant deceleration and
-  stops. The result reports why the ground phase ended: `Rest`, `MaxTime`
-  (default 30 s after landing) or `MaxImpacts`.
+- **Spin about the normal** decays at `pivot·g·n_y / (k R²)` in both
+  phases, saturating at zero.
+- **Rest**: a rolling ball that is slowing and slower than one step's
+  deceleration (or than `stop_speed`, default 0.01 m/s) finishes at
+  constant deceleration and stops. At zero speed rolling resistance can
+  hold the ball against the slope where `g·sin θ ≤ mu_roll·g·cos θ`, i.e.
+  `tan θ ≤ mu_roll` (`GroundSample::holds_at_rest`, on the ground where
+  the ball stops): up to 6.8° on `FAIRWAY` and 3.1° on `GREEN`. There it
+  stays at rest; on steeper ground it starts rolling downhill again from
+  zero speed (a ball rolling uphill stops once, then rolls back). The result reports why the ground phase
+  ended: `Rest`, `MaxTime` (default 30 s after landing, which is also how a
+  ball still rolling down a long slope ends) or `MaxImpacts`.
+
+### Terrain and slopes
+
+`Terrain::sample(x, z)` describes the ground as a heightfield: the height,
+the unit normal (`n_y > 0`; for `y = h(x, z)` it is `(−∂h/∂x, 1, −∂h/∂z)`
+normalised) and the surface at each horizontal position. `GroundPhysics`
+samples it at the ball centre's (x, z); the ball is on the ground when its
+centre is at that height.
+
+- **Landing.** `simulate_shot` launches from `(0, height(0, 0), 0)`. Each
+  1 ms flight step is checked for a crossing of the clearance
+  `y − height(x, z)` at 8 equal sub-steps, and the crossing is solved
+  within the first sub-step that ends at or below the ground (regula falsi
+  with bisection, to 1e-12 m), so the ball lands where its flight first
+  meets an elevated green, a downslope, curved ground or a ridge thinner
+  than the step. A feature narrower than a sub-step (about 1 cm at 75 m/s)
+  can still be missed. Carry is the horizontal distance from the tee to
+  that point.
+- **Impacts** use the sampled normal: the tilt, the slip and the pivot all
+  act about the true normal of the slope.
+- **On the ground** each step is taken in the tangent plane under the ball;
+  the ball is then put back on the heightfield at its new (x, z), with its
+  velocity projected onto the new tangent plane and, when rolling, its
+  tangential spin re-locked to that velocity. On a plane this is exact. On
+  curved ground the ball always follows the surface: over a crest where
+  `v²·κ > g·n_y` (κ the curvature along the path) a real ball would leave
+  the ground, which is not modelled, and entering a concave transition the
+  velocity component along the new normal is removed, as in an inelastic
+  contact.
+
+Run past the landing point (yards) on planes rising (−) or falling (+)
+downrange through the tee; `Rest` unless marked. `FAIRWAY`:
+
+| Slope | −3° | −2° | −1° | 0° | +1° | +2° | +3° | +4° | +5° | +6° |
+|---|---|---|---|---|---|---|---|---|---|---|
+| driver | 24.9 | 27.1 | 30.0 | 34.6 | 41.4 | 49.6 | 60.9 | 75.3 | 91.9 | 109.4 |
+| 7-iron (`seven_iron`) | 3.5 | 4.0 | 4.8 | 5.9 | 8.4 | 10.4 | 10.6 | 12.2 | 14.5 | 18.0 |
+| wedge | 0.2 | 0.4 | 0.6 | 0.8 | 1.2 | 1.8 | 2.7 | 4.0 | 6.1 | 9.8 |
+
+`GREEN` (default 30 s `max_time`):
+
+| Slope | −3° | −2° | −1° | 0° | +1° | +2° | +2.5° | +3° |
+|---|---|---|---|---|---|---|---|---|
+| driver | 19.9 | 21.6 | 24.1 | 27.9 | 34.0 | 43.3 | 51.0 | 62.8 (`MaxTime`) |
+| 7-iron (`seven_iron`) | 2.8 | 3.2 | 4.1 | 5.5 | 7.7 | 12.1 | 16.4 | 27.5 (`MaxTime`) |
+| wedge | −1.1 | −0.1 | 0.0 | 0.1 | 0.4 | 1.3 | 2.8 | 9.7 |
+
+Downhill, the hops end by the slope rule above and the ball rolls the rest
+of the way. The 7-iron's run barely changes from 2° to 3° on `FAIRWAY`:
+steeper, the hop train ends after fewer impacts.
+
+Lateral run (yards, + = right) on a plane falling to the right across the
+line of play, all `Rest`; the same plane falling left gives exactly the
+mirror image:
+
+| Plane | driver | 7-iron (`seven_iron`) | wedge |
+|---|---|---|---|
+| `FAIRWAY` 2.5° | +12.0 | +2.6 | +1.0 |
+| `FAIRWAY` 5° | +26.1 | +6.2 | +4.0 |
+| `GREEN` 2.5° | +16.3 | +6.4 | +2.5 |
+
+`GREEN` holds a ball at rest up to 3.1° (`tan θ ≤ 0.055`). Close to that
+the net deceleration of a slow roll, `(5/7)·g·cos θ·(μ_eff − tan θ)`, is
+tiny and the last metres take a long time: on a 3° downhill green a drive
+stops 51 s after landing and a 7-iron 41 s, past the default 30 s
+`max_time` (`MaxTime` above); at 3.1° they take 86 s and 77 s. Raise
+`max_time` (e.g. to 120 s) for such greens. Beyond 3.1° a ball on `GREEN`
+never stops.
 
 ### Surfaces
 
@@ -494,8 +646,9 @@ The ground API has three layers:
    (5 mm), `stop_speed` and `roll_threshold` (0.01 m/s), `max_impacts`
    (200), `max_time` (30 s).
 3. **`GroundModel`** — replace the physics: implement `height(x, z)` and
-   `settle(landing, ball)`, and optionally `landing(a, b)` (by default an
-   interpolated height crossing; an engine can substitute its own sweep).
+   `settle(landing, ball)`, and optionally `landing(a, b)` (by default the
+   solved crossing of the straight segment with the heightfield; an engine
+   can substitute its own sweep).
    It is object-safe, so `&dyn GroundModel` works. The building blocks
    `ground::impact` and `GroundPhysics::step` are public, and the result
    types (`GroundResult`, `Contact`, `GroundPoint`) have `new`
@@ -504,8 +657,8 @@ The ground API has three layers:
 
 `simulate_shot` launches from `(0, height(0, 0), 0)`, ends the flight at
 `landing()`, and hands the landing state to `settle()`. `simulate_flight`
-always lands on the plane y = 0. Both interpolate the landing point to the
-exact ground crossing.
+always lands on the plane y = 0. Both place the landing point exactly on
+the ground at the solved crossing.
 
 ### Limitations
 
@@ -523,10 +676,31 @@ exact ground crossing.
 - **No drag between hops.** A drive's first hops leave at up to ~8 m/s and
   stay airborne for over a second, so drag is not negligible; ignoring it
   lengthens the run somewhat (an estimated few yards on a drive).
-- **Level ground.** Every impact is on a level surface. `Terrain` must be
-  level (normal +Y, the same height everywhere); its surfaces are honoured
-  point by point. Slopes are not modeled. Penner attributes his model's
-  slightly long drive runs to the same assumption.
+- **Heightfield only.** One height per (x, z): no walls, lips or cup. A
+  step in the height is crossed as if the ball were lifted onto it.
+  Crossings are found at 8 sub-steps per 1 ms flight or hop step, so a
+  ridge or wall narrower than a sub-step (about 1 cm at full speed) can be
+  missed.
+- **Curved ground is followed, not flown over.** Each ground step is taken
+  in the tangent plane and the ball is put back on the surface: no launch
+  off crests, and the normal component of the velocity is removed at
+  concave transitions. Exact on planes; a first-order approximation on
+  curved ground.
+- **Slopes are unvalidated.** The slope physics (normal load, downhill
+  pull, hold where `tan θ ≤ mu_roll`) is standard rigid-body mechanics, but
+  Penner's impact model and Kensrud's rolling resistance were both fitted
+  on level turf; no published sloped-turf data is compared against. Penner
+  attributes his model's slightly long drive runs to its assumption of
+  level ground.
+- **The slope hop rule is a modelling choice.** It ends hop trains that
+  Penner's impact model would sustain down a slope (see
+  [Hops and the bounce-to-roll transition](#hops-and-the-bounce-to-roll-transition)).
+  Its margin, one 5 mm hop's energy per impact, carries over Penner's
+  transition height; it is not measured.
+- **Near-critical green slopes need a longer `max_time`.** Within a few
+  tenths of a degree of `GREEN`'s 3.1° hold angle a slow roll decelerates
+  so little that it outlasts the default 30 s (see
+  [Terrain and slopes](#terrain-and-slopes)).
 
 ## Implementation
 
@@ -546,11 +720,12 @@ The aerodynamic model lives in `src/aero.rs`, the ground model in
 Flight simulation: `simulate_flight(input, ball, env) -> FlightResult`
 
 RK4 integration at 1ms timestep, spin decays each step, trajectory sampled
-every 10ms. Stops at the interpolated crossing of ground level.
+every 10ms. Stops at the solved crossing of ground level.
 
 Full shot: `simulate_shot(input, ball, env, ground) -> ShotResult` runs the
-flight onto `ground`, then `ground.settle()`: impacts, hops, slide and roll
-to rest (`ShotResult.ground`, with absolute times).
+flight from the tee on `ground` until it crosses the terrain, then
+`ground.settle()`: impacts, hops, slide and roll to rest
+(`ShotResult.ground`, with absolute times).
 
 ## Test Suite
 
@@ -568,6 +743,7 @@ Unit tests live beside the code in each module. Test categories:
 - **Ground: planar regression** — the 3D impact reproduces the planar Penner solution impact by impact (preset driver, 7-iron and wedge on both presets) to float tolerance
 - **Ground: physics** — Penner (2002) restitution, drive bounce heights and runs (Fig. 4), 9-iron spin-back (Figs. 7–8), 5 mm bounce-to-roll transition, compliance tilt (2β rotation, cap), grip-regime kick formula, no kick from spin about the normal, tilt-throw magnitude (grip and slip), rifle-spin drift, grazing impacts, pivot friction about the true normal and its independence from the level-ground path, general inertia factor (k = 2/3), exact slide-to-roll time, stimpmeter closed form
 - **Ground: invariants** — energy never increases at an impact or along the ground phase; mirror (±sidespin, ±azimuth) and rotation about Y give mirrored and rotated results; fades rest right, draws rest left
+- **Ground: terrain** — rest on slopes (hold below atan `mu_roll`, roll downhill above, both presets; one stop and no chatter rolling uphill), long downhill reports `MaxTime`, slide-to-roll on a plane against the closed form, slip turning across a slope, vertical spin kicks on slopes only, uphill landings check up and downhill landings release, elevated green (shorter carry, lands on it), tee on the terrain, landing and hop crossings on curved terrain to 1e-9 m, first crossing of thin walls and ridges in a landing segment and a hop step, ball kept on the surface; slope hop rule, downhill `FAIRWAY` up to 6° and `GREEN` up to 2.5° end at rest, side slopes rest and mirror exactly, rest judged on the surface where the ball stops, slide-to-roll on curved ground without flicker; mirror, rotation about Y with a sloped plane, and energy on slopes
 - **Ground: API** — per-point surfaces (fairway-to-green roll), `MaxTime`/`MaxImpacts` termination, tunables, interpolated landing, `&dyn GroundModel`
 
 Run: `cargo test`

@@ -96,6 +96,18 @@ let range = GroundPhysics::new(FnTerrain(|x: f64, _z: f64| GroundSample {
 }));
 let shot = simulate_shot(&input, &ball, &env, &range);
 
+// Slopes and height: a heightfield with its normal. Here the fairway
+// rises 2° downrange; for height = a·x + b·z the normal is (−a, 1, −b)
+// normalised. The ball lands where its flight first crosses the surface
+// and slides and rolls with the slope's pull.
+let a = 2.0_f64.to_radians().tan();
+let uphill = GroundPhysics::new(FnTerrain(move |x: f64, _z: f64| GroundSample {
+    height: a * x,
+    normal: DVec3::new(-a, 1.0, 0.0).normalize(),
+    surface: Surface::FAIRWAY,
+}));
+let shot = simulate_shot(&input, &ball, &env, &uphill);
+
 // Tunables (step, hop transition, limits) are public fields too.
 let quick = GroundPhysics { max_time: 10.0, ..GroundPhysics::new(Surface::GREEN) };
 let shot = simulate_shot(&input, &ball, &env, &quick);
@@ -106,8 +118,16 @@ let shot = simulate_shot(&input, &ball, &env, &quick);
    `GroundPhysics::step` are public building blocks, and `GroundResult`,
    `Contact` and `GroundPoint` have `new` constructors.
 
-The ground is level in this version; slopes are not yet modeled. See
-[docs/AERO.md](docs/AERO.md#ground-model) for the contact model.
+The terrain is a heightfield: one height, normal and surface per (x, z),
+sampled under the ball's centre. Flights launch from `(0, height(0, 0), 0)`
+and land where they first cross the surface; carry is the horizontal
+distance to that point. Each 1 ms flight or hop step is checked for a
+crossing at 8 sub-steps, so a ridge or wall narrower than a sub-step (about
+1 cm at full speed) can be missed. On a slope a ball at rest stays put where `tan θ ≤ mu_roll`
+and rolls downhill otherwise. There are no walls, lips or cup, and on
+curved ground the ball follows the surface (it never launches off a
+crest). See [docs/AERO.md](docs/AERO.md#ground-model) for the contact
+model and its limitations.
 
 ## Conventions
 

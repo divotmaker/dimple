@@ -111,7 +111,7 @@ pub struct FlightResult {
     pub points: Vec<TrajectoryPoint>,
     /// Time from launch to landing (s).
     pub flight_time: f64,
-    /// Straight-line ground distance from the tee to the landing point (m).
+    /// Horizontal distance from the tee to the landing point (m).
     pub carry_m: f64,
     /// [`carry_m`](Self::carry_m) in yards.
     pub carry_yards: f64,
@@ -274,11 +274,15 @@ pub struct ShotResult {
 
 /// Simulate a complete shot: flight, landing, and the ground phase.
 ///
-/// `ground` decides where the flight lands ([`GroundModel::landing`]) and
+/// The ball launches from the ground under the tee,
+/// `(0, ground.height(0, 0), 0)`. `ground` decides where the flight lands
+/// ([`GroundModel::landing`]: on terrain, where the flight crosses the
+/// surface, so elevated greens and downhill landings change the carry) and
 /// what happens afterwards ([`GroundModel::settle`]). Pass a [`Surface`]
 /// for flat ground with the default physics, a
-/// [`GroundPhysics`](crate::ground::GroundPhysics) for per-point surfaces or
-/// custom tunables, or your own [`GroundModel`] (also as `&dyn GroundModel`).
+/// [`GroundPhysics`](crate::ground::GroundPhysics) for terrain (slopes,
+/// heights, per-point surfaces) or custom tunables, or your own
+/// [`GroundModel`] (also as `&dyn GroundModel`).
 #[must_use]
 pub fn simulate_shot<G: GroundModel + ?Sized>(
     input: &ShotInput,

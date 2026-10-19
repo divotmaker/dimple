@@ -50,13 +50,17 @@
 //!    `Surface { mu_roll: 0.09, ..Surface::FAIRWAY }`.
 //! 2. [`ground::GroundPhysics`] over a [`ground::Terrain`]: dimple's contact
 //!    physics with tunable steps and limits, on ground you describe point by
-//!    point (for example [`ground::FnTerrain`] for per-point surfaces).
+//!    point: a heightfield giving the height, normal and surface at each
+//!    (x, z), for example with [`ground::FnTerrain`]. Slopes, elevated
+//!    greens and per-point surfaces all go here.
 //! 3. [`ground::GroundModel`]: replace the physics entirely. It is
 //!    object-safe; [`ground::impact`] and
 //!    [`ground::GroundPhysics::step`] are public so a custom model can reuse
 //!    pieces, and the result types have constructors.
 //!
-//! The ground is level in this version; slopes are not yet modeled.
+//! [`trajectory::simulate_shot`] launches from the terrain under the tee and
+//! lands where the flight crosses the surface;
+//! [`trajectory::simulate_flight`] always lands on the plane y = 0.
 //!
 //! # Conventions
 //!
@@ -75,7 +79,8 @@
 //!
 //! Every position, velocity and angular velocity vector in the public API
 //! (trajectory points, contacts, ground points, final rest position) uses
-//! this frame. Positions are of the ball's centre; a ball on level ground
+//! this frame. Positions are of the ball's centre, and the ball touches
+//! the ground when its centre reaches the ground height: a ball on ground
 //! level with the tee has `y = 0`.
 //!
 //! **Lateral signs: positive = right.** Every lateral quantity is positive to
@@ -108,12 +113,15 @@
 pub mod aero;
 /// Atmosphere: altitude and temperature to air density.
 pub mod environment;
-/// Everything after landing: surfaces, terrain, 3D impacts, hops, slide and
-/// roll, with the spin vector carried through every contact.
+/// Everything after landing: surfaces, heightfield terrain, 3D impacts,
+/// hops, slide and roll on slopes, with the spin vector carried through
+/// every contact.
 ///
 /// Spin about the ground normal (launch-monitor sidespin, on flat ground)
 /// cannot move a rigid ball's contact point, so it does not steer the roll;
-/// pivot friction decays it. Lateral movement on the ground comes from the
+/// pivot friction decays it. On a slope the normal is tilted, so part of
+/// that vertical spin lies in the contact plane and does slip the contact
+/// point. Lateral movement on the ground comes from the
 /// spin components that do slip the contact point: a backspin axis that no
 /// longer matches the heading of a curving ball (fades kick right, draws
 /// left), spin along the direction of travel, and, at impact, the part of
