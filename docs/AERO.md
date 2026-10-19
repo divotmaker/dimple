@@ -1,9 +1,7 @@
 # Golf Ball Aerodynamics Model
 
-Aerodynamic model for golf ball flight simulation. Used by
-[cyberflight](https://github.com/divotmaker/cyberflight) (cf-math crate) and
-available for any project that needs realistic ball flight from launch monitor
-data.
+Aerodynamic model behind `dimple`, for any project that needs realistic ball
+flight from launch monitor data.
 
 ## Overview
 
@@ -16,6 +14,37 @@ temperature.
 
 **Key outputs:** carry distance, apex height, lateral deviation, flight time,
 full trajectory points.
+
+## Conventions
+
+Internal units are SI: meters, seconds, kilograms, radians, rad/s.
+
+Coordinate frame (right-handed, origin at the tee):
+
+| Axis | Direction |
+|---|---|
+| +X | downrange, along the target line |
+| +Y | up |
+| +Z | right of the target line, from the golfer's view |
+
+All lateral quantities are **positive = right** of the target line:
+
+| Quantity | Positive means |
+|---|---|
+| launch azimuth | ball starts right of target |
+| sidespin | ball curves right (fade/slice for a right-handed golfer) |
+| lateral deviation (`lateral_m`, `lateral_yards`) | ball lands right of target |
+| `z` of any position / velocity | right of / moving right |
+
+Spin is a single angular velocity vector ω (right-hand rule). Backspin points
+along +Z; positive sidespin (clockwise viewed from above) points along -Y:
+
+```
+ω = (0, -sidespin, backspin)
+```
+
+so the Magnus direction ω̂ × v̂ is up for backspin and toward +Z (right) for
+positive sidespin on a ball travelling downrange.
 
 ## Force Model
 
@@ -211,7 +240,7 @@ Default λ = 0.04 s⁻¹ (~21% loss over 6 seconds). Published data:
 
 ## Implementation
 
-The model lives in `cf-math/src/aero.rs`. Key types:
+The model lives in `src/aero.rs`. Key types:
 
 - **`BallModel`** — physical dimensions + aero coefficients. Presets: `TOUR`,
   `PATENT_1997`.
@@ -224,16 +253,23 @@ Flight simulation: `simulate_flight(input, ball, env) -> FlightResult`
 RK4 integration at 1ms timestep, spin decays each step, trajectory sampled
 every 10ms. Stops when ball returns to ground level.
 
+Full shot: `simulate_shot(input, ball, env, bounce_surface, rollout_surface)
+-> ShotResult` runs the flight, then an oblique-impact bounce sequence
+(`src/bounce.rs`, Penner/Cross turf model), then sliding/rolling ground roll
+with speed-dependent friction (`src/rollout.rs`).
+
 ## Test Suite
 
-171 tests across the workspace (95 in cf-math). Test categories:
+Unit tests live beside the code in each module. Test categories:
 
 - **Structural invariants** — energy conservation, origin start, axis normalization
+- **Sign conventions** — azimuth, slice/hook, push-draw, mirror symmetry, rest position
 - **Patent wind tunnel** — 7 Cd/Cl data points against PATENT_1997 model
-- **Trackman carry** — 8 shots validated against 2024 PGA Tour Averages (±10-12y)
+- **Trackman carry** — 8 shots validated against published PGA Tour Averages (±10-12y)
 - **Descent angle** — iron DA within expected ranges
 - **Altitude/temperature** — Denver gain, hot-cold delta, directional checks
 - **Spin decay** — exponential decay rate against Trackman measurements
 - **Era comparison** — TOUR vs PATENT_1997 carry gaps, Cd reduction, Cl sensitivity
+- **Bounce/rollout** — rebound, spin-back, stimpmeter calibration, surface comparison
 
-Run: `cd cyberflight/cyberflight && cargo test --lib -p cf-math`
+Run: `cargo test`
