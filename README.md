@@ -80,9 +80,13 @@ use glam::DVec3;
 
 let (input, ball, env) = (ShotInput::driver(), BallModel::TOUR, Environment::SEA_LEVEL);
 
-// 1. One flat surface: a preset, or a preset with any field changed.
+// 1. One flat surface: a preset (FAIRWAY, GREEN, FIRM_GREEN), a green
+//    set to a stimpmeter reading, or a preset with any field changed.
 let shot = simulate_shot(&input, &ball, &env, &Surface::FAIRWAY);
-let firm = Surface { mu_roll: 0.09, ..Surface::FAIRWAY };
+let fast = Surface::GREEN.with_stimp(12.0);
+assert!((fast.stimp_feet() - 12.0).abs() < 1e-9);
+let shot = simulate_shot(&input, &ball, &env, &fast);
+let firm = Surface { compliance: 0.75, ..Surface::FAIRWAY }.with_stimp(7.0);
 let shot = simulate_shot(&input, &ball, &env, &firm);
 
 // 2. dimple's physics over ground you describe point by point: here a
@@ -128,6 +132,15 @@ and rolls downhill otherwise. There are no walls, lips or cup, and on
 curved ground the ball follows the surface (it never launches off a
 crest). See [docs/AERO.md](docs/AERO.md#ground-model) for the contact
 model and its limitations.
+
+`GREEN` and `FIRM_GREEN` impact like Penner's (2002) green and firm green;
+`FAIRWAY` uses the same impact model with a chosen compliance.
+`Surface::with_stimp(feet)` sets the rolling resistance from a stimpmeter
+reading in closed form, and `Surface::stimp_feet()` reads it back (`GREEN`
+is 11.4 ft). There are no rough or bunker presets, because no published
+set of this model's parameters exists for them; build such surfaces with
+struct update syntax and `with_stimp` (see
+[docs/AERO.md](docs/AERO.md#other-surfaces)).
 
 ## Conventions
 

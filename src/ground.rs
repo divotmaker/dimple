@@ -4,7 +4,25 @@ use glam::DVec3;
 
 use crate::aero::BallModel;
 use crate::rk4::{self, Integrable};
-use crate::units::G;
+use crate::units::{self, G};
+
+/// Speed (m/s) at which a ball leaves the USGA stimpmeter onto the green,
+/// already rolling: the 1.83 m/s (6.0 ft/s) of Penner (2002, "The physics of
+/// putting", *Can. J. Phys.* 80, 83), from Holmes's (1986) analysis of the
+/// device (*The Physics Teacher* 24, 401).
+///
+/// The ball is released from a notch 30 in up the ramp when the ramp reaches
+/// about 20°. A solid ball rolling 30 in down a 20° plane without loss would
+/// leave at about 1.91 m/s (6.3 ft/s); in the 145° V-groove the rails touch
+/// the ball off its lowest point, so more of the drop goes into spin and the
+/// lossless speed is about 1.88 m/s. Holmes's fuller analysis gives
+/// 6.0 ft/s. dimple cites no direct measurement of it.
+/// [`Surface::with_stimp`] and [`Surface::stimp_feet`] use this speed.
+pub const STIMPMETER_SPEED: f64 = 1.83;
+
+/// Inertia factor k = I/(m·R²) of the ball the stimpmeter conversions
+/// assume: a uniform solid sphere, as in both [`BallModel`] presets.
+const STIMP_INERTIA_FACTOR: f64 = 0.4;
 
 /// Penner (2002) eq. 8 reference contact angle θc (rad): 15.4°, his fit to
 /// Haake's green impact.
@@ -98,7 +116,9 @@ pub struct Surface {
     /// slowly rolling ball (stimpmeter speeds).
     pub mu_roll: f64,
     /// Speed scale (m/s) of the speed-dependent rolling resistance,
-    /// μ_eff = `mu_roll` · (1 + (v / `roll_v_ref`)²) (Kensrud et al. 2024).
+    /// μ_eff = `mu_roll` · (1 + (v / `roll_v_ref`)²). This quadratic law is
+    /// dimple's own empirical choice, not a fit to published data: 2.5 m/s
+    /// keeps full-shot rollouts plausible.
     pub roll_v_ref: f64,
     /// Turf compliance: dimensionless multiplier on Penner's (2002) eq. 8
     /// effective contact angle, θc = 15.4° · (v / 18.6 m/s) · (φ / 44.4°),
@@ -139,7 +159,7 @@ impl Surface {
     };
 
     /// Standard green: Penner's (2002) green impact model with a rolling
-    /// resistance of stimp ≈ 11.4 ft.
+    /// resistance of stimp 11.4 ft ([`stimp_feet`](Self::stimp_feet)).
     pub const GREEN: Self = Self {
         restitution: Restitution::Penner2002,
         mu_slide: 0.40,
@@ -149,10 +169,92 @@ impl Surface {
         pivot: 0.001,
     };
 
+    /// Firm green: [`GREEN`](Self::GREEN) with Penner's (2002, Fig. 8)
+    /// sliding friction μ = 0.25, his model of a firm tournament green.
+    /// Penner changes only μ; restitution, the contact-angle law and the
+    /// rolling resistance stay those of his green, so this has `GREEN`'s
+    /// stimp. Penner's high-backspin 9-iron landing here bounces forward
+    /// still carrying backspin, then runs back.
+    pub const FIRM_GREEN: Self = Self {
+        mu_slide: 0.25,
+        ..Self::GREEN
+    };
+
+    /// This surface with `mu_roll` set so that it reads `feet` on the
+    /// stimpmeter: a ball leaving the ramp rolling at [`STIMPMETER_SPEED`]
+    /// rolls `feet` on level ground before it stops. Every other field,
+    /// including `roll_v_ref`, is kept.
+    ///
+    /// Closed form: a rolling ball decelerates at `μ_eff·g/(1+k)` with
+    /// `μ_eff` from [`rolling_friction`](Self::rolling_friction), so from
+    /// `v₀` it rolls
+    ///
+    /// ```text
+    /// d = (1+k)·v_ref² / (2·mu_roll·g) · ln(1 + v₀²/v_ref²)
+    /// ```
+    ///
+    /// and `mu_roll = (1+k)·v_ref²·ln(1 + v₀²/v_ref²) / (2·g·d)`, with
+    /// k = 2/5 (a uniform solid sphere, the inertia factor of both
+    /// [`BallModel`] presets). A ball with another inertia factor rolls
+    /// `(1+k)/1.4` times this distance.
+    ///
+    /// Returns the surface unchanged if `feet` is not finite and positive,
+    /// or if `roll_v_ref` is zero or NaN.
+    ///
+    /// ```
+    /// use dimple::ground::Surface;
+    ///
+    /// let fast = Surface::GREEN.with_stimp(13.0);
+    /// assert!((fast.stimp_feet() - 13.0).abs() < 1e-9);
+    /// assert!(fast.mu_roll < Surface::GREEN.mu_roll);
+    /// ```
+    #[must_use]
+    pub fn with_stimp(self, feet: f64) -> Self {
+        let distance = units::feet_to_meters(feet);
+        let integral = self.stimp_integral();
+        if !(distance.is_finite() && distance > 0.0 && integral.is_finite()) {
+            return self;
+        }
+        Self {
+            mu_roll: (1.0 + STIMP_INERTIA_FACTOR) * integral / (2.0 * G * distance),
+            ..self
+        }
+    }
+
+    /// Stimpmeter reading (feet) of this surface: how far a ball leaving the
+    /// ramp rolling at [`STIMPMETER_SPEED`] rolls on level ground before it
+    /// stops, by the closed form in [`with_stimp`](Self::with_stimp)
+    /// (k = 2/5). 11.4 ft for [`GREEN`](Self::GREEN) and
+    /// [`FIRM_GREEN`](Self::FIRM_GREEN), 5.2 ft for
+    /// [`FAIRWAY`](Self::FAIRWAY).
+    ///
+    /// Infinite when `mu_roll` is zero (the ball never stops); NaN when
+    /// `roll_v_ref` is zero or NaN.
+    #[must_use]
+    pub fn stimp_feet(&self) -> f64 {
+        let distance =
+            (1.0 + STIMP_INERTIA_FACTOR) * self.stimp_integral() / (2.0 * G * self.mu_roll);
+        units::meters_to_feet(distance)
+    }
+
+    /// `v_ref²·ln(1 + v₀²/v_ref²)` for the stimpmeter speed `v₀` (m²/s²):
+    /// the stimp distance times `2·mu_roll·g/(1+k)`. Tends to `v₀²` as
+    /// `roll_v_ref` grows (constant rolling resistance), which an infinite
+    /// `roll_v_ref` gives exactly.
+    fn stimp_integral(&self) -> f64 {
+        let v0_sq = STIMPMETER_SPEED * STIMPMETER_SPEED;
+        let x = v0_sq / (self.roll_v_ref * self.roll_v_ref);
+        if x == 0.0 {
+            v0_sq
+        } else {
+            v0_sq * x.ln_1p() / x
+        }
+    }
+
     /// Effective rolling-resistance coefficient at `speed` (m/s):
-    /// `mu_roll · (1 + (speed / roll_v_ref)²)` (Kensrud et al. 2024). Turf
-    /// deformation grows with speed, so a fast-rolling ball decelerates much
-    /// harder than a stimpmeter roll.
+    /// `mu_roll · (1 + (speed / roll_v_ref)²)`, dimple's empirical speed
+    /// law (see [`roll_v_ref`](Self::roll_v_ref)). A fast-rolling ball
+    /// decelerates much harder than a stimpmeter roll.
     #[must_use]
     pub fn rolling_friction(&self, speed: f64) -> f64 {
         let s = speed / self.roll_v_ref;
@@ -528,13 +630,17 @@ pub struct GroundPhysics<T: Terrain> {
     /// real shots stop bouncing far below this; it guards degenerate surfaces
     /// (e.g. `Restitution::Constant(1.0)` with no friction). Default 200.
     pub max_impacts: usize,
-    /// Time limit (s) on the ground phase, from landing. Default 30 s.
+    /// Time limit (s) on the ground phase, from landing. Default 120 s,
+    /// enough for a ball to come to rest on a green sloped just inside its
+    /// hold angle (a drive takes 86 s on a 3.1° `GREEN`). Where the slope
+    /// is too steep to hold the ball ([`GroundSample::holds_at_rest`]) it
+    /// never rests, and a long enough slope runs to this limit.
     pub max_time: f64,
 }
 
 impl<T: Terrain> GroundPhysics<T> {
     /// Default physics over `terrain`: 1 ms steps, 5 mm hop transition,
-    /// 0.01 m/s stop and roll thresholds, at most 200 impacts and 30 s.
+    /// 0.01 m/s stop and roll thresholds, at most 200 impacts and 120 s.
     #[must_use]
     pub fn new(terrain: T) -> Self {
         Self {
@@ -544,7 +650,7 @@ impl<T: Terrain> GroundPhysics<T> {
             roll_threshold: DEFAULT_ROLL_THRESHOLD,
             min_hop_height: 0.005,
             max_impacts: 200,
-            max_time: 30.0,
+            max_time: 120.0,
         }
     }
 

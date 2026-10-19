@@ -46,7 +46,9 @@
 //! The ground API has three layers; use the simplest one that fits:
 //!
 //! 1. [`ground::Surface`]: flat ground made of one material. Presets
-//!    `FAIRWAY` and `GREEN`; adjust any field, e.g.
+//!    `FAIRWAY`, `GREEN` and `FIRM_GREEN`; set a green's speed from a
+//!    stimpmeter reading with [`ground::Surface::with_stimp`], e.g.
+//!    `Surface::GREEN.with_stimp(12.0)`, and adjust any field, e.g.
 //!    `Surface { mu_roll: 0.09, ..Surface::FAIRWAY }`.
 //! 2. [`ground::GroundPhysics`] over a [`ground::Terrain`]: dimple's contact
 //!    physics with tunable steps and limits, on ground you describe point by

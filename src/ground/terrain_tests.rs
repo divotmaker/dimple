@@ -201,6 +201,26 @@ fn long_downhill_reports_max_time() {
     assert!((g.rest.vel.length() - terminal).abs() < 0.01);
 }
 
+#[test]
+fn near_critical_green_rests_within_default_max_time() {
+    // Just inside GREEN's hold angle (atan 0.055 ≈ 3.15°) a slow roll barely
+    // decelerates: on 3.1° a drive takes about 86 s to stop, within the
+    // default limit.
+    let n = tilt(3.1, 0.0);
+    let ground = plane(n, Surface::GREEN);
+    assert!(ground.terrain.sample(0.0, 0.0).holds_at_rest());
+    for input in [
+        ShotInput::driver(),
+        ShotInput::seven_iron(),
+        ShotInput::wedge(),
+    ] {
+        let s = shot(&input, &ground);
+        assert_eq!(s.ground.termination, Termination::Rest);
+        let rolled = s.ground.rest.time - s.ground.contacts[0].time;
+        assert!(rolled > 30.0 && rolled < ground.max_time, "{rolled:.1} s");
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════
 //  SLIDE ON A SLOPE — the slide-to-roll event
 // ══════════════════════════════════════════════════════════════════

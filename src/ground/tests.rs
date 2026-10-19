@@ -560,10 +560,14 @@ fn penner_nine_iron_firm_green_bounces_forward_then_spins_back() {
     // backspin on the first impact, so the ball bounces forward still
     // carrying backspin, then runs back; with 1000 and 1200 rad/s it
     // finishes behind its landing point.
-    let firm = Surface {
-        mu_slide: 0.25,
-        ..Surface::GREEN
-    };
+    let firm = Surface::FIRM_GREEN;
+    assert_eq!(
+        firm,
+        Surface {
+            mu_slide: 0.25,
+            ..Surface::GREEN
+        }
+    );
     for w in [809.0, 1000.0, 1200.0] {
         let first = hit(penner_impact(23.8, 34.0), backspin(w), &firm);
         assert!(
@@ -626,7 +630,7 @@ fn bounce_sequence_stops_below_threshold() {
 fn bounce_sequence_safety_bound() {
     // Elastic, frictionless, rigid: every rebound returns at full speed,
     // so only the impact limit ends the sequence (each ~1 s hop would hit
-    // the default 30 s time limit first, so it is raised here).
+    // the default 120 s time limit first, so it is raised here).
     let physics = GroundPhysics {
         max_time: 1000.0,
         ..GroundPhysics::new(plane(1.0, 0.0, 0.0))
@@ -643,7 +647,7 @@ fn bounce_sequence_safety_bound() {
     // With the default limits the same ball runs out of time instead.
     let timed = plane(1.0, 0.0, 0.0).settle(&start, &BALL);
     assert_eq!(timed.termination, Termination::MaxTime);
-    assert!((timed.rest.time - 30.0).abs() < 1e-9);
+    assert!((timed.rest.time - 120.0).abs() < 1e-9);
 }
 
 #[test]
@@ -908,7 +912,7 @@ fn stimpmeter_roll_matches_closed_form() {
     // A stimpmeter roll leaves the ramp at 1.83 m/s, already rolling. With
     // a = μ_roll(1 + (v/v_ref)²)·g/(1+k) the distance is
     // (1+k)·v_ref²/(2·μ_roll·g) · ln(1 + v₀²/v_ref²).
-    let v0 = 1.83_f64;
+    let v0 = STIMPMETER_SPEED;
     for surface in [Surface::GREEN, Surface::FAIRWAY] {
         let g = roll(DVec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
         let vr = surface.roll_v_ref;
@@ -924,14 +928,112 @@ fn stimpmeter_roll_matches_closed_form() {
     let green = roll(DVec3::new(v0, 0.0, 0.0), rolling(v0), &Surface::GREEN);
     let feet = units::meters_to_feet(green.rest.pos.x);
     assert!((feet - 11.4).abs() < 0.1, "stimp {feet:.2} ft");
+    assert!((feet - Surface::GREEN.stimp_feet()).abs() < 1e-4);
 }
 
 #[test]
 fn stimpmeter_fairway_shorter() {
-    let v0 = 1.83;
+    let v0 = STIMPMETER_SPEED;
     let green = roll(DVec3::new(v0, 0.0, 0.0), rolling(v0), &Surface::GREEN);
     let fairway = roll(DVec3::new(v0, 0.0, 0.0), rolling(v0), &Surface::FAIRWAY);
     assert!(fairway.rest.pos.x < green.rest.pos.x);
+}
+
+#[test]
+fn preset_stimp_readings() {
+    for (surface, feet) in [
+        (Surface::GREEN, 11.4),
+        (Surface::FIRM_GREEN, 11.4),
+        (Surface::FAIRWAY, 5.2),
+    ] {
+        let stimp = surface.stimp_feet();
+        assert!((stimp - feet).abs() < 0.05, "stimp {stimp:.3} ft");
+    }
+}
+
+#[test]
+fn with_stimp_round_trips() {
+    for surface in [Surface::GREEN, Surface::FAIRWAY] {
+        for feet in [3.0, 6.0, 8.5, 10.0, 11.4, 12.0, 13.5, 14.0, 20.0] {
+            let tuned = surface.with_stimp(feet);
+            assert!(
+                (tuned.stimp_feet() - feet).abs() < 1e-9,
+                "{feet} ft reads {} ft",
+                tuned.stimp_feet()
+            );
+            assert_eq!(
+                tuned,
+                Surface {
+                    mu_roll: tuned.mu_roll,
+                    ..surface
+                },
+                "only mu_roll changes"
+            );
+        }
+    }
+    // Faster greens have less rolling resistance.
+    assert!(Surface::GREEN.with_stimp(13.0).mu_roll < Surface::GREEN.with_stimp(9.0).mu_roll);
+    // Constant rolling resistance (infinite roll_v_ref): d = (1+k)·v₀²/(2·μ·g).
+    let constant = Surface {
+        roll_v_ref: f64::INFINITY,
+        ..Surface::GREEN
+    }
+    .with_stimp(10.0);
+    let expected =
+        1.4 * STIMPMETER_SPEED * STIMPMETER_SPEED / (2.0 * G * units::feet_to_meters(10.0));
+    assert!((constant.mu_roll - expected).abs() < 1e-15);
+    assert!((constant.stimp_feet() - 10.0).abs() < 1e-9);
+}
+
+#[test]
+fn with_stimp_rolls_the_requested_distance() {
+    // A ball leaving the stimpmeter, stepped with `GroundPhysics::step`
+    // on level ground until it stops, and the same roll through `settle`.
+    let v0 = STIMPMETER_SPEED;
+    for feet in [6.0, 8.0, 10.0, 12.0, 14.0] {
+        let surface = Surface::GREEN.with_stimp(feet);
+        let physics = GroundPhysics::new(surface);
+        let mut s = state(DVec3::new(v0, 0.0, 0.0), rolling(v0));
+        while s.vel != DVec3::ZERO {
+            assert!(s.time < 30.0, "{feet} ft: still rolling");
+            s = physics.step(&s, &BALL).0;
+        }
+        let stepped = units::meters_to_feet(s.pos.x);
+        assert!(
+            (stepped - feet).abs() < 1e-9 * feet,
+            "{feet} ft: stepped roll {stepped:.9} ft"
+        );
+        let settled = roll(DVec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
+        assert_eq!(settled.termination, Termination::Rest);
+        let settled = units::meters_to_feet(settled.rest.pos.x);
+        assert!(
+            (settled - feet).abs() < 1e-9 * feet,
+            "{feet} ft: settled roll {settled:.9} ft"
+        );
+    }
+}
+
+#[test]
+fn with_stimp_ignores_invalid_readings() {
+    for feet in [0.0, -0.0, -8.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(Surface::GREEN.with_stimp(feet), Surface::GREEN, "{feet}");
+    }
+    for roll_v_ref in [0.0, f64::NAN] {
+        let surface = Surface {
+            roll_v_ref,
+            ..Surface::GREEN
+        };
+        let tuned = surface.with_stimp(10.0);
+        assert!(
+            tuned.mu_roll == surface.mu_roll && tuned.roll_v_ref.is_nan() == roll_v_ref.is_nan()
+        );
+        assert!(surface.stimp_feet().is_nan());
+    }
+    let frictionless = Surface {
+        mu_roll: 0.0,
+        ..Surface::GREEN
+    };
+    assert_eq!(frictionless.stimp_feet(), f64::INFINITY);
 }
 
 #[test]
@@ -1022,7 +1124,7 @@ fn extreme_backspin_can_reverse() {
 #[test]
 fn driver_rollout_reasonable() {
     // ~10 m/s forward, nearly rolling: the speed-dependent rolling
-    // resistance (Kensrud et al. 2024) keeps a firm-fairway roll short.
+    // resistance keeps a firm-fairway roll short.
     let g = roll(DVec3::new(10.0, 0.0, 0.0), rolling(8.0), &Surface::FAIRWAY);
     let yards = units::meters_to_yards(g.rest.pos.x);
     assert!(yards > 5.0 && yards < 60.0, "rollout {yards:.1} yds");
@@ -1112,7 +1214,7 @@ fn hollow_ball_follows_generalised_formulas() {
     assert!((roll_start.time - expected).abs() < 1e-12);
 
     // Stimpmeter: (1+k)·v_ref²/(2·μ_roll·g)·ln(1 + v₀²/v_ref²).
-    let v0 = 1.83_f64;
+    let v0 = STIMPMETER_SPEED;
     for surface in [Surface::GREEN, Surface::FAIRWAY] {
         let g = surface.settle(&state(DVec3::new(v0, 0.0, 0.0), rolling(v0)), &hollow);
         let vr = surface.roll_v_ref;

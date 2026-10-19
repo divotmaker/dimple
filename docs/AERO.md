@@ -459,9 +459,8 @@ heights approach the 2 mm value" (pp. 934–935). A train the slope holds at
 a fixed few millimetres is not a transition that decays through 5 mm; it is
 the bounce model run indefinitely where it breaks down, at slow grazing
 impacts where the linear θc law is least certain. Once the impacts no
-longer clearly outrun the slope the ball rolls, and Kensrud's rolling
-resistance, measured on balls rolling on turf, already contains the turf's
-dissipation at that speed.
+longer clearly outrun the slope the ball rolls, and the rolling
+resistance stands for the turf's dissipation at that speed.
 
 ### Slide and roll
 
@@ -482,19 +481,30 @@ sampled under the ball every step. With `n` the normal, the normal load is
   to zero slip, which is exact when the slip lies along the fall line.
   Backspin can reverse the ball.
 - **Roll**: the spin tangential to the ground is locked to the velocity, and
-  the ball decelerates at `μ_eff·g·n_y/(1+k)` against its velocity, with the
-  speed-dependent rolling resistance of Kensrud et al. (2024), while the
-  slope pulls with `g_t/(1+k)`:
+  the ball decelerates at `μ_eff·g·n_y/(1+k)` against its velocity, with a
+  speed-dependent rolling resistance, while the slope pulls with
+  `g_t/(1+k)`:
 
   ```
   μ_eff = mu_roll · (1 + (v / roll_v_ref)²)
   ```
 
-  At driver post-bounce speeds this is many times the base value; at
+  This quadratic law is dimple's own empirical speed dependence: `mu_roll`
+  is the low-speed (stimpmeter-regime) value, and `roll_v_ref = 2.5 m/s` is
+  chosen so full-shot rollouts are plausible. Turf rolling friction does
+  vary with speed: Burritt & Henrikson (2024) track putts with overhead
+  cameras and fit an exponential μ_roll(v) per surface, with μ falling as
+  the ball slows on three of their four surfaces and rising on the fourth.
+  dimple does not use their form or coefficients.
+  At driver post-bounce speeds μ_eff is many times the base value; at
   stimpmeter speeds it is about 1.5×. Integrated, a ball that starts rolling
   at `v₀` stops after `(1+k)·v_ref² / (2·mu_roll·g) · ln(1 + v₀²/v_ref²)`:
   3.48 m (stimp 11.4 ft) on `GREEN` and 1.60 m (5.2 ft) on `FAIRWAY` for
-  the stimpmeter's 1.83 m/s.
+  the stimpmeter's 1.83 m/s (see [Stimpmeter](#stimpmeter)). Penner's run
+  paper uses a constant rolling friction, `a = −(5/7)·ρ_g·g` with
+  ρ_g = 0.131 (eq. 9); `with_stimp` with `roll_v_ref = ∞` reduces to that
+  constant-friction stimpmeter relation, ρ = 7·v₀²/(10·g·d), which gives a
+  stimp of about 6.0 ft for ρ_g = 0.131.
 - **Spin about the normal** decays at `pivot·g·n_y / (k R²)` in both
   phases, saturating at zero.
 - **Rest**: a rolling ball that is slowing and slower than one step's
@@ -505,7 +515,7 @@ sampled under the ball every step. With `n` the normal, the normal load is
   the ball stops): up to 6.8° on `FAIRWAY` and 3.1° on `GREEN`. There it
   stays at rest; on steeper ground it starts rolling downhill again from
   zero speed (a ball rolling uphill stops once, then rolls back). The result reports why the ground phase
-  ended: `Rest`, `MaxTime` (default 30 s after landing, which is also how a
+  ended: `Rest`, `MaxTime` (default 120 s after landing, which is also how a
   ball still rolling down a long slope ends) or `MaxImpacts`.
 
 ### Terrain and slopes
@@ -546,13 +556,13 @@ downrange through the tee; `Rest` unless marked. `FAIRWAY`:
 | 7-iron (`seven_iron`) | 3.5 | 4.0 | 4.8 | 5.9 | 8.4 | 10.4 | 10.6 | 12.2 | 14.5 | 18.0 |
 | wedge | 0.2 | 0.4 | 0.6 | 0.8 | 1.2 | 1.8 | 2.7 | 4.0 | 6.1 | 9.8 |
 
-`GREEN` (default 30 s `max_time`):
+`GREEN`:
 
-| Slope | −3° | −2° | −1° | 0° | +1° | +2° | +2.5° | +3° |
-|---|---|---|---|---|---|---|---|---|
-| driver | 19.9 | 21.6 | 24.1 | 27.9 | 34.0 | 43.3 | 51.0 | 62.8 (`MaxTime`) |
-| 7-iron (`seven_iron`) | 2.8 | 3.2 | 4.1 | 5.5 | 7.7 | 12.1 | 16.4 | 27.5 (`MaxTime`) |
-| wedge | −1.1 | −0.1 | 0.0 | 0.1 | 0.4 | 1.3 | 2.8 | 9.7 |
+| Slope | −3° | −2° | −1° | 0° | +1° | +2° | +2.5° | +3° | +3.1° |
+|---|---|---|---|---|---|---|---|---|---|
+| driver | 19.9 | 21.6 | 24.1 | 27.9 | 34.0 | 43.3 | 51.0 | 67.5 | 78.2 |
+| 7-iron (`seven_iron`) | 2.8 | 3.2 | 4.1 | 5.5 | 7.7 | 12.1 | 16.4 | 28.8 | 38.6 |
+| wedge | −1.1 | −0.1 | 0.0 | 0.1 | 0.4 | 1.3 | 2.8 | 9.7 | 17.7 |
 
 Downhill, the hops end by the slope rule above and the ball rolls the rest
 of the way. The 7-iron's run barely changes from 2° to 3° on `FAIRWAY`:
@@ -568,28 +578,31 @@ mirror image:
 | `FAIRWAY` 5° | +26.1 | +6.2 | +4.0 |
 | `GREEN` 2.5° | +16.3 | +6.4 | +2.5 |
 
-`GREEN` holds a ball at rest up to 3.1° (`tan θ ≤ 0.055`). Close to that
-the net deceleration of a slow roll, `(5/7)·g·cos θ·(μ_eff − tan θ)`, is
-tiny and the last metres take a long time: on a 3° downhill green a drive
-stops 51 s after landing and a 7-iron 41 s, past the default 30 s
-`max_time` (`MaxTime` above); at 3.1° they take 86 s and 77 s. Raise
-`max_time` (e.g. to 120 s) for such greens. Beyond 3.1° a ball on `GREEN`
-never stops.
+`GREEN` holds a ball at rest up to 3.1° (`tan θ ≤ 0.055`, 3.15°). Close to
+that the net deceleration of a slow roll, `(5/7)·g·cos θ·(μ_eff − tan θ)`,
+is tiny and the last metres take a long time: on a 3° downhill green a
+drive stops 51 s after landing and a 7-iron 41 s; at 3.1° they take 86 s
+and 77 s, and the wedge 63 s. The default 120 s `max_time` covers these.
+Beyond the hold angle a ball on `GREEN` never stops, and on a long enough
+slope it runs until `max_time`.
 
 ### Surfaces
 
-| Surface | Restitution | `mu_slide` | `compliance` | `mu_roll` | `roll_v_ref` | `pivot` |
-|---|---|---|---|---|---|---|
-| `Surface::FAIRWAY` | `Penner2002` | 0.40 | 0.9 | 0.12 | 2.5 m/s | 1 mm |
-| `Surface::GREEN` | `Penner2002` | 0.40 | 1.0 | 0.055 | 2.5 m/s | 1 mm |
+| Surface | Restitution | `mu_slide` | `compliance` | `mu_roll` | `roll_v_ref` | `pivot` | Stimp |
+|---|---|---|---|---|---|---|---|
+| `Surface::FAIRWAY` | `Penner2002` | 0.40 | 0.9 | 0.12 | 2.5 m/s | 1 mm | 5.2 ft |
+| `Surface::GREEN` | `Penner2002` | 0.40 | 1.0 | 0.055 | 2.5 m/s | 1 mm | 11.4 ft |
+| `Surface::FIRM_GREEN` | `Penner2002` | 0.25 | 1.0 | 0.055 | 2.5 m/s | 1 mm | 11.4 ft |
 
 | Parameter | Source |
 |---|---|
 | eq. 5 restitution | Penner (2002), from Penner (2001), *Am. J. Phys.* 69, 563, measured on relatively soft turf |
 | θc law (eq. 8), `compliance = 1.0` | Penner (2002): θc = 15.4° best fit to Haake's (1990) green impact at 18.6 m/s, 44.4° from vertical, 484 rad/s backspin; linear in v and φ as a first-order approximation |
 | `mu_slide = 0.40` | Daish (1972), as used by Penner for a ball on a green |
+| `FIRM_GREEN` `mu_slide = 0.25` | Penner (2002), Fig. 8: his firm (tournament) green, everything else unchanged |
+| Stimpmeter exit speed 1.83 m/s | Penner (2002), "The physics of putting", *Can. J. Phys.* 80, 83, from Holmes (1986), *The Physics Teacher* 24, 401 |
 | 5 mm transition height | Penner (2002), set above the ~2 mm equilibrium sinkage of a ball on a green (Hubbard & Alaways) |
-| `mu_roll`, `roll_v_ref` | Kensrud et al. (2024), "Modeling golf ball roll with a variable coefficient of friction", *Sports Engineering*: speed-dependent form; `GREEN`'s `mu_roll` gives stimp 11.4 ft |
+| `mu_roll`, `roll_v_ref` | dimple's empirical speed law, not fitted to published data: `GREEN`'s `mu_roll` gives stimp 11.4 ft; `roll_v_ref = 2.5 m/s` is chosen for plausible full-shot rollouts. Published evidence that turf rolling friction varies with speed: Burritt & Henrikson (2024), "Modeling golf ball roll with a variable coefficient of friction", *Sports Eng.* 27:39, [doi:10.1007/s12283-024-00481-5](https://doi.org/10.1007/s12283-024-00481-5) (exponential fits, not used here) |
 | `pivot` | Hertzian full-slip torsional couple (Johnson 1985) with an assumed 4 mm contact radius; uncalibrated |
 | `FAIRWAY` `compliance = 0.9` | Chosen, not measured (see below) |
 
@@ -597,7 +610,8 @@ Penner uses one turf model throughout: eq. 8 unchanged, with his green
 restitution and μ, both for drives compared against empirical drive runs
 (Fig. 5) and for iron shots onto greens. He represents a firmer green by a
 lower μ (0.25, Fig. 8) rather than by changing θc, noting that eq. 8 would in
-general need adjusting for such greens. `FAIRWAY` keeps eq. 8 at a chosen
+general need adjusting for such greens; `FIRM_GREEN` is that green.
+`FAIRWAY` keeps eq. 8 at a chosen
 `compliance = 0.9`, slightly below the green's 1.0, so fairway rebounds
 come off slightly firmer and run further. The run is highly sensitive to
 this value. Fairway run (yards past carry) by `compliance`, other fields as
@@ -618,8 +632,67 @@ reports 2.82 m and 1.17 m). Those drives make 43 and 36 impacts before
 rolling and stop 39.0 m and 20.5 m past the landing point (Penner's Fig. 4:
 about 37 m and 19 m). A 9-iron landing at 23.8 m/s, 34.0° bounces backward
 with 809 rad/s backspin, and its backward run grows with backspin at 1000
-and 1200 rad/s (Penner's Fig. 7). With μ = 0.25 the same landings first
-bounce forward still carrying backspin, then run back (Penner's Fig. 8).
+and 1200 rad/s (Penner's Fig. 7). On `FIRM_GREEN` (μ = 0.25) the same
+landings first bounce forward still carrying backspin, then run back
+(Penner's Fig. 8).
+
+### Stimpmeter
+
+Green speed is quoted as a stimpmeter reading: how far, in feet, a ball
+released down the USGA stimpmeter rolls on level green. The ball leaves the
+ramp already rolling at `STIMPMETER_SPEED` = 1.83 m/s (6.0 ft/s), the value
+Penner (2002, "The physics of putting") takes from Holmes's (1986) analysis
+of the device. As a cross-check from the geometry (release notch 30 in up
+the ramp, released at about 20°), a solid ball rolling 30 in down a 20°
+plane without loss would leave at about 1.91 m/s, and about 1.88 m/s in
+the 145° V-groove, whose rails touch the ball off its lowest point; dimple
+cites no direct measurement of the exit speed.
+
+With the rolling deceleration `μ_eff·g/(1+k)` above, a ball leaving at
+`v₀` rolls
+
+```
+d = (1+k)·v_ref² / (2·mu_roll·g) · ln(1 + v₀²/v_ref²)
+```
+
+so a surface reads stimp `d` when
+
+```
+mu_roll = (1+k)·v_ref² · ln(1 + v₀²/v_ref²) / (2·g·d)
+```
+
+`Surface::with_stimp(feet)` sets `mu_roll` by this closed form, keeping
+every other field (including `roll_v_ref`), and `Surface::stimp_feet()` is
+the inverse. Both use k = 2/5, the uniform solid sphere of both
+`BallModel` presets. `with_stimp` returns the surface unchanged for a
+reading that is not finite and positive.
+
+| Stimp (ft) | 6 | 8 | 10 | 12 | 14 |
+|---|---|---|---|---|---|
+| `GREEN.with_stimp(…).mu_roll` | 0.105 | 0.0785 | 0.0628 | 0.0523 | 0.0449 |
+
+A simulated stimpmeter roll (rolling at 1.83 m/s on level ground) on each
+of these surfaces stops within 1e-9 (relative) of the requested distance.
+
+### Other surfaces
+
+Beyond the presets above, dimple adds a surface preset only when its
+parameters come from a published source. Rough, bunker sand and firm or
+soft fairways have no published set of this model's parameters
+(restitution, impact friction, contact angle and rolling resistance
+together), so there are no presets for them. Build them from a preset with struct update
+syntax and, for the roll, a stimp reading:
+
+```rust
+// A fairway rolling like stimp 4 ft, rebounding a little softer.
+let soft_fairway = Surface { compliance: 1.0, ..Surface::FAIRWAY }.with_stimp(4.0);
+// A firm, fast fairway.
+let firm_fairway = Surface { compliance: 0.75, ..Surface::FAIRWAY }.with_stimp(7.0);
+```
+
+`compliance` moves the bounce and the run most (see the compliance table
+above); `mu_slide` sets how much backspin an impact checks; `with_stimp`
+sets the roll.
 
 ### Plugging in your own ground
 
@@ -644,7 +717,7 @@ The ground API has three layers:
 
    Its public fields are the tunables: `dt` (1 ms), `min_hop_height`
    (5 mm), `stop_speed` and `roll_threshold` (0.01 m/s), `max_impacts`
-   (200), `max_time` (30 s).
+   (200), `max_time` (120 s).
 3. **`GroundModel`** — replace the physics: implement `height(x, z)` and
    `settle(landing, ball)`, and optionally `landing(a, b)` (by default the
    solved crossing of the straight segment with the heightfield; an engine
@@ -673,6 +746,12 @@ the ground at the solved crossing.
   the sidespin throw at impact and rifle-spin drift follow from the
   rigid-sphere contact model; no published measurement is compared against.
   The pivot lever is uncalibrated.
+- **The rolling-resistance speed law is not fitted to published data.**
+  Only the low-speed `mu_roll` is tied to a measurement (the stimpmeter);
+  the quadratic form and `roll_v_ref` are empirical, and no published data
+  constrains the rolling resistance at full-shot rollout speeds. In the
+  putting range, Burritt & Henrikson's (2024) exponential per-surface fits
+  could replace this law.
 - **No drag between hops.** A drive's first hops leave at up to ~8 m/s and
   stay airborne for over a second, so drag is not negligible; ignoring it
   lengthens the run somewhat (an estimated few yards on a drive).
@@ -688,19 +767,21 @@ the ground at the solved crossing.
   curved ground.
 - **Slopes are unvalidated.** The slope physics (normal load, downhill
   pull, hold where `tan θ ≤ mu_roll`) is standard rigid-body mechanics, but
-  Penner's impact model and Kensrud's rolling resistance were both fitted
-  on level turf; no published sloped-turf data is compared against. Penner
-  attributes his model's slightly long drive runs to its assumption of
-  level ground.
+  Penner's impact model was fitted on level turf and `mu_roll` is set by a
+  level stimpmeter roll; no published sloped-turf data is compared
+  against. Penner attributes his model's slightly long drive runs to its
+  assumption of level ground.
 - **The slope hop rule is a modelling choice.** It ends hop trains that
   Penner's impact model would sustain down a slope (see
   [Hops and the bounce-to-roll transition](#hops-and-the-bounce-to-roll-transition)).
   Its margin, one 5 mm hop's energy per impact, carries over Penner's
   transition height; it is not measured.
-- **Near-critical green slopes need a longer `max_time`.** Within a few
-  tenths of a degree of `GREEN`'s 3.1° hold angle a slow roll decelerates
-  so little that it outlasts the default 30 s (see
-  [Terrain and slopes](#terrain-and-slopes)).
+- **Slopes beyond the hold angle never come to rest.** Steeper than
+  `atan(mu_roll)` (3.15° on `GREEN`) the ball rolls on until the ground
+  changes or `max_time` ends it with `MaxTime`. Just inside the hold angle
+  the last metres of a slow roll take over a minute (86 s for a drive on a
+  3.1° `GREEN`; see [Terrain and slopes](#terrain-and-slopes)); a
+  `max_time` set below the 120 s default can cut such rolls short.
 
 ## Implementation
 
@@ -741,9 +822,9 @@ Unit tests live beside the code in each module. Test categories:
 - **Era comparison** — TOUR vs PATENT_1997 carry gaps, Cd reduction, Cl sensitivity
 - **Launch spin axis** — a pushed shot with no sidespin stays on its start line; exact landing-spin projections
 - **Ground: planar regression** — the 3D impact reproduces the planar Penner solution impact by impact (preset driver, 7-iron and wedge on both presets) to float tolerance
-- **Ground: physics** — Penner (2002) restitution, drive bounce heights and runs (Fig. 4), 9-iron spin-back (Figs. 7–8), 5 mm bounce-to-roll transition, compliance tilt (2β rotation, cap), grip-regime kick formula, no kick from spin about the normal, tilt-throw magnitude (grip and slip), rifle-spin drift, grazing impacts, pivot friction about the true normal and its independence from the level-ground path, general inertia factor (k = 2/3), exact slide-to-roll time, stimpmeter closed form
+- **Ground: physics** — Penner (2002) restitution, drive bounce heights and runs (Fig. 4), 9-iron spin-back (Figs. 7–8), 5 mm bounce-to-roll transition, compliance tilt (2β rotation, cap), grip-regime kick formula, no kick from spin about the normal, tilt-throw magnitude (grip and slip), rifle-spin drift, grazing impacts, pivot friction about the true normal and its independence from the level-ground path, general inertia factor (k = 2/3), exact slide-to-roll time, stimpmeter closed form, `with_stimp`/`stimp_feet` round trip and simulated stimpmeter rolls (6–14 ft) to 1e-9, preset stimp readings, `FIRM_GREEN` as Penner's Fig. 8 green
 - **Ground: invariants** — energy never increases at an impact or along the ground phase; mirror (±sidespin, ±azimuth) and rotation about Y give mirrored and rotated results; fades rest right, draws rest left
-- **Ground: terrain** — rest on slopes (hold below atan `mu_roll`, roll downhill above, both presets; one stop and no chatter rolling uphill), long downhill reports `MaxTime`, slide-to-roll on a plane against the closed form, slip turning across a slope, vertical spin kicks on slopes only, uphill landings check up and downhill landings release, elevated green (shorter carry, lands on it), tee on the terrain, landing and hop crossings on curved terrain to 1e-9 m, first crossing of thin walls and ridges in a landing segment and a hop step, ball kept on the surface; slope hop rule, downhill `FAIRWAY` up to 6° and `GREEN` up to 2.5° end at rest, side slopes rest and mirror exactly, rest judged on the surface where the ball stops, slide-to-roll on curved ground without flicker; mirror, rotation about Y with a sloped plane, and energy on slopes
+- **Ground: terrain** — rest on slopes (hold below atan `mu_roll`, roll downhill above, both presets; one stop and no chatter rolling uphill), long downhill reports `MaxTime`, near-critical (3.1°) `GREEN` comes to rest within the default `max_time`, slide-to-roll on a plane against the closed form, slip turning across a slope, vertical spin kicks on slopes only, uphill landings check up and downhill landings release, elevated green (shorter carry, lands on it), tee on the terrain, landing and hop crossings on curved terrain to 1e-9 m, first crossing of thin walls and ridges in a landing segment and a hop step, ball kept on the surface; slope hop rule, downhill `FAIRWAY` up to 6° and `GREEN` up to 2.5° end at rest, side slopes rest and mirror exactly, rest judged on the surface where the ball stops, slide-to-roll on curved ground without flicker; mirror, rotation about Y with a sloped plane, and energy on slopes
 - **Ground: API** — per-point surfaces (fairway-to-green roll), `MaxTime`/`MaxImpacts` termination, tunables, interpolated landing, `&dyn GroundModel`
 
 Run: `cargo test`
