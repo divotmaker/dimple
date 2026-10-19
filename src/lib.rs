@@ -2,17 +2,17 @@
 //!
 //! `dimple` turns launch-monitor data (ball speed, launch angle, azimuth,
 //! backspin, sidespin) into a full shot: an RK4-integrated flight with drag,
-//! Magnus lift and spin decay, followed by bounce and rollout on a turf
-//! surface. Pure math: no I/O, no allocation beyond the returned trajectories,
-//! no async runtime.
+//! Magnus lift and spin decay, followed by the ground phase (impacts, hops,
+//! slide and roll) with the full spin vector carried through every contact.
+//! Pure math: no I/O, no allocation beyond the returned trajectories, no
+//! async runtime.
 //!
 //! # Example
 //!
 //! ```
 //! use dimple::aero::BallModel;
-//! use dimple::bounce::BounceSurface;
 //! use dimple::environment::Environment;
-//! use dimple::rollout::RolloutSurface;
+//! use dimple::ground::Surface;
 //! use dimple::stats::ShotStats;
 //! use dimple::trajectory::{ShotInput, simulate_flight, simulate_shot};
 //!
@@ -33,13 +33,30 @@
 //!     &input,
 //!     &BallModel::TOUR,
 //!     &Environment::SEA_LEVEL,
-//!     &BounceSurface::FAIRWAY,
-//!     &RolloutSurface::FAIRWAY,
+//!     &Surface::FAIRWAY,
 //! );
 //! let stats = ShotStats::from_shot(&shot);
 //! assert!(stats.total_yards > stats.carry_yards);
 //! assert!(stats.lateral_yards > 0.0);
+//! assert!(shot.final_pos.z > flight.lateral_m); // keeps running right
 //! ```
+//!
+//! # Ground
+//!
+//! The ground API has three layers; use the simplest one that fits:
+//!
+//! 1. [`ground::Surface`]: flat ground made of one material. Presets
+//!    `FAIRWAY` and `GREEN`; adjust any field, e.g.
+//!    `Surface { mu_roll: 0.09, ..Surface::FAIRWAY }`.
+//! 2. [`ground::GroundPhysics`] over a [`ground::Terrain`]: dimple's contact
+//!    physics with tunable steps and limits, on ground you describe point by
+//!    point (for example [`ground::FnTerrain`] for per-point surfaces).
+//! 3. [`ground::GroundModel`]: replace the physics entirely. It is
+//!    object-safe; [`ground::impact`] and
+//!    [`ground::GroundPhysics::step`] are public so a custom model can reuse
+//!    pieces, and the result types have constructors.
+//!
+//! The ground is level in this version; slopes are not yet modeled.
 //!
 //! # Conventions
 //!
@@ -56,8 +73,10 @@
 //! | +Y | up |
 //! | +Z | right of the target line, from the golfer's view |
 //!
-//! Every position and velocity vector in the public API (trajectory points,
-//! bounce events, rollout points, final rest position) uses this frame.
+//! Every position, velocity and angular velocity vector in the public API
+//! (trajectory points, contacts, ground points, final rest position) uses
+//! this frame. Positions are of the ball's centre; a ball on level ground
+//! level with the tee has `y = 0`.
 //!
 //! **Lateral signs: positive = right.** Every lateral quantity is positive to
 //! the right of the target line as seen by the golfer standing behind the
@@ -72,34 +91,39 @@
 //! | `pos.z`, `vel.z` of any vector | right of / moving right of the target line |
 //!
 //! **Spin axis.** Backspin and sidespin combine into one angular velocity
-//! vector (right-hand rule). Positive backspin points along +Z (the top of the
-//! ball moves back toward the golfer, producing lift). Positive sidespin is a
-//! clockwise rotation viewed from above, i.e. along -Y, which curves the ball
-//! toward +Z. Equivalently, a spin axis tilted to the right produces a
-//! rightward curve. See [`aero::AeroParams::from_spin`].
+//! vector (right-hand rule). Positive backspin points along the horizontal
+//! axis perpendicular to the start line, `(−sin az, 0, cos az)` for launch
+//! azimuth `az` (+Z for a straight shot): the top of the ball moves back
+//! toward the golfer, producing lift. Positive sidespin is a clockwise
+//! rotation viewed from above, i.e. along -Y, which curves the ball toward
+//! +Z. Equivalently, a spin axis tilted to the right produces a rightward
+//! curve. See [`trajectory::ShotInput::launch_spin_rads`].
 //!
 //! **Integration.** Flight uses fixed-step RK4 at 1 ms with exponential spin
-//! decay; see `docs/AERO.md` in the repository for the aerodynamic model,
-//! its sources and its validation against published Trackman data.
+//! decay; the ground phase uses RK4 at 1 ms within each smooth phase. See
+//! `docs/AERO.md` in the repository for the aerodynamic and ground models,
+//! their sources and their validation.
 
 /// Ball models, Cd/Cl coefficients, and the drag/Magnus/gravity force model.
 pub mod aero;
-/// Ground impact: oblique bounce with turf compliance.
-pub mod bounce;
 /// Atmosphere: altitude and temperature to air density.
 pub mod environment;
-/// Fixed-step fourth-order Runge-Kutta integrator.
-pub mod rk4;
-/// Ground roll after the last bounce: sliding then pure rolling.
+/// Everything after landing: surfaces, terrain, 3D impacts, hops, slide and
+/// roll, with the spin vector carried through every contact.
 ///
-/// The ball rolls in a straight line along its post-bounce horizontal
-/// direction. Sidespin is not an input, so it does not curve the roll or
-/// the bounces: after landing, lateral movement comes only from the lateral
-/// velocity the ball carries into the ground.
-pub mod rollout;
+/// Spin about the ground normal (launch-monitor sidespin, on flat ground)
+/// cannot move a rigid ball's contact point, so it does not steer the roll;
+/// pivot friction decays it. Lateral movement on the ground comes from the
+/// spin components that do slip the contact point: a backspin axis that no
+/// longer matches the heading of a curving ball (fades kick right, draws
+/// left), spin along the direction of travel, and, at impact, the part of
+/// any spin lying in Penner's tilted contact plane. The effects are modest.
+pub mod ground;
+/// Fixed-step fourth-order Runge-Kutta integrators.
+pub mod rk4;
 /// Per-shot and per-session statistics in display units.
 pub mod stats;
-/// Shot input, flight simulation, and full flight + bounce + rollout shots.
+/// Shot input, flight simulation, and full flight + ground shots.
 pub mod trajectory;
 /// Physical constants and unit conversions.
 pub mod units;

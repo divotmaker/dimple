@@ -30,6 +30,13 @@ pub struct BallModel {
     /// and increases spin ratio at a given RPM (more Magnus effect).
     pub diameter_m: f64,
 
+    /// Moment-of-inertia factor k, with I = k·m·R². `0.4` (2/5) is a
+    /// uniform solid sphere. Used only on the ground, where it sets how
+    /// friction splits between slowing the ball and changing its spin: a
+    /// ball sliding on flat ground without spin leaves rolling at 1/(1+k) of
+    /// its speed (5/7 for k = 2/5).
+    pub inertia_factor: f64,
+
     // ── Drag model ──
     //
     // Cd = cd_base(Re) + cd_spin × SR / (1 + SR / sr_sat)
@@ -126,12 +133,13 @@ impl BallModel {
     /// Lyu et al. (2018) trajectory fits. Tutelman: τ=30s → λ=0.033.
     ///
     /// Fit quality: Trackman carry RMSE=2.8y (9/12 clubs within ±3y), DA
-    /// RMSE=1.3°; per-shot set carry RMSE=3.2y, offline RMSE=1.5y, peak
+    /// RMSE=1.3°; per-shot set carry RMSE=3.2y, offline RMSE=1.2y, peak
     /// RMSE=2.6ft. Denver altitude gain +6.9% (published ~6.1%), hot-cold
     /// delta ~9y (published ~8y).
     pub const TOUR: Self = Self {
         mass_kg: 0.04593,    // 1.62 oz (USGA max)
         diameter_m: 0.04267, // 1.68 in (USGA min)
+        inertia_factor: 0.4, // uniform solid sphere
         cd_sub: 0.295,
         cd_super: 0.186,
         cd_spin: 0.85,
@@ -166,6 +174,7 @@ impl BallModel {
     pub const PATENT_1997: Self = Self {
         mass_kg: 0.04593, // same physical ball (USGA limits unchanged since 1990)
         diameter_m: 0.04267,
+        inertia_factor: 0.4,
         cd_sub: 0.19,
         cd_super: 0.29,
         cd_spin: 0.15,
@@ -276,8 +285,9 @@ impl BallModel {
 #[derive(Debug, Clone, Copy)]
 pub struct AeroParams {
     /// Spin axis (unit vector, right-hand rule). Combined backspin + sidespin
-    /// direction: backspin points along +Z, sidespin that curves the ball
-    /// right points along -Y.
+    /// direction: backspin points along the horizontal axis perpendicular to
+    /// the start line (+Z for a straight launch), sidespin that curves the
+    /// ball right points along -Y. Fixed for the whole flight.
     pub spin_axis: DVec3,
     /// Current spin rate (rad/s). Decays over flight.
     pub spin_rate: f64,
@@ -290,7 +300,8 @@ pub struct AeroParams {
 pub const DEFAULT_SPIN_DECAY: f64 = 0.04;
 
 impl AeroParams {
-    /// Create aero params from backspin and sidespin in RPM.
+    /// Create aero params from backspin and sidespin in RPM, for a ball
+    /// launched straight down the target line (0° azimuth).
     ///
     /// - `backspin_rpm`: positive = backspin (lift), negative = topspin.
     ///   Angular velocity along +Z (right-hand rule: the top of the ball moves
@@ -299,24 +310,38 @@ impl AeroParams {
     ///   right-handed golfer), negative = curves left (draw/hook). Positive
     ///   sidespin is a clockwise rotation viewed from above, i.e. angular
     ///   velocity along -Y.
+    ///
+    /// For other launch directions use
+    /// [`ShotInput::launch_spin_rads`](crate::trajectory::ShotInput::launch_spin_rads)
+    /// with [`from_spin_vector`](Self::from_spin_vector).
     #[must_use]
     pub fn from_spin(backspin_rpm: f64, sidespin_rpm: f64) -> Self {
         let backspin_rads = backspin_rpm * std::f64::consts::PI / 30.0;
         let sidespin_rads = sidespin_rpm * std::f64::consts::PI / 30.0;
+        Self::from_spin_vector(DVec3::new(0.0, -sidespin_rads, backspin_rads))
+    }
 
-        let spin_vec = DVec3::new(0.0, -sidespin_rads, backspin_rads);
-        let spin_rate = spin_vec.length();
+    /// Create aero params from an angular velocity vector (rad/s, crate
+    /// frame, right-hand rule). A zero vector gives zero spin about +Z.
+    #[must_use]
+    pub fn from_spin_vector(omega: DVec3) -> Self {
+        let spin_rate = omega.length();
         let spin_axis = if spin_rate > 1e-10 {
-            spin_vec / spin_rate
+            omega / spin_rate
         } else {
             DVec3::Z
         };
-
         Self {
             spin_axis,
             spin_rate,
             spin_decay: DEFAULT_SPIN_DECAY,
         }
+    }
+
+    /// Current angular velocity vector (rad/s): `spin_axis · spin_rate`.
+    #[must_use]
+    pub fn spin_vector(&self) -> DVec3 {
+        self.spin_axis * self.spin_rate
     }
 
     /// Apply spin decay for a timestep.

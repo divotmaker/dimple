@@ -22,7 +22,7 @@ pub struct ShotStats {
 }
 
 impl ShotStats {
-    /// Compute shot statistics from a flight result (no bounce/rollout).
+    /// Compute shot statistics from a flight result (no ground phase).
     #[must_use]
     pub fn from_flight(result: &FlightResult) -> Self {
         Self {
@@ -36,7 +36,7 @@ impl ShotStats {
         }
     }
 
-    /// Compute shot statistics from a full shot result (flight + bounce + rollout).
+    /// Compute shot statistics from a full shot result (flight + ground).
     #[must_use]
     pub fn from_shot(result: &ShotResult) -> Self {
         let rollout_yards = result.total_yards - result.flight.carry_yards;

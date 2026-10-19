@@ -13,10 +13,12 @@ shot:
 - **Flight**: fixed-step RK4 integration (1 ms) of gravity, Reynolds- and
   spin-dependent drag, Magnus lift, and exponential spin decay, with air
   density from altitude and temperature.
-- **Bounce**: oblique impact on turf (Penner/Cross model) with
-  speed-dependent restitution, friction, and turf compliance, including
-  spin-back.
-- **Rollout**: sliding then pure rolling with speed-dependent friction.
+- **Ground**: 3D rigid-ball impacts on turf (Penner's compliant-turf model
+  with speed-dependent restitution, friction, and pivot friction), hops,
+  then sliding and rolling with speed-dependent rolling resistance. The
+  full spin vector is carried through every contact, so spin-back, the
+  small kick of a curving ball off the turf, and drift from spin along the
+  direction of travel all fall out of the physics.
 - **Stats**: per-shot carry, total, apex, descent angle, and lateral offset,
   plus session averages and dispersion.
 
@@ -35,9 +37,8 @@ dimple = "0.0"
 
 ```rust
 use dimple::aero::BallModel;
-use dimple::bounce::BounceSurface;
 use dimple::environment::Environment;
-use dimple::rollout::RolloutSurface;
+use dimple::ground::Surface;
 use dimple::stats::ShotStats;
 use dimple::trajectory::{ShotInput, simulate_flight, simulate_shot};
 
@@ -53,14 +54,8 @@ let input = ShotInput {
 let flight = simulate_flight(&input, &BallModel::TOUR, &Environment::SEA_LEVEL);
 println!("carry {:.1} yds, lateral {:+.1} m", flight.carry_yards, flight.lateral_m);
 
-// Full shot: flight, bounces, and rollout.
-let shot = simulate_shot(
-    &input,
-    &BallModel::TOUR,
-    &Environment::DENVER,
-    &BounceSurface::FAIRWAY,
-    &RolloutSurface::FAIRWAY,
-);
+// Full shot: flight, then bounces, slide and roll on a fairway.
+let shot = simulate_shot(&input, &BallModel::TOUR, &Environment::DENVER, &Surface::FAIRWAY);
 let stats = ShotStats::from_shot(&shot);
 println!(
     "carry {:.1}, total {:.1} yds, apex {:.0} ft, lateral {:+.1} yds",
@@ -68,9 +63,51 @@ println!(
 );
 ```
 
-`flight.points` and `shot.rollout.points` hold the sampled path for
-animation; `trajectory::interpolate_trajectory` gives the position at any
-time.
+`flight.points` followed by `shot.ground.points` is the sampled path for
+animation (ground times are absolute shot times);
+`trajectory::interpolate_trajectory` gives the flight position at any time.
+
+## Ground
+
+The ground API has three layers:
+
+```rust
+use dimple::aero::BallModel;
+use dimple::environment::Environment;
+use dimple::ground::{FnTerrain, GroundPhysics, GroundSample, Surface};
+use dimple::trajectory::{ShotInput, simulate_shot};
+use glam::DVec3;
+
+let (input, ball, env) = (ShotInput::driver(), BallModel::TOUR, Environment::SEA_LEVEL);
+
+// 1. One flat surface: a preset, or a preset with any field changed.
+let shot = simulate_shot(&input, &ball, &env, &Surface::FAIRWAY);
+let firm = Surface { mu_roll: 0.09, ..Surface::FAIRWAY };
+let shot = simulate_shot(&input, &ball, &env, &firm);
+
+// 2. dimple's physics over ground you describe point by point: here a
+//    green from 260 m to 290 m downrange, fairway elsewhere. The surface is
+//    sampled under the ball at every step, so a ball that lands on the
+//    fairway and rolls onto the green feels the green.
+let range = GroundPhysics::new(FnTerrain(|x: f64, _z: f64| GroundSample {
+    height: 0.0,
+    normal: DVec3::Y,
+    surface: if (260.0..290.0).contains(&x) { Surface::GREEN } else { Surface::FAIRWAY },
+}));
+let shot = simulate_shot(&input, &ball, &env, &range);
+
+// Tunables (step, hop transition, limits) are public fields too.
+let quick = GroundPhysics { max_time: 10.0, ..GroundPhysics::new(Surface::GREEN) };
+let shot = simulate_shot(&input, &ball, &env, &quick);
+```
+
+3. Implement `ground::GroundModel` to replace the physics entirely (it is
+   object-safe, so `&dyn GroundModel` works); `ground::impact` and
+   `GroundPhysics::step` are public building blocks, and `GroundResult`,
+   `Contact` and `GroundPoint` have `new` constructors.
+
+The ground is level in this version; slopes are not yet modeled. See
+[docs/AERO.md](docs/AERO.md#ground-model) for the contact model.
 
 ## Conventions
 
@@ -99,9 +136,12 @@ launch-monitor usage:
 | `z` of any position/velocity | right of / moving right of the target line |
 
 **Spin axis.** Backspin and sidespin form one angular velocity vector
-(right-hand rule): `ω = (0, -sidespin, backspin)`. Positive backspin points
-along +Z and lifts the ball; positive sidespin (clockwise viewed from above)
-points along -Y and curves it toward +Z.
+(right-hand rule). For launch azimuth `az`,
+`ω = backspin · (−sin az, 0, cos az) − sidespin · ŷ`: backspin is about the
+horizontal axis perpendicular to the start line (+Z for a straight shot) and
+lifts the ball; positive sidespin (clockwise viewed from above) points along
+-Y and curves it toward +Z. A straight launch gives
+`ω = (0, -sidespin, backspin)`.
 
 ## Ball Models
 

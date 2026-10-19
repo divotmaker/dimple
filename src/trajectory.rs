@@ -2,6 +2,7 @@ use glam::DVec3;
 
 use crate::aero::{AeroParams, BallModel};
 use crate::environment::Environment;
+use crate::ground::{BallState, GroundModel, GroundResult, Surface};
 use crate::rk4::{self, State};
 use crate::units;
 
@@ -27,6 +28,30 @@ pub struct ShotInput {
 }
 
 impl ShotInput {
+    /// Launch angular velocity (rad/s, crate frame).
+    ///
+    /// With the launch heading `d = (cos az, 0, sin az)`, backspin is about
+    /// the horizontal axis perpendicular to the start line, `d × ŷ =
+    /// (−sin az, 0, cos az)`, and sidespin is about −Y:
+    ///
+    /// `ω = backspin · (−sin az, 0, cos az) − sidespin · ŷ`
+    ///
+    /// For a straight launch this is `(0, −sidespin, backspin)`. Backspin
+    /// lift then stays in the vertical plane of the start line at any
+    /// azimuth, so a pushed or pulled shot with no sidespin flies straight
+    /// along its start line.
+    #[must_use]
+    pub fn launch_spin_rads(&self) -> DVec3 {
+        let backspin = units::rpm_to_rads(self.backspin_rpm);
+        let sidespin = units::rpm_to_rads(self.sidespin_rpm);
+        let azimuth = units::deg_to_rad(self.launch_azimuth_deg);
+        DVec3::new(
+            -backspin * azimuth.sin(),
+            -sidespin,
+            backspin * azimuth.cos(),
+        )
+    }
+
     /// Typical 7-iron shot.
     #[must_use]
     pub fn seven_iron() -> Self {
@@ -81,7 +106,8 @@ pub struct TrajectoryPoint {
 /// Result of a flight simulation.
 #[derive(Debug, Clone)]
 pub struct FlightResult {
-    /// Sampled trajectory from launch (t = 0) to landing (last point).
+    /// Sampled trajectory from launch (t = 0) to landing (last point). The
+    /// last point is the interpolated ground crossing, exactly on the ground.
     pub points: Vec<TrajectoryPoint>,
     /// Time from launch to landing (s).
     pub flight_time: f64,
@@ -94,196 +120,180 @@ pub struct FlightResult {
     /// Lateral offset of the landing point from the target line (m).
     /// Positive = right, negative = left.
     pub lateral_m: f64,
-    /// Backspin at landing (rad/s): the z-component of the angular
-    /// velocity, positive = backspin for a ball moving downrange. This is
-    /// the downrange-signed `backspin` that
-    /// [`compute_bounce`](crate::bounce::compute_bounce) takes.
+    /// Angular velocity at landing (rad/s, crate frame).
+    ///
+    /// The spin axis is fixed during flight (only the rate decays), so this
+    /// is the launch spin vector ([`ShotInput::launch_spin_rads`]) scaled by
+    /// the decay.
+    pub landing_spin: DVec3,
+    /// Backspin at landing (rad/s): `landing_spin` projected on the launch
+    /// backspin axis `(−sin az, 0, cos az)`, positive = backspin. Exact,
+    /// because the axis does not move in flight.
     pub landing_backspin_rads: f64,
-    /// Sidespin at landing (rad/s). Same sign convention as
-    /// [`ShotInput::sidespin_rpm`]: positive = curves right.
+    /// Sidespin at landing (rad/s): `−landing_spin.y`. Same sign convention
+    /// as [`ShotInput::sidespin_rpm`]: positive = curves right.
     pub landing_sidespin_rads: f64,
 }
 
-/// Simulate a ball flight from launch to landing.
+/// Simulate a ball flight from launch to landing on flat ground (y = 0).
 ///
-/// Uses RK4 integration with a fixed 1ms timestep.
-/// Records a trajectory point every `sample_interval` steps (default: every 10ms).
-/// Spin decays exponentially over the flight.
+/// Uses RK4 integration with a fixed 1 ms timestep. Records a trajectory
+/// point every 10 ms, plus the landing point, which is interpolated to the
+/// exact ground crossing. Spin decays exponentially over the flight.
 #[must_use]
 pub fn simulate_flight(input: &ShotInput, ball: &BallModel, env: &Environment) -> FlightResult {
-    let speed_mps = units::mph_to_mps(input.ball_speed_mph);
-    let launch_rad = units::deg_to_rad(input.launch_angle_deg);
-    let azimuth_rad = units::deg_to_rad(input.launch_azimuth_deg);
+    fly(input, ball, env, &Surface::FAIRWAY).0
+}
 
-    let vx = speed_mps * launch_rad.cos() * azimuth_rad.cos();
-    let vy = speed_mps * launch_rad.sin();
-    let vz = speed_mps * launch_rad.cos() * azimuth_rad.sin();
+/// Launch velocity (m/s): ball speed along the launch direction.
+fn launch_velocity(input: &ShotInput) -> DVec3 {
+    let speed = units::mph_to_mps(input.ball_speed_mph);
+    let launch = units::deg_to_rad(input.launch_angle_deg);
+    let azimuth = units::deg_to_rad(input.launch_azimuth_deg);
+    DVec3::new(
+        speed * launch.cos() * azimuth.cos(),
+        speed * launch.sin(),
+        speed * launch.cos() * azimuth.sin(),
+    )
+}
 
-    let mut aero = AeroParams::from_spin(input.backspin_rpm, input.sidespin_rpm);
+/// Flight from the tee at `(0, ground.height(0, 0), 0)` until
+/// `ground.landing` reports a crossing (or 30 s). Returns the flight and the
+/// full landing state.
+fn fly<G: GroundModel + ?Sized>(
+    input: &ShotInput,
+    ball: &BallModel,
+    env: &Environment,
+    ground: &G,
+) -> (FlightResult, BallState) {
+    const DT: f64 = 0.001; // 1 ms timestep
+    const SAMPLE_EVERY: u32 = 10; // record every 10 ms
+    const MAX_STEPS: u32 = 30_000; // 30 seconds max
+
+    let spin = input.launch_spin_rads();
+    let mut aero = AeroParams::from_spin_vector(spin);
     let air_density = env.air_density();
 
-    let dt = 0.001; // 1ms timestep
-    let sample_every = 10; // record every 10ms
-    let max_steps = 30_000; // 30 seconds max
-
-    let mut state = State {
-        pos: DVec3::ZERO,
-        vel: DVec3::new(vx, vy, vz),
-    };
-    let mut t = 0.0;
-    let mut apex = 0.0_f64;
-    let mut points = Vec::with_capacity(max_steps / sample_every + 1);
-
-    points.push(TrajectoryPoint {
+    let tee = DVec3::new(0.0, ground.height(0.0, 0.0), 0.0);
+    let mut prev = BallState {
         time: 0.0,
-        pos: state.pos,
-        vel: state.vel,
-    });
+        pos: tee,
+        vel: launch_velocity(input),
+        spin,
+    };
+    let mut apex = 0.0_f64;
+    let mut points = Vec::with_capacity((MAX_STEPS / SAMPLE_EVERY + 2) as usize);
+    points.push(trajectory_point(&prev));
 
-    for step_num in 1..=max_steps {
-        state = rk4::step(state, t, dt, |_pos, vel, _t| {
-            ball.acceleration(vel, &aero, air_density)
-        });
-        t += dt;
+    let mut landing = None;
+    for step_num in 1..=MAX_STEPS {
+        let s = rk4::step(
+            State {
+                pos: prev.pos,
+                vel: prev.vel,
+            },
+            prev.time,
+            DT,
+            |_pos, vel, _t| ball.acceleration(vel, &aero, air_density),
+        );
+        aero.decay_spin(DT);
+        let next = BallState {
+            time: f64::from(step_num) * DT,
+            pos: s.pos,
+            vel: s.vel,
+            spin: aero.spin_vector(),
+        };
+        apex = apex.max(next.pos.y - tee.y);
 
-        // Decay spin after each step
-        aero.decay_spin(dt);
-
-        apex = apex.max(state.pos.y);
-
-        if step_num % sample_every == 0 {
-            points.push(TrajectoryPoint {
-                time: t,
-                pos: state.pos,
-                vel: state.vel,
-            });
-        }
-
-        // Stop when ball returns to ground level (after at least 0.1s of flight)
-        if t > 0.1 && state.pos.y <= 0.0 {
-            // Record final landing point
-            points.push(TrajectoryPoint {
-                time: t,
-                pos: state.pos,
-                vel: state.vel,
-            });
+        if let Some(l) = ground.landing(&prev, &next) {
+            landing = Some(l);
             break;
         }
+        if step_num % SAMPLE_EVERY == 0 {
+            points.push(trajectory_point(&next));
+        }
+        prev = next;
     }
 
-    let carry_m = (state.pos.x * state.pos.x + state.pos.z * state.pos.z).sqrt();
+    let end = match landing {
+        Some(l) => {
+            points.push(trajectory_point(&l));
+            l
+        }
+        None => {
+            if points.last().is_none_or(|p| p.time < prev.time) {
+                points.push(trajectory_point(&prev));
+            }
+            prev
+        }
+    };
 
-    // Extract landing spin components from the decayed aero state.
-    // spin_axis.z = backspin fraction, -spin_axis.y = sidespin fraction.
-    let landing_backspin_rads = aero.spin_rate * aero.spin_axis.z;
-    let landing_sidespin_rads = -aero.spin_rate * aero.spin_axis.y;
+    let carry_m = end.pos.x.hypot(end.pos.z);
+    let azimuth = units::deg_to_rad(input.launch_azimuth_deg);
+    let backspin_axis = DVec3::new(-azimuth.sin(), 0.0, azimuth.cos());
 
-    FlightResult {
+    let flight = FlightResult {
         points,
-        flight_time: t,
+        flight_time: end.time,
         carry_m,
         carry_yards: units::meters_to_yards(carry_m),
         apex_m: apex,
-        lateral_m: state.pos.z,
-        landing_backspin_rads,
-        landing_sidespin_rads,
+        lateral_m: end.pos.z,
+        landing_spin: end.spin,
+        landing_backspin_rads: end.spin.dot(backspin_axis),
+        landing_sidespin_rads: -end.spin.y,
+    };
+    (flight, end)
+}
+
+fn trajectory_point(s: &BallState) -> TrajectoryPoint {
+    TrajectoryPoint {
+        time: s.time,
+        pos: s.pos,
+        vel: s.vel,
     }
 }
 
-/// Position and velocity at each bounce event (crate frame, +Z = right).
-#[derive(Debug, Clone, Copy)]
-pub struct BounceEvent {
-    /// Ground contact point (m).
-    pub pos: DVec3,
-    /// Velocity arriving at the ground (m/s).
-    pub vel_in: DVec3,
-    /// Rebound velocity (m/s).
-    pub vel_out: DVec3,
-}
-
-/// Result of a full shot simulation: flight + bounce + rollout.
+/// Result of a full shot simulation: flight, then everything on the ground.
 #[derive(Debug, Clone)]
 pub struct ShotResult {
     /// Airborne phase, launch to first ground contact.
     pub flight: FlightResult,
-    /// Bounce events, in order, starting at the landing point.
-    pub bounces: Vec<BounceEvent>,
-    /// Ground phase after the last bounce.
-    pub rollout: crate::rollout::RolloutResult,
-    /// Carry + rollout distance (m).
+    /// Impacts, hops, slide and roll from the landing point to rest. Its
+    /// times are absolute, so `flight.points` followed by `ground.points` is
+    /// the whole path.
+    pub ground: GroundResult,
+    /// Horizontal distance from the tee to the final position (m).
     pub total_m: f64,
-    /// Carry + rollout distance (yards).
+    /// [`total_m`](Self::total_m) in yards.
     pub total_yards: f64,
     /// Where the ball came to rest (m, crate frame: `final_pos.z` > 0 is
-    /// right of the target line).
+    /// right of the target line). Equal to `ground.rest.pos`.
     pub final_pos: DVec3,
 }
 
-/// Simulate a complete shot: flight, bounce sequence, and rollout.
+/// Simulate a complete shot: flight, landing, and the ground phase.
 ///
-/// `bounce_surface` and `rollout_surface` define the ground properties at the
-/// landing point. For simplicity, the surface is constant throughout the
-/// bounce/rollout phase (no mid-rollout surface transitions).
+/// `ground` decides where the flight lands ([`GroundModel::landing`]) and
+/// what happens afterwards ([`GroundModel::settle`]). Pass a [`Surface`]
+/// for flat ground with the default physics, a
+/// [`GroundPhysics`](crate::ground::GroundPhysics) for per-point surfaces or
+/// custom tunables, or your own [`GroundModel`] (also as `&dyn GroundModel`).
 #[must_use]
-pub fn simulate_shot(
+pub fn simulate_shot<G: GroundModel + ?Sized>(
     input: &ShotInput,
     ball: &BallModel,
     env: &Environment,
-    bounce_surface: &crate::bounce::BounceSurface,
-    rollout_surface: &crate::rollout::RolloutSurface,
+    ground: &G,
 ) -> ShotResult {
-    let flight = simulate_flight(input, ball, env);
-
-    // Landing state from end of flight
-    let landing = flight.points.last().expect("flight must have points");
-    let landing_vel = landing.vel;
-    let landing_pos = landing.pos;
-
-    // Bounce sequence
-    let bounce_results = crate::bounce::bounce_sequence(
-        landing_vel,
-        flight.landing_backspin_rads,
-        flight.landing_sidespin_rads,
-        bounce_surface,
-    );
-
-    // Track bounce events with positions (parabolic arcs between bounces)
-    let mut bounce_events = Vec::new();
-    let mut pos = DVec3::new(landing_pos.x, 0.0, landing_pos.z);
-    let mut vel = landing_vel;
-
-    for br in &bounce_results {
-        bounce_events.push(BounceEvent {
-            pos,
-            vel_in: vel,
-            vel_out: br.vel,
-        });
-
-        if br.still_bouncing {
-            // Simple parabolic arc to next ground contact.
-            // Time to return to ground: t = 2*vy/g
-            let t_air = 2.0 * br.vel.y / units::G;
-            pos = DVec3::new(pos.x + br.vel.x * t_air, 0.0, pos.z + br.vel.z * t_air);
-        }
-        vel = br.vel;
-    }
-
-    // Final bounce state → rollout
-    let final_bounce = bounce_results.last().expect("at least one bounce");
-    let rollout = crate::rollout::simulate_rollout(
-        pos,
-        final_bounce.vel,
-        final_bounce.omega,
-        rollout_surface,
-    );
-
-    let final_pos = rollout.final_pos;
-    let total_m = (final_pos.x * final_pos.x + final_pos.z * final_pos.z).sqrt();
+    let (flight, landing) = fly(input, ball, env, ground);
+    let settled = ground.settle(&landing, ball);
+    let final_pos = settled.rest.pos;
+    let total_m = final_pos.x.hypot(final_pos.z);
 
     ShotResult {
         flight,
-        bounces: bounce_events,
-        rollout,
+        ground: settled,
         total_m,
         total_yards: units::meters_to_yards(total_m),
         final_pos,
@@ -851,30 +861,137 @@ mod tests {
     }
 
     // ══════════════════════════════════════════════════════════════════
-    //  UNIFIED SHOT SIMULATION — flight + bounce + rollout
+    //  LANDING — interpolated ground crossing
     // ══════════════════════════════════════════════════════════════════
 
-    use crate::bounce::BounceSurface;
-    use crate::rollout::RolloutSurface;
+    #[test]
+    fn flight_lands_exactly_on_the_ground() {
+        for input in [
+            ShotInput::driver(),
+            ShotInput::seven_iron(),
+            ShotInput::wedge(),
+        ] {
+            let r = flight_at(&input, &Environment::SEA_LEVEL);
+            let last = r.points.last().unwrap();
+            assert!(
+                last.pos.y.abs() < f64::EPSILON,
+                "landing y = {}",
+                last.pos.y
+            );
+            assert!(last.vel.y < 0.0);
+            assert!((r.flight_time - last.time).abs() < f64::EPSILON);
+            let before = &r.points[r.points.len() - 2];
+            assert!(before.pos.y > 0.0 && last.time - before.time <= 0.010 + 1e-12);
+        }
+    }
+
+    #[test]
+    fn shot_flight_matches_simulate_flight_on_flat_ground() {
+        let input = lateral_input(2.0, 700.0);
+        let f = flight_at(&input, &Environment::SEA_LEVEL);
+        let s = shot_on_fairway(&input);
+        assert!((f.carry_m - s.flight.carry_m).abs() < 1e-12);
+        assert!((f.landing_spin - s.flight.landing_spin).length() < 1e-12);
+        let c = &s.ground.contacts[0];
+        assert!((c.pos - s.flight.points.last().unwrap().pos).length() < 1e-12);
+        assert!((c.time - f.flight_time).abs() < 1e-12);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  LAUNCH SPIN AXIS — backspin perpendicular to the start line
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn launch_spin_axis() {
+        let straight = lateral_input(0.0, 600.0).launch_spin_rads();
+        let expected = DVec3::new(0.0, -units::rpm_to_rads(600.0), units::rpm_to_rads(3000.0));
+        assert!((straight - expected).length() < 1e-12);
+
+        // Backspin axis is d × ŷ for launch heading d.
+        let az = units::deg_to_rad(7.0);
+        let pushed = lateral_input(7.0, 0.0).launch_spin_rads();
+        let d = DVec3::new(az.cos(), 0.0, az.sin());
+        let axis = d.cross(DVec3::Y);
+        assert!((pushed - units::rpm_to_rads(3000.0) * axis).length() < 1e-9);
+    }
+
+    #[test]
+    fn pushed_straight_shot_stays_on_its_start_line() {
+        // A 6° push with no sidespin: the Magnus force stays in the vertical
+        // plane through the start line, so the ball lands on that line.
+        let input = lateral_input(6.0, 0.0);
+        let az = units::deg_to_rad(6.0);
+        let across = DVec3::new(-az.sin(), 0.0, az.cos()); // horizontal, ⟂ start line
+
+        let aero = crate::aero::AeroParams::from_spin_vector(input.launch_spin_rads());
+        let v = 60.0 * DVec3::new(az.cos() * 0.9, 0.3, az.sin() * 0.9).normalize();
+        let gravity_free = BALL.acceleration(v, &aero, Environment::SEA_LEVEL.air_density())
+            - DVec3::NEG_Y * units::G;
+        assert!(
+            gravity_free.dot(across).abs() < 1e-12,
+            "aero force has a sideways component {:.3e}",
+            gravity_free.dot(across)
+        );
+
+        let r = flight_at(&input, &Environment::SEA_LEVEL);
+        for p in &r.points {
+            assert!(
+                p.pos.dot(across).abs() < 1e-9,
+                "off the start line by {:.3e} m at t={:.2}",
+                p.pos.dot(across),
+                p.time
+            );
+        }
+        assert!((r.lateral_m - r.carry_m * az.sin()).abs() < 1e-9);
+        assert!(r.landing_sidespin_rads.abs() < 1e-12);
+        assert!(r.landing_spin.dot(across) > 0.0);
+        assert!((r.landing_spin.dot(across) - r.landing_backspin_rads).abs() < 1e-12);
+    }
+
+    #[test]
+    fn landing_spin_projections_are_exact() {
+        let input = lateral_input(-4.0, 900.0);
+        let r = flight_at(&input, &Environment::SEA_LEVEL);
+        let decay = r.landing_spin.length() / input.launch_spin_rads().length();
+        assert!(decay > 0.0 && decay < 1.0);
+        assert!(
+            (r.landing_backspin_rads - units::rpm_to_rads(3000.0) * decay).abs() < 1e-9
+                && (r.landing_sidespin_rads - units::rpm_to_rads(900.0) * decay).abs() < 1e-9
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  UNIFIED SHOT SIMULATION — flight + ground
+    // ══════════════════════════════════════════════════════════════════
+
+    use crate::ground::{GroundPhysics, Termination};
 
     fn shot_on_fairway(input: &ShotInput) -> ShotResult {
-        simulate_shot(
-            input,
-            &BALL,
-            &Environment::SEA_LEVEL,
-            &BounceSurface::FAIRWAY,
-            &RolloutSurface::FAIRWAY,
-        )
+        simulate_shot(input, &BALL, &Environment::SEA_LEVEL, &Surface::FAIRWAY)
     }
 
     fn shot_on_green(input: &ShotInput) -> ShotResult {
-        simulate_shot(
-            input,
+        simulate_shot(input, &BALL, &Environment::SEA_LEVEL, &Surface::GREEN)
+    }
+
+    #[test]
+    fn simulate_shot_accepts_dyn_ground_model() {
+        let models: [&dyn GroundModel; 2] = [&Surface::GREEN, &GroundPhysics::new(Surface::GREEN)];
+        let a = simulate_shot(
+            &ShotInput::driver(),
             &BALL,
             &Environment::SEA_LEVEL,
-            &BounceSurface::GREEN,
-            &RolloutSurface::GREEN,
-        )
+            models[0],
+        );
+        let b = simulate_shot(
+            &ShotInput::driver(),
+            &BALL,
+            &Environment::SEA_LEVEL,
+            models[1],
+        );
+        let c = shot_on_green(&ShotInput::driver());
+        assert_eq!(a.ground, c.ground);
+        assert_eq!(b.ground, c.ground);
     }
 
     #[test]
@@ -942,7 +1059,7 @@ mod tests {
             shot_on_green(&ShotInput::driver()),
             shot_on_fairway(&ShotInput::driver()),
         ] {
-            let v = r.bounces[0].vel_out;
+            let v = r.ground.contacts[0].vel_out;
             let peak = v.y * v.y / (2.0 * units::G);
             assert!(
                 (1.17..=2.82).contains(&peak),
@@ -954,7 +1071,8 @@ mod tests {
     #[test]
     fn shot_bounces_end_by_hop_height_rule() {
         // Every preset shot stops bouncing by Penner's 5 mm hop-height rule,
-        // well inside the safety bound on impacts.
+        // well inside the safety bound on impacts, and comes to rest.
+        let physics = GroundPhysics::new(Surface::FAIRWAY);
         let hop = |v: DVec3| v.y * v.y / (2.0 * units::G);
         for input in [
             ShotInput::driver(),
@@ -962,17 +1080,18 @@ mod tests {
             ShotInput::wedge(),
         ] {
             for r in [shot_on_fairway(&input), shot_on_green(&input)] {
-                assert!(r.bounces.len() < crate::bounce::MAX_IMPACTS);
-                let (last, rest) = r.bounces.split_last().unwrap();
+                assert_eq!(r.ground.termination, Termination::Rest);
+                let contacts = &r.ground.contacts;
+                assert!(contacts.len() < physics.max_impacts);
+                let (last, rest) = contacts.split_last().unwrap();
                 assert!(
                     rest.iter()
-                        .all(|b| hop(b.vel_out) >= crate::bounce::MIN_HOP_HEIGHT)
+                        .all(|c| hop(c.vel_out) >= physics.min_hop_height)
                 );
                 assert!(
-                    hop(last.vel_out) < crate::bounce::MIN_HOP_HEIGHT,
-                    "last of {} hops rises {:.2} mm",
-                    r.bounces.len(),
-                    hop(last.vel_out) * 1000.0
+                    last.vel_out.y.abs() < 1e-12,
+                    "last of {} contacts leaves along the ground",
+                    contacts.len()
                 );
             }
         }
@@ -982,8 +1101,8 @@ mod tests {
     fn shot_has_bounces() {
         let r = shot_on_fairway(&ShotInput::driver());
         assert!(
-            !r.bounces.is_empty(),
-            "shot should have at least one bounce"
+            r.ground.contacts.len() > 1,
+            "a drive should bounce more than once"
         );
     }
 
@@ -991,10 +1110,11 @@ mod tests {
     fn shot_final_pos_on_ground() {
         let r = shot_on_fairway(&ShotInput::seven_iron());
         assert!(
-            r.final_pos.y.abs() < 0.01,
+            r.final_pos.y.abs() < 1e-12,
             "final position should be on ground: y={:.6}",
             r.final_pos.y
         );
+        assert_eq!(r.ground.rest.vel, DVec3::ZERO);
     }
 
     #[test]
@@ -1005,6 +1125,21 @@ mod tests {
             "driver should finish downrange: x={:.1}",
             r.final_pos.x
         );
+    }
+
+    #[test]
+    fn shot_path_times_are_continuous() {
+        // Ground points carry absolute times: flight points then ground
+        // points form one time-ordered path.
+        let r = shot_on_fairway(&ShotInput::seven_iron());
+        let flight_end = r.flight.points.last().unwrap();
+        let first = r.ground.points.first().unwrap();
+        assert!((first.time - flight_end.time).abs() < 1e-12);
+        assert!((first.pos - flight_end.pos).length() < 1e-12);
+        for w in r.ground.points.windows(2) {
+            assert!(w[1].time >= w[0].time);
+        }
+        assert!((r.ground.points.last().unwrap().pos - r.final_pos).length() < 1e-12);
     }
 
     #[test]
@@ -1048,5 +1183,196 @@ mod tests {
         assert!(stats.total_yards > stats.carry_yards);
         assert!(stats.rollout_yards > 0.0);
         assert!((stats.carry_yards + stats.rollout_yards - stats.total_yards).abs() < 0.1);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  GROUND LATERAL SIGNS — fades rest right, draws rest left
+    // ══════════════════════════════════════════════════════════════════
+
+    fn driver_with_sidespin(sidespin_rpm: f64) -> ShotInput {
+        ShotInput {
+            sidespin_rpm,
+            ..ShotInput::driver()
+        }
+    }
+
+    #[test]
+    fn fade_rests_right_draw_rests_left() {
+        for (surface, name) in [(Surface::FAIRWAY, "fairway"), (Surface::GREEN, "green")] {
+            let fade = simulate_shot(
+                &driver_with_sidespin(600.0),
+                &BALL,
+                &Environment::SEA_LEVEL,
+                &surface,
+            );
+            let draw = simulate_shot(
+                &driver_with_sidespin(-600.0),
+                &BALL,
+                &Environment::SEA_LEVEL,
+                &surface,
+            );
+            assert!(
+                fade.final_pos.z > fade.flight.lateral_m && fade.flight.lateral_m > 0.0,
+                "{name}: fade lands right and keeps moving right: land {:.2}, rest {:.2}",
+                fade.flight.lateral_m,
+                fade.final_pos.z
+            );
+            assert!(
+                draw.final_pos.z < draw.flight.lateral_m && draw.flight.lateral_m < 0.0,
+                "{name}: draw lands left and keeps moving left: land {:.2}, rest {:.2}",
+                draw.flight.lateral_m,
+                draw.final_pos.z
+            );
+            let stats = crate::stats::ShotStats::from_shot(&fade);
+            assert!(stats.lateral_yards > 0.0);
+        }
+    }
+
+    #[test]
+    fn fade_first_bounce_kicks_right_of_its_heading() {
+        // A fade lands heading right of its start line while its backspin
+        // axis still points across the start line. Friction removes more
+        // velocity along the start line than across it, so the rebound's
+        // heading is further right than the arrival heading (a draw: left).
+        for (side, sign) in [(600.0, 1.0), (-600.0, -1.0)] {
+            let r = shot_on_fairway(&driver_with_sidespin(side));
+            let c = &r.ground.contacts[0];
+            let heading_in = c.vel_in.z.atan2(c.vel_in.x);
+            let heading_out = c.vel_out.z.atan2(c.vel_out.x);
+            assert!(
+                sign * heading_in > 0.0 && sign * (heading_out - heading_in) > 0.0,
+                "sidespin {side}: heading in {:.3}°, out {:.3}°",
+                units::rad_to_deg(heading_in),
+                units::rad_to_deg(heading_out)
+            );
+        }
+    }
+
+    #[test]
+    fn pivot_does_not_steer_on_level_ground() {
+        // Pivot friction acts about the true normal, so it never changes an
+        // impact's velocity or a slide or roll on level ground. Spin about
+        // the normal reaches the path only through a later impact's tilted
+        // contact plane. On rigid ground (no tilt) the lever has no effect at
+        // all; on compliant turf every lever that clears that spin at each
+        // impact, from the presets' 1 mm up, gives the same path.
+        let env = Environment::SEA_LEVEL;
+        let rigid = Surface {
+            compliance: 0.0,
+            ..Surface::FAIRWAY
+        };
+        for side in [600.0, -600.0] {
+            let input = driver_with_sidespin(side);
+            for (base, levers) in [
+                (rigid, [0.0, 0.001, 0.005]),
+                (Surface::FAIRWAY, [0.001, 0.002, 0.005]),
+                (Surface::GREEN, [0.001, 0.002, 0.005]),
+            ] {
+                let shots: Vec<ShotResult> = levers
+                    .iter()
+                    .map(|&pivot| simulate_shot(&input, &BALL, &env, &Surface { pivot, ..base }))
+                    .collect();
+                for (shot, pivot) in shots.iter().zip(levers).skip(1) {
+                    assert!(
+                        (shot.final_pos - shots[0].final_pos).length() < 1e-9,
+                        "sidespin {side}, pivot {pivot}: rest {:?} vs {:?}",
+                        shot.final_pos,
+                        shots[0].final_pos
+                    );
+                    assert_eq!(shot.ground.contacts.len(), shots[0].ground.contacts.len());
+                }
+            }
+            // With no pivot friction on compliant turf the spin survives to
+            // the later impacts, whose tilt throws move the rest slightly.
+            let free = simulate_shot(
+                &input,
+                &BALL,
+                &env,
+                &Surface {
+                    pivot: 0.0,
+                    ..Surface::FAIRWAY
+                },
+            );
+            let preset = shot_on_fairway(&input);
+            let shift = (free.final_pos - preset.final_pos).length();
+            assert!(shift > 0.01 && shift < 0.2, "shift {shift:.3} m");
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  SYMMETRY — mirror and frame invariance of the full shot
+    // ══════════════════════════════════════════════════════════════════
+
+    fn mirror_z(v: DVec3) -> DVec3 {
+        DVec3::new(v.x, v.y, -v.z)
+    }
+
+    /// Mirror of an angular velocity (a pseudovector) in the z = 0 plane.
+    fn mirror_spin_z(w: DVec3) -> DVec3 {
+        DVec3::new(-w.x, -w.y, w.z)
+    }
+
+    #[test]
+    fn shot_mirror_symmetry_on_the_ground() {
+        // ±sidespin and ±azimuth give mirrored z at every contact, every
+        // ground point and at rest.
+        for surface in [Surface::FAIRWAY, Surface::GREEN] {
+            let right = simulate_shot(
+                &lateral_input(3.0, 900.0),
+                &BALL,
+                &Environment::SEA_LEVEL,
+                &surface,
+            );
+            let left = simulate_shot(
+                &lateral_input(-3.0, -900.0),
+                &BALL,
+                &Environment::SEA_LEVEL,
+                &surface,
+            );
+            assert!(right.final_pos.z > 1.0);
+            assert_eq!(right.ground.contacts.len(), left.ground.contacts.len());
+            assert_eq!(right.ground.points.len(), left.ground.points.len());
+            for (r, l) in right.ground.contacts.iter().zip(&left.ground.contacts) {
+                assert!((mirror_z(r.pos) - l.pos).length() < 1e-9);
+                assert!((mirror_z(r.vel_out) - l.vel_out).length() < 1e-9);
+                assert!((mirror_spin_z(r.spin_out) - l.spin_out).length() < 1e-7);
+            }
+            for (r, l) in right.ground.points.iter().zip(&left.ground.points) {
+                assert!((mirror_z(r.pos) - l.pos).length() < 1e-9);
+                assert_eq!(r.phase, l.phase);
+            }
+            assert!((mirror_z(right.final_pos) - left.final_pos).length() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn shot_frame_invariance_about_y() {
+        // Rotating the launch azimuth (and with it the spin vector) about Y
+        // on flat ground rotates the whole result: every contact and the rest
+        // position, velocity and spin.
+        let az = units::deg_to_rad(10.0);
+        let rot = |v: DVec3| {
+            DVec3::new(
+                v.x * az.cos() - v.z * az.sin(),
+                v.y,
+                v.x * az.sin() + v.z * az.cos(),
+            )
+        };
+        for side in [0.0, 800.0, -800.0] {
+            let base = shot_on_fairway(&lateral_input(0.0, side));
+            let turned = shot_on_fairway(&lateral_input(10.0, side));
+            assert_eq!(base.ground.contacts.len(), turned.ground.contacts.len());
+            for (b, t) in base.ground.contacts.iter().zip(&turned.ground.contacts) {
+                assert!((rot(b.pos) - t.pos).length() < 1e-7);
+                assert!((rot(b.vel_out) - t.vel_out).length() < 1e-7);
+                assert!((rot(b.spin_out) - t.spin_out).length() < 1e-5);
+            }
+            assert!(
+                (rot(base.final_pos) - turned.final_pos).length() < 1e-6,
+                "sidespin {side}: rest {:?} vs rotated {:?}",
+                turned.final_pos,
+                rot(base.final_pos)
+            );
+        }
     }
 }

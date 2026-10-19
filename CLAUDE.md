@@ -1,7 +1,8 @@
 # CLAUDE.md — dimple conventions
 
 `dimple` is a pure-math golf ball-flight library: aerodynamics, RK4 flight,
-bounce, rollout, and shot statistics. Single library crate at the repo root.
+the ground phase (impacts, hops, slide, roll), and shot statistics. Single
+library crate at the repo root.
 
 ## Layout
 
@@ -9,10 +10,10 @@ bounce, rollout, and shot statistics. Single library crate at the repo root.
 |---|---|
 | `src/aero.rs` | `BallModel` (Cd/Cl model + presets), `AeroParams` (spin state), force model |
 | `src/trajectory.rs` | `ShotInput`, `simulate_flight`, `simulate_shot`, `interpolate_trajectory` |
-| `src/bounce.rs` | Oblique turf impact (Penner/Cross), `BounceSurface` |
-| `src/rollout.rs` | Sliding/rolling ground phase, `RolloutSurface` |
+| `src/ground.rs` | `Surface`, `Terrain`, `GroundPhysics`, `GroundModel`: 3D impact (Penner), hops, slide/roll |
+| `src/ground/` | Ground test module and planar regression reference data |
 | `src/environment.rs` | Altitude + temperature → air density |
-| `src/rk4.rs` | Fixed-step RK4 integrator |
+| `src/rk4.rs` | Fixed-step RK4 integrators (`step` for flight, generic `step_state`) |
 | `src/stats.rs` | `ShotStats`, `SessionStats` |
 | `src/units.rs` | Constants and unit conversions |
 | `docs/AERO.md` | Public model documentation: formulas, parameters, sources, fit quality |
@@ -22,19 +23,21 @@ bounce, rollout, and shot statistics. Single library crate at the repo root.
 - **SI internally**: meters, seconds, kilograms, radians, rad/s. Golf units
   (mph, degrees, rpm, yards, feet) appear only in `ShotInput`, `ShotStats`,
   and `units`.
-- **RK4 only**, fixed 1 ms timestep for flight. No adaptive or lower-order
+- **RK4 only**, fixed 1 ms timestep for flight and within each smooth ground
+  phase (steps end exactly at phase switches). No adaptive or lower-order
   integrators.
 - **Frame**: right-handed, origin at the tee. +X downrange, +Y up,
   +Z right of the target line from the golfer's view.
 - **Lateral signs: positive = right** everywhere: `launch_azimuth_deg`,
   `sidespin_rpm`, `lateral_m`, `lateral_yards`, `landing_sidespin_rads`, and
   the `z` of every public vector. This matches the Flight Relay Protocol.
-- **Spin**: one angular velocity vector, right-hand rule,
-  `ω = (0, -sidespin, backspin)`. Positive backspin lifts; positive sidespin
-  (clockwise from above) curves right.
+- **Spin**: one angular velocity vector, right-hand rule, from launch to
+  rest: `ω = backspin · (−sin az, 0, cos az) − sidespin · ŷ`, i.e.
+  `(0, -sidespin, backspin)` for a straight launch. Positive backspin lifts;
+  positive sidespin (clockwise from above) curves right.
 - Any change touching lateral or spin signs needs a test asserting the
-  observable direction (see the `LATERAL SIGN CONVENTION` tests in
-  `trajectory.rs`).
+  observable direction (see the `LATERAL SIGN CONVENTION` and
+  `GROUND LATERAL SIGNS` tests in `trajectory.rs`).
 
 ## Scope
 
