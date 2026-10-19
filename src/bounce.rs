@@ -8,9 +8,6 @@ const BALL_RADIUS: f64 = 0.021_335;
 const BOUNCE_THRESHOLD: f64 = 0.1;
 
 /// Surface parameters needed for a bounce computation.
-///
-/// Kept separate from cf-scene to avoid cross-crate dependency.
-/// cf-scene's `SurfaceParams` has the same fields.
 #[derive(Debug, Clone, Copy)]
 pub struct BounceSurface {
     /// Normal coefficient of restitution (0..1).

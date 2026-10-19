@@ -1,16 +1,17 @@
 [package]
-name = "cf-math"
+name = "dimple"
 version = "0.0.5"
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-repository.workspace = true
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+description = "Golf ball-flight physics: aerodynamics, RK4 trajectory, bounce, and rollout"
+repository = "https://github.com/divotmaker/dimple"
+readme = "README.md"
+keywords = ["golf", "ballistics", "physics", "aerodynamics"]
+categories = ["science", "simulation"]
+
+[lib]
+name = "dimple"
 
 [dependencies]
-glam.workspace = true
-thiserror.workspace = true
-
-[dev-dependencies]
-proptest.workspace = true
-approx.workspace = true
-rayon.workspace = true
+glam = "0.32"
