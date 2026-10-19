@@ -4,12 +4,20 @@ use crate::units;
 /// Statistics for a single shot, in display-friendly units.
 #[derive(Debug, Clone, Copy)]
 pub struct ShotStats {
+    /// Carry distance (yards).
     pub carry_yards: f64,
+    /// Carry + rollout distance (yards). Equal to carry for flight-only stats.
     pub total_yards: f64,
+    /// Total minus carry (yards). Zero for flight-only stats.
     pub rollout_yards: f64,
+    /// Maximum height (feet).
     pub apex_feet: f64,
+    /// Time from launch to landing (s).
     pub flight_time_s: f64,
-    pub lateral_yards: f64, // positive = left, negative = right (for right-handed)
+    /// Lateral offset of the landing point from the target line (yards).
+    /// Positive = right, negative = left, from the golfer's view.
+    pub lateral_yards: f64,
+    /// Angle below horizontal at landing (degrees).
     pub descent_angle_deg: f64,
 }
 
@@ -97,6 +105,7 @@ impl SessionStats {
         Some(self.shots.iter().map(|s| s.apex_feet).sum::<f64>() / self.shots.len() as f64)
     }
 
+    /// Mean lateral offset (yards, positive = right).
     #[must_use]
     pub fn avg_lateral_yards(&self) -> Option<f64> {
         if self.shots.is_empty() {
@@ -181,6 +190,22 @@ mod tests {
         assert!(stats.carry_yards > 100.0);
         assert!(stats.apex_feet > 0.0);
         assert!(stats.descent_angle_deg > 0.0);
+    }
+
+    #[test]
+    fn shot_stats_lateral_positive_right() {
+        let slice = ShotInput {
+            sidespin_rpm: 1500.0,
+            ..ShotInput::seven_iron()
+        };
+        let result = simulate_flight(&slice, &BallModel::TOUR, &Environment::SEA_LEVEL);
+        let stats = ShotStats::from_flight(&result);
+        assert!(
+            stats.lateral_yards > 0.0,
+            "slice lateral {:.1}",
+            stats.lateral_yards
+        );
+        assert!((units::yards_to_meters(stats.lateral_yards) - result.lateral_m).abs() < 1e-9);
     }
 
     #[test]

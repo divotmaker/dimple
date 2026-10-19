@@ -230,9 +230,8 @@ impl BallModel {
 
     /// Compute ball acceleration from gravity + drag + Magnus lift.
     ///
-    /// Internal coordinate system: +X downrange, +Y up, +Z left (right-handed).
-    /// Golf-convention sign flips (positive azimuth/lateral = right) are applied
-    /// at the input/output boundary in `trajectory.rs`, not here.
+    /// Coordinate frame: +X downrange, +Y up, +Z right of the target line
+    /// (right-handed). `vel` and the returned acceleration are in m/s and m/s².
     #[must_use]
     pub fn acceleration(&self, vel: DVec3, aero: &AeroParams, air_density: f64) -> DVec3 {
         let speed = vel.length();
@@ -276,7 +275,9 @@ impl BallModel {
 /// `BallModel` (which is fixed for the flight) to compute forces.
 #[derive(Debug, Clone, Copy)]
 pub struct AeroParams {
-    /// Spin axis (unit vector). Combined backspin + sidespin direction.
+    /// Spin axis (unit vector, right-hand rule). Combined backspin + sidespin
+    /// direction: backspin points along +Z, sidespin that curves the ball
+    /// right points along -Y.
     pub spin_axis: DVec3,
     /// Current spin rate (rad/s). Decays over flight.
     pub spin_rate: f64,
@@ -291,14 +292,19 @@ pub const DEFAULT_SPIN_DECAY: f64 = 0.04;
 impl AeroParams {
     /// Create aero params from backspin and sidespin in RPM.
     ///
-    /// Backspin axis is +Z (left, perpendicular to flight direction in XY plane).
-    /// Sidespin axis is +Y (up, causes left/right curve).
+    /// - `backspin_rpm`: positive = backspin (lift), negative = topspin.
+    ///   Angular velocity along +Z (right-hand rule: the top of the ball moves
+    ///   back toward the golfer).
+    /// - `sidespin_rpm`: positive = the ball curves **right** (fade/slice for a
+    ///   right-handed golfer), negative = curves left (draw/hook). Positive
+    ///   sidespin is a clockwise rotation viewed from above, i.e. angular
+    ///   velocity along -Y.
     #[must_use]
     pub fn from_spin(backspin_rpm: f64, sidespin_rpm: f64) -> Self {
         let backspin_rads = backspin_rpm * std::f64::consts::PI / 30.0;
         let sidespin_rads = sidespin_rpm * std::f64::consts::PI / 30.0;
 
-        let spin_vec = DVec3::new(0.0, sidespin_rads, backspin_rads);
+        let spin_vec = DVec3::new(0.0, -sidespin_rads, backspin_rads);
         let spin_rate = spin_vec.length();
         let spin_axis = if spin_rate > 1e-10 {
             spin_vec / spin_rate
@@ -354,6 +360,30 @@ mod tests {
         let vel = DVec3::new(50.0, 0.0, 0.0);
         let accel = TOUR.acceleration(vel, &aero, SEA_LEVEL_RHO);
         assert!(accel.x < 0.0, "drag should oppose +X velocity");
+    }
+
+    #[test]
+    fn positive_sidespin_pushes_right() {
+        let aero = AeroParams::from_spin(3000.0, 1000.0);
+        let vel = DVec3::new(50.0, 0.0, 0.0);
+        let accel = TOUR.acceleration(vel, &aero, SEA_LEVEL_RHO);
+        assert!(
+            accel.z > 0.0,
+            "positive sidespin should push toward +Z (right): az={:.3}",
+            accel.z
+        );
+    }
+
+    #[test]
+    fn negative_sidespin_pushes_left() {
+        let aero = AeroParams::from_spin(3000.0, -1000.0);
+        let vel = DVec3::new(50.0, 0.0, 0.0);
+        let accel = TOUR.acceleration(vel, &aero, SEA_LEVEL_RHO);
+        assert!(
+            accel.z < 0.0,
+            "negative sidespin should push toward -Z (left): az={:.3}",
+            accel.z
+        );
     }
 
     #[test]

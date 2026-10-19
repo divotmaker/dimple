@@ -43,7 +43,7 @@ pub struct BounceResult {
     /// Convention: positive = topspin (contact point moves backward, promotes rolling).
     /// Negative = backspin (contact point moves forward, opposes rolling).
     pub omega: f64,
-    /// Sidespin after bounce (rad/s).
+    /// Sidespin after bounce (rad/s, positive = curves right).
     pub sidespin: f64,
     /// Whether the ball should continue bouncing (vertical speed above threshold).
     pub still_bouncing: bool,
@@ -57,12 +57,13 @@ pub struct BounceResult {
 /// - Normal: COR-based rebound
 /// - Tangential: slip vs grip depending on friction and spin
 ///
-/// Coordinate system: +X downrange, +Y up, +Z lateral (right-handed).
+/// Coordinate frame: +X downrange, +Y up, +Z right of the target line
+/// (right-handed).
 /// Ground plane is Y=0, surface normal is +Y.
 ///
 /// `vel`: incoming velocity (m/s), must have negative Y component (falling).
 /// `backspin`: incoming backspin (rad/s, positive = backspin opposing forward motion).
-/// `sidespin`: incoming sidespin (rad/s).
+/// `sidespin`: incoming sidespin (rad/s, positive = curves right).
 /// `surface`: surface parameters.
 #[must_use]
 pub fn compute_bounce(
@@ -175,7 +176,7 @@ pub fn compute_bounce(
 ///
 /// `vel`: velocity at first ground contact (from flight simulation).
 /// `backspin`: spin at landing (rad/s, positive = backspin).
-/// `sidespin`: sidespin at landing (rad/s).
+/// `sidespin`: sidespin at landing (rad/s, positive = curves right).
 /// `surface`: surface parameters (assumed constant across bounces).
 #[must_use]
 pub fn bounce_sequence(

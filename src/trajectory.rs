@@ -6,12 +6,23 @@ use crate::rk4::{self, State};
 use crate::units;
 
 /// High-level shot input in common golf units.
+///
+/// Lateral conventions match launch-monitor and Flight Relay Protocol usage:
+/// positive azimuth and positive sidespin both mean **right** of the target
+/// line, from the golfer's view.
 #[derive(Debug, Clone, Copy)]
 pub struct ShotInput {
+    /// Ball speed at launch (mph).
     pub ball_speed_mph: f64,
+    /// Vertical launch angle above horizontal (degrees).
     pub launch_angle_deg: f64,
+    /// Horizontal launch direction relative to the target line (degrees).
+    /// Positive = right of target, negative = left.
     pub launch_azimuth_deg: f64,
+    /// Backspin (rpm). Positive = backspin, negative = topspin.
     pub backspin_rpm: f64,
+    /// Sidespin (rpm). Positive = ball curves right (fade/slice for a
+    /// right-handed golfer), negative = curves left (draw/hook).
     pub sidespin_rpm: f64,
 }
 
@@ -54,25 +65,39 @@ impl ShotInput {
 }
 
 /// A single point along the flight trajectory.
+///
+/// Vectors use the crate frame: +X downrange, +Y up, +Z right of the target
+/// line, origin at the tee.
 #[derive(Debug, Clone, Copy)]
 pub struct TrajectoryPoint {
+    /// Time since launch (s).
     pub time: f64,
+    /// Position (m).
     pub pos: DVec3,
+    /// Velocity (m/s).
     pub vel: DVec3,
 }
 
 /// Result of a flight simulation.
 #[derive(Debug, Clone)]
 pub struct FlightResult {
+    /// Sampled trajectory from launch (t = 0) to landing (last point).
     pub points: Vec<TrajectoryPoint>,
+    /// Time from launch to landing (s).
     pub flight_time: f64,
+    /// Straight-line ground distance from the tee to the landing point (m).
     pub carry_m: f64,
+    /// [`carry_m`](Self::carry_m) in yards.
     pub carry_yards: f64,
+    /// Maximum height above the tee (m).
     pub apex_m: f64,
+    /// Lateral offset of the landing point from the target line (m).
+    /// Positive = right, negative = left.
     pub lateral_m: f64,
     /// Backspin at landing (rad/s, positive = backspin opposing forward motion).
     pub landing_backspin_rads: f64,
-    /// Sidespin at landing (rad/s).
+    /// Sidespin at landing (rad/s). Same sign convention as
+    /// [`ShotInput::sidespin_rpm`]: positive = curves right.
     pub landing_sidespin_rads: f64,
 }
 
@@ -89,8 +114,7 @@ pub fn simulate_flight(input: &ShotInput, ball: &BallModel, env: &Environment) -
 
     let vx = speed_mps * launch_rad.cos() * azimuth_rad.cos();
     let vy = speed_mps * launch_rad.sin();
-    // Negate: golf convention is positive azimuth = right, physics +Z = left.
-    let vz = -speed_mps * launch_rad.cos() * azimuth_rad.sin();
+    let vz = speed_mps * launch_rad.cos() * azimuth_rad.sin();
 
     let mut aero = AeroParams::from_spin(input.backspin_rpm, input.sidespin_rpm);
     let air_density = env.air_density();
@@ -147,9 +171,9 @@ pub fn simulate_flight(input: &ShotInput, ball: &BallModel, env: &Environment) -
     let carry_m = (state.pos.x * state.pos.x + state.pos.z * state.pos.z).sqrt();
 
     // Extract landing spin components from the decayed aero state.
-    // spin_axis.z = backspin fraction, spin_axis.y = sidespin fraction.
+    // spin_axis.z = backspin fraction, -spin_axis.y = sidespin fraction.
     let landing_backspin_rads = aero.spin_rate * aero.spin_axis.z;
-    let landing_sidespin_rads = aero.spin_rate * aero.spin_axis.y;
+    let landing_sidespin_rads = -aero.spin_rate * aero.spin_axis.y;
 
     FlightResult {
         points,
@@ -157,32 +181,38 @@ pub fn simulate_flight(input: &ShotInput, ball: &BallModel, env: &Environment) -
         carry_m,
         carry_yards: units::meters_to_yards(carry_m),
         apex_m: apex,
-        // Negate: physics +Z = left, golf convention positive = right.
-        lateral_m: -state.pos.z,
+        lateral_m: state.pos.z,
         landing_backspin_rads,
         landing_sidespin_rads,
     }
 }
 
-/// Position and velocity at each bounce event.
+/// Position and velocity at each bounce event (crate frame, +Z = right).
 #[derive(Debug, Clone, Copy)]
 pub struct BounceEvent {
+    /// Ground contact point (m).
     pub pos: DVec3,
+    /// Velocity arriving at the ground (m/s).
     pub vel_in: DVec3,
+    /// Rebound velocity (m/s).
     pub vel_out: DVec3,
 }
 
 /// Result of a full shot simulation: flight + bounce + rollout.
 #[derive(Debug, Clone)]
 pub struct ShotResult {
+    /// Airborne phase, launch to first ground contact.
     pub flight: FlightResult,
+    /// Bounce events, in order, starting at the landing point.
     pub bounces: Vec<BounceEvent>,
+    /// Ground phase after the last bounce.
     pub rollout: crate::rollout::RolloutResult,
     /// Carry + rollout distance (m).
     pub total_m: f64,
     /// Carry + rollout distance (yards).
     pub total_yards: f64,
-    /// Where the ball came to rest.
+    /// Where the ball came to rest (m, crate frame: `final_pos.z` > 0 is
+    /// right of the target line).
     pub final_pos: DVec3,
 }
 
@@ -375,6 +405,109 @@ mod tests {
     }
 
     // ══════════════════════════════════════════════════════════════════
+    //  LATERAL SIGN CONVENTION — positive = right of the target line
+    // ══════════════════════════════════════════════════════════════════
+
+    fn lateral_input(azimuth_deg: f64, sidespin_rpm: f64) -> ShotInput {
+        ShotInput {
+            ball_speed_mph: 150.0,
+            launch_angle_deg: 12.0,
+            launch_azimuth_deg: azimuth_deg,
+            backspin_rpm: 3000.0,
+            sidespin_rpm,
+        }
+    }
+
+    #[test]
+    fn positive_azimuth_starts_right() {
+        let r = flight_at(&lateral_input(5.0, 0.0), &Environment::SEA_LEVEL);
+        assert!(
+            r.lateral_m > 0.0,
+            "lateral {:.2}m should be > 0",
+            r.lateral_m
+        );
+        assert!(r.points[1].pos.z > 0.0, "ball should leave toward +Z");
+        assert!(r.points.iter().all(|p| p.pos.z >= 0.0));
+    }
+
+    #[test]
+    fn negative_azimuth_starts_left() {
+        let r = flight_at(&lateral_input(-5.0, 0.0), &Environment::SEA_LEVEL);
+        assert!(
+            r.lateral_m < 0.0,
+            "lateral {:.2}m should be < 0",
+            r.lateral_m
+        );
+        assert!(r.points[1].pos.z < 0.0, "ball should leave toward -Z");
+    }
+
+    #[test]
+    fn slice_spin_curves_right() {
+        // Right-handed slice: square start, positive sidespin.
+        let r = flight_at(&lateral_input(0.0, 1500.0), &Environment::SEA_LEVEL);
+        assert!(
+            r.lateral_m > 5.0,
+            "slice should finish right: {:.2}m",
+            r.lateral_m
+        );
+        // Curve, not a push: lateral velocity grows toward the right.
+        let last = r.points.last().unwrap();
+        assert!(last.vel.z > 0.0);
+    }
+
+    #[test]
+    fn hook_spin_curves_left() {
+        let r = flight_at(&lateral_input(0.0, -1500.0), &Environment::SEA_LEVEL);
+        assert!(
+            r.lateral_m < -5.0,
+            "hook should finish left: {:.2}m",
+            r.lateral_m
+        );
+    }
+
+    #[test]
+    fn push_draw_starts_right_and_curves_left() {
+        let r = flight_at(&lateral_input(4.0, -800.0), &Environment::SEA_LEVEL);
+        assert!(r.points[1].vel.z > 0.0, "should start right");
+        assert!(
+            r.points.last().unwrap().vel.z < 0.0,
+            "should be moving left at landing"
+        );
+    }
+
+    #[test]
+    fn lateral_mirror_symmetry() {
+        let right = flight_at(&lateral_input(3.0, 1200.0), &Environment::SEA_LEVEL);
+        let left = flight_at(&lateral_input(-3.0, -1200.0), &Environment::SEA_LEVEL);
+        assert!((right.lateral_m + left.lateral_m).abs() < 1e-9);
+        assert!((right.carry_m - left.carry_m).abs() < 1e-9);
+    }
+
+    #[test]
+    fn lateral_matches_landing_position() {
+        let r = flight_at(&lateral_input(2.0, 900.0), &Environment::SEA_LEVEL);
+        assert!((r.lateral_m - r.points.last().unwrap().pos.z).abs() < 1e-12);
+    }
+
+    #[test]
+    fn landing_sidespin_keeps_input_sign() {
+        let input = lateral_input(0.0, 1500.0);
+        let r = flight_at(&input, &Environment::SEA_LEVEL);
+        let initial = units::rpm_to_rads(1500.0);
+        assert!(r.landing_sidespin_rads > 0.0 && r.landing_sidespin_rads < initial);
+        let r = flight_at(&lateral_input(0.0, -1500.0), &Environment::SEA_LEVEL);
+        assert!(r.landing_sidespin_rads < 0.0);
+    }
+
+    #[test]
+    fn slice_shot_finishes_right() {
+        let r = shot_on_fairway(&lateral_input(0.0, 1500.0));
+        assert!(r.final_pos.z > 0.0, "final_pos.z={:.2}", r.final_pos.z);
+        let stats = crate::stats::ShotStats::from_shot(&r);
+        assert!(stats.lateral_yards > 0.0);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
     //  CARRY DISTANCE — published Trackman / PING data (sea level)
     // ══════════════════════════════════════════════════════════════════
     //
@@ -476,15 +609,15 @@ mod tests {
     #[test]
     fn altitude_reduces_curve() {
         // Directional: higher altitude = less Magnus = less lateral deviation.
-        let draw = ShotInput {
+        let fade = ShotInput {
             ball_speed_mph: 150.0,
             launch_angle_deg: 12.0,
             launch_azimuth_deg: 0.0,
             backspin_rpm: 3000.0,
             sidespin_rpm: 2000.0,
         };
-        let sea = flight_at(&draw, &Environment::SEA_LEVEL);
-        let denver = flight_at(&draw, &Environment::DENVER);
+        let sea = flight_at(&fade, &Environment::SEA_LEVEL);
+        let denver = flight_at(&fade, &Environment::DENVER);
         assert!(
             denver.lateral_m.abs() < sea.lateral_m.abs(),
             "Denver lateral ({:.1}m) should be less than sea level ({:.1}m)",

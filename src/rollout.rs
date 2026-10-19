@@ -57,8 +57,11 @@ impl RolloutSurface {
 /// A point along the rollout trajectory.
 #[derive(Debug, Clone, Copy)]
 pub struct RolloutPoint {
+    /// Time since the start of rollout (s).
     pub time: f64,
+    /// Position on the ground plane (m, crate frame: +X downrange, +Z right).
     pub pos: DVec3,
+    /// Horizontal speed (m/s).
     pub speed: f64,
 }
 
@@ -67,7 +70,7 @@ pub struct RolloutPoint {
 pub struct RolloutResult {
     /// Trajectory points (on the ground plane, Y=0).
     pub points: Vec<RolloutPoint>,
-    /// Final resting position.
+    /// Final resting position (m, crate frame: +X downrange, +Z right).
     pub final_pos: DVec3,
     /// Total rollout distance (m) from start to final position.
     pub rollout_m: f64,
