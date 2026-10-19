@@ -114,7 +114,7 @@ Every coefficient is a public field, so you can build your own `BallModel`.
 ## Validation
 
 Trackman 2024 PGA Tour averages (25°C, sea level): carry RMSE 2.8 yds,
-descent-angle RMSE 1.3°, 10 of 12 clubs within ±3 yds. Altitude and
+descent-angle RMSE 1.3°, 9 of 12 clubs within ±3 yds. Altitude and
 temperature response track published data. Per-club results, sources, and
 known limitations are in [docs/AERO.md](docs/AERO.md).
 

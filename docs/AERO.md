@@ -148,7 +148,7 @@ altitude response.
 ### Fit quality
 
 Trackman 2024 (25°C sea level): carry RMSE **2.8 yds**, DA RMSE **1.3°**,
-10 of 12 clubs within ±3y.
+9 of 12 clubs within ±3y (3-wood, hybrid and PW fall outside).
 Per-shot validation set (1,178 shots): carry RMSE **3.2 yds**, peak
 **2.6 ft**, descent **2.7°**, offline **1.5 yds**.
 
@@ -174,13 +174,17 @@ Environmental response (density-only): Denver +6.9% driver carry (published
 
 ### Known limitations
 
-1. **PW carries ~5y cold, hybrid ~5y cold.** Residual structural limit of the
-   single-sigmoid model.
+1. **PW and hybrid carry ~5y short, 3-wood ~4y long.** Residual structural
+   limit of the single-sigmoid model.
 2. **Fast low-spin shots (140+ mph, <3k rpm) run a few yards short** with
    slightly high peaks relative to the per-shot validation set.
 3. **Ball COR vs temperature unmodeled** — only air density responds to
    temperature; cold-ball distance loss is understated.
 4. **Single ball model.** Real balls vary ±5% in drag across dimple designs.
+5. **No sidespin effect on the ground.** Sidespin curves the ball in flight
+   only. Bounce decays it but does not turn it into lateral velocity, and
+   rollout ignores it, so the ball bounces and rolls straight along its
+   landing direction; spin-induced kicks off the turf are not modeled.
 
 ### `BallModel::PATENT_1997` — 1990s Tour Ball
 

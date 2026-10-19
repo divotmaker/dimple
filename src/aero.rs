@@ -125,7 +125,7 @@ impl BallModel {
     /// Spin decay: λ=0.04 s⁻¹ matches Trackman's published ~4%/s (Oct 2010) and
     /// Lyu et al. (2018) trajectory fits. Tutelman: τ=30s → λ=0.033.
     ///
-    /// Fit quality: Trackman carry RMSE=2.8y (10/12 clubs within ±3y), DA
+    /// Fit quality: Trackman carry RMSE=2.8y (9/12 clubs within ±3y), DA
     /// RMSE=1.3°; per-shot set carry RMSE=3.2y, offline RMSE=1.5y, peak
     /// RMSE=2.6ft. Denver altitude gain +6.9% (published ~6.1%), hot-cold
     /// delta ~9y (published ~8y).

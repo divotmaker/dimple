@@ -91,6 +91,11 @@ pub mod environment;
 /// Fixed-step fourth-order Runge-Kutta integrator.
 pub mod rk4;
 /// Ground roll after the last bounce: sliding then pure rolling.
+///
+/// The ball rolls in a straight line along its post-bounce horizontal
+/// direction. Sidespin is not an input, so it does not curve the roll or
+/// the bounces: after landing, lateral movement comes only from the lateral
+/// velocity the ball carries into the ground.
 pub mod rollout;
 /// Per-shot and per-session statistics in display units.
 pub mod stats;

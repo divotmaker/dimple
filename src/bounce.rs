@@ -44,6 +44,11 @@ pub struct BounceResult {
     /// Negative = backspin (contact point moves forward, opposes rolling).
     pub omega: f64,
     /// Sidespin after bounce (rad/s, positive = curves right).
+    ///
+    /// Bookkeeping only: the bounce decays it by a constant factor and it
+    /// never affects [`vel`](Self::vel). Rollout does not take sidespin, so
+    /// it has no lateral effect after landing; the ball keeps the lateral
+    /// velocity it had at impact.
     pub sidespin: f64,
     /// Whether the ball should continue bouncing (vertical speed above threshold).
     pub still_bouncing: bool,
