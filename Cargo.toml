@@ -9,7 +9,7 @@ repository = "https://github.com/divotmaker/dimple"
 readme = "README.md"
 keywords = ["golf", "ballistics", "physics", "aerodynamics"]
 categories = ["science", "simulation"]
-exclude = ["CLAUDE.md", ".github/"]
+exclude = ["CLAUDE.md", ".github/", "rust-toolchain.toml"]
 
 [lib]
 name = "dimple"
