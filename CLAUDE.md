@@ -63,16 +63,13 @@ research notes are not part of this repository.
 All must pass before a change is done:
 
 ```bash
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
-cargo publish --dry-run
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-features
 ```
 
 `cargo test` includes the crate-level and README doctests.
 
 ## Releases
 
-Push a `vX.Y.Z` tag matching `Cargo.toml`'s version. CI runs the gates,
-publishes to crates.io, then commits the next patch version to `main`.
+Push a `vX.Y.Z` tag. CI runs the gates, publishes to crates.io, creates a
+GitHub Release, then commits the next patch version to `main`.

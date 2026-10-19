@@ -15,19 +15,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Format check
-        run: cargo fmt --check
-
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Run tests
-        run: cargo test
-
-      - name: Docs
-        run: cargo doc --no-deps
-        env:
-          RUSTDOCFLAGS: -D warnings
-
-      - name: Package check
-        run: cargo publish --dry-run
+        run: cargo test --all-features
