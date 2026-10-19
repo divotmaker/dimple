@@ -4,6 +4,27 @@
 [![crates.io](https://img.shields.io/crates/v/dimple.svg)](https://crates.io/crates/dimple)
 [![docs.rs](https://docs.rs/dimple/badge.svg)](https://docs.rs/dimple)
 
+## Disclaimer
+
+dimple is an independent open-source project. It is not affiliated with,
+endorsed by, or sponsored by TrackMan A/S, PGA TOUR, Inc., Acushnet Company,
+Karsten Manufacturing Corporation, or the United States Golf Association.
+TrackMan is a trademark of TrackMan A/S. PGA TOUR is a trademark of PGA TOUR,
+Inc. Titleist is a trademark of Acushnet Company. PING is a trademark of
+Karsten Manufacturing Corporation. USGA is a trademark of the United States
+Golf Association. All other trademarks are the property of their respective
+owners. These names appear only to identify the published sources the model
+is compared against.
+
+Validation figures are summary values quoted from publicly available
+sources, cited in [docs/AERO.md](docs/AERO.md). That data belongs to its
+publishers; dimple does not include or redistribute their datasets.
+
+dimple produces estimates from a physics model. Its results are not
+measurements and may differ from any launch monitor or from real ball
+flight. The software is provided "as is", without warranty of any kind; see
+the licenses below.
+
 ## Description
 
 Golf ball-flight physics in pure Rust. Give it launch-monitor numbers (ball
