@@ -4,8 +4,9 @@
 //! backspin, sidespin) into a full shot: an RK4-integrated flight with drag,
 //! Magnus lift and spin decay, followed by the ground phase (impacts, hops,
 //! slide and roll) with the full spin vector carried through every contact.
-//! The ground model is beta: its run and total distances are not yet
-//! validated against measured data and may change between releases.
+//! Impacts are checked against a published fit to bounce measurements; the
+//! run and total distances of full shots are beta, not yet validated against measured
+//! data, and may change between releases.
 //! Pure math: no I/O, no allocation beyond the returned trajectories, no
 //! async runtime.
 //!

@@ -11,7 +11,7 @@ library crate at the repo root.
 | `src/aero.rs` | `BallModel` (Cd/Cl model + presets), `AeroParams` (spin state), force model |
 | `src/trajectory.rs` | `ShotInput`, `simulate_flight`, `simulate_shot`, `interpolate_trajectory` |
 | `src/ground.rs` | `Surface`, `Terrain` (heightfield), `GroundPhysics`, `GroundModel`: 3D impact (Penner), hops, slide/roll on slopes |
-| `src/ground/` | Ground test modules (level ground, terrain) and planar regression reference data |
+| `src/ground/` | Ground test modules (level ground, terrain, validation against published data) and planar regression reference data |
 | `src/environment.rs` | Altitude + temperature → air density |
 | `src/rk4.rs` | Fixed-step RK4 integrators (`step` for flight, generic `step_state`) |
 | `src/stats.rs` | `ShotStats`, `SessionStats` |

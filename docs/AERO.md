@@ -197,9 +197,8 @@ Environmental response (density-only): Denver +6.9% driver carry (published
    at the first bounces and spin along the direction of travel drifts the
    ball while it slides. Gaps: no published measurement of these lateral
    effects to validate against; the pivot (torsional friction) lever is
-   uncalibrated; the fairway's compliance is chosen, not measured; drag is
-   ignored between hops; slope behaviour is unvalidated (see
-   [Ground limitations](#limitations)).
+   uncalibrated; the fairway's compliance is chosen, not measured; landing
+   shots on slopes are beta (see [Ground limitations](#limitations)).
 
 ### `BallModel::PATENT_1997` — 1990s Tour Ball
 
@@ -260,10 +259,22 @@ Default λ = 0.04 s⁻¹ (~21% loss over 6 seconds). Published data:
 
 ## Ground Model
 
-**Status: beta.** The impact model reproduces Penner's (2002) published
-bounce heights and spin-back, but the run and total distances it produces
-are not yet validated against launch-monitor or measured roll data, and the
-presets may be recalibrated when they are.
+**Status.** The impact model reproduces Penner's (2002) published bounce
+heights and spin-back. On natural turf it is compared against the published
+bounce measurements of Biber et al. (2023): on their natural tee `GREEN` sits at a scaled error of about 12% from their
+fit to the data, where the paper's own physics models score 19–35% against the
+data (see
+[Validation against published bounce data](#validation-against-published-bounce-data)).
+Rolling on slopes is checked against Brede's (1991) stimpmeter slope
+correction and Cross's (2024) break-angle invariance (see
+[Stimpmeter](#stimpmeter) and [Terrain and slopes](#terrain-and-slopes)).
+
+**Beta:** landing shots on slopes, which agree with Whitlark & Pringle's
+(2012) study of a 1.5% green only at the level of its published means; and
+the run and total distances of full shots, `FAIRWAY`'s compliance, rolling
+resistance above 3 m/s, the pivot lever and the lateral ground effects,
+none of which is validated against launch-monitor or measured roll data.
+The presets may be recalibrated when they are.
 
 Everything after landing is a rigid sphere with point contact, carrying the
 full spin vector ω through every contact. The tracked point is the ball's
@@ -550,6 +561,15 @@ sampled under the ball every step. With `n` the normal, the normal load is
   friction, `a = −(5/7)·ρ_g·g` with ρ_g = 0.131 (eq. 9), which reads a
   stimp of about 6.0 ft (ρ = 7·v₀²/(10·g·d)).
 
+  On slopes the published checks favour `Constant`: Brede's slope
+  correction of stimpmeter readings is exact under it, and Cross's
+  speed-independent break angle holds under it alone. Under the quadratic
+  law both are approximate, and at the same stimp it lowers the grade at
+  which a green holds a ball (`GREEN`: 5.5% against 6.9%). See
+  [Stimpmeter](#stimpmeter) and [Terrain and slopes](#terrain-and-slopes).
+  The presets keep the quadratic law, which keeps full-shot rollouts
+  plausible.
+
   `Exponential` follows Burritt & Henrikson (2024), who fit an exponential
   function of speed to measured putts. They track whole ~20 ft putts with
   overhead cameras on four surfaces, solve for the rolling-friction
@@ -664,6 +684,52 @@ and 77 s, and the wedge 63 s. The default 120 s `max_time` covers these.
 Beyond the hold angle a ball on `GREEN` never stops, and on a long enough
 slope it runs until `max_time`.
 
+**Landing shots on a 1.5% green.** Whitlark & Pringle (2012) fired 857
+shots from a pitching machine onto a bermudagrass green sloping 1.5%,
+mowed to about 12 ft on the stimpmeter, uphill and downhill, at four
+launcher settings chosen to bracket the fairway and rough landings of
+their Table 1 (its angles read here as descent angles from horizontal).
+Mean bounce and roll was 32.5 ft downhill and 13.5 ft uphill. dimple on `GREEN.with_stimp(12.0)` through sea-level air, for the
+landings of their Table 1:
+
+| Landings | uphill (ft) | downhill (ft) | difference | downhill / uphill |
+|---|---|---|---|---|
+| five fairway landings, mean | 23.1 | 39.1 | 16.0 | 1.69 |
+| all ten, mean | 39.9 | 61.5 | 21.6 | 1.54 |
+| measured (four settings) | 13.5 | 32.5 | 19.0 | 2.41 |
+
+The fairway 7-iron (55 mph, 46°, 5100 rpm) runs 27.0 ft uphill, 34.9 ft
+on level ground and 46.8 ft downhill. The uphill-to-downhill difference
+matches the measured one; the ratio is lower because dimple's uphill totals
+are longer than the measured mean. Their four settings are not published,
+so the comparison cannot separate the model from the shot mix. Turf firmer
+by 0.08 in on the TruFirm ran 9–12 ft further at their uphill sites;
+`compliance` 0.9 instead of 1.0 adds 9.0 ft to dimple's uphill fairway mean
+(10.7 ft for the 7-iron), so `compliance` is dimple's firmness setting.
+`FIRM_GREEN`'s lower `mu_slide` changes only the high-spin landings (the
+sand wedge and 9-iron), because the friction limit binds only there.
+Green speeds of 11 ft 3 in and 12 ft 3 in made no difference to their
+bounce and roll; in dimple they change it by 1–4% (2.8% for the 7-iron). Their sand wedge
+landing (49 mph, 51°, 9100 rpm) finishes 0.3–1.8 ft behind its landing
+point ("in some cases this distance was negative"), and their shallow,
+fast landings ran "over 100 feet on several occasions": dimple's shallow
+rough landings run 91–95 ft downhill. Source: Whitlark, B. and Pringle, M.
+(2012), "Can't Stop Your Ball on the Green?", *USGA Green Section Record*
+50(25); summary values only.
+
+**Break across a slope.** Under a constant rolling resistance a ball
+rolled across an incline stops at a displacement angle from its launch line
+that does not depend on its launch speed, at a distance proportional to v₀²
+(Cross 2024): the motion scales exactly with v₀. dimple reproduces this
+under `RollLaw::Constant` at `GREEN`'s stimp: launched 10° off straight
+uphill on a 1° or 2° plane, the ball stops 1.125° or 2.035° off its launch
+line at every speed from 0.5 to 3 m/s, at 0.832 or 0.694 m per (m/s)². Under
+the presets' quadratic law, which resists a faster ball more, the angle
+drifts with speed: from 1.36° to 1.12° on the 1° plane and from 2.41° to
+2.04° on the 2° plane over 0.5–3 m/s. Source: Cross, R. (2024), "Trajectory
+of a golf ball on a sloping green", *Eur. J. Phys.* 45, 035002,
+[doi:10.1088/1361-6404/ad2c2d](https://doi.org/10.1088/1361-6404/ad2c2d).
+
 ### Surfaces
 
 | Surface | Restitution | `mu_slide` | `compliance` | `mu_roll` | `roll_law` | `pivot` | Stimp |
@@ -716,6 +782,81 @@ and 1200 rad/s (Penner's Fig. 7). On `FIRM_GREEN` (μ = 0.25) the same
 landings first bounce forward still carrying backspin, then run back
 (Penner's Fig. 8).
 
+### Validation against published bounce data
+
+Biber et al. (2023) filmed 1,023 bounces of a modern multi-piece ball fired
+from a launcher onto two surfaces, neither of them a green: an artificial
+teeing mat 30 mm thick on a rigid wooden base (Campaign A, 330 bounces)
+and a natural teeing area (Campaign B, 693 bounces). They publish the
+measurements as figures and as fits: rigid-bounce and Penner-model
+parameters (their Table 3), and a piecewise-affine map from landing to
+lift-off for each surface, with one branch for bounces that enter rolling
+and one for bounces that slip throughout (their eqs (8)–(9), fitting the
+data to 6.6% and 7.8%, Table 2). dimple is compared against those fits, not
+the raw measurements: `impact` and each affine fit on an equally weighted
+grid of landings inside the campaign's measured range (natural tee: 120
+landings, 5–30 m/s, 20–80° descent, −2000 to 12,000 rpm; mat: 96 landings,
+10–40 m/s, 25–70°, −2000 to 8000 rpm), with the paper's error measures in
+its scaled units (velocities in ball radii per second, spin in rad/s): δ
+the mean of |p_F − P_F| / |p₀| over the landings, and Δ the same per
+component. Through dimple, the paper's own Penner-model parameters for the
+tee (r 0.222, μ 0.999, k_P 2.973e-4) score 23.5% against the fit, against
+the 21.3% the paper reports against the data, so the fit stands in for the
+data to within a few points.
+
+Natural tee (Campaign B):
+
+| Against the tee fit | δ | Δẋ | Δẏ | Δω |
+|---|---|---|---|---|
+| `GREEN` | 12.2% | 7.4% | 2.9% | 7.7% |
+| `FAIRWAY` | 11.7% | 6.8% | 2.9% | 7.6% |
+| `GREEN` on a rigid plane (`compliance` 0) | 20.6% | 14.8% | 6.7% | 10.1% |
+| `GREEN` with `mu_slide` 1.0 | 22.2% | 11.5% | 3.2% | 17.2% |
+
+For comparison, against the data the paper's rigid-bounce fit scores
+35.0%, its Penner-model fit 21.3% and its fixed-angle fit 19.2%.
+`GREEN`'s mean normal rebound ratio |ẏ_F / ẏ₀| is 0.390 against the fit's
+0.408, and of the 80 backspin landings 26 leave with topspin against the
+fit's 23. Most of the remaining error is tangential: dimple keeps about a
+third of the forward speed the fit keeps (mean ẋ_F / ẋ₀ 0.106 against
+0.313). Balls that enter rolling leave the ground slipping with excess
+topspin, contact-point velocity ẋ + ω < 0 (the paper's Fig. 6); dimple's
+tilted contact plane gives that sign in the ground frame for 56 of the 57
+landings on the fit's rolling branch, with about 70% of the fitted mean
+(−41 against −58 radii/s), but not the spread of the measurements, which the authors put down to the natural
+variability of turf; they suggest that the tangential and spin error left by
+rigid-contact models needs a tangential compliance of the ground, which dimple
+does not model. The fits'
+μ ≈ 1 is not adopted: it grips every landing, while the slipping bounces
+leave with their backspin, and in dimple it nearly doubles the error.
+Their typical driver landing (28.5 m/s, 37.3°, 34.9 rev/s) rebounds from
+`GREEN` with a normal ratio of 0.354 against the tee fit's 0.342 and a
+forward ratio of 0.214 against 0.277, leaving with topspin as in the fit.
+
+In the paper's units Penner's θc law is β = k_P·s·φ, with s the speed in
+ball radii per second and φ in radians, and `compliance` 1.0 is
+k_P = 3.98e-4. The paper's fitted k_P are 1.543e-4 for the mat and
+2.973e-4 for the tee, i.e. `compliance` 0.39 and 0.75. `FAIRWAY`'s 0.9 lies
+between the tee's 0.75 and Penner's green, 1.0. On the tee `compliance` 0.75
+or 0.8 scores 11.7% or 11.6% against `GREEN`'s 12.2%, a difference well
+inside the fit's own error; `GREEN` keeps Penner's 1.0, with which it
+reproduces his published results.
+
+Artificial mat (Campaign A): `Penner2002` restitution is far too low for a
+mat on a rigid base. `GREEN`'s mean normal rebound ratio is 0.32 against
+the fit's 0.58 (the paper fits r = 0.42–0.54 for the mat, Table 3), and
+`GREEN` scores δ 30.5% with Δẏ 18.1%; no change of `compliance` or
+`mu_slide` alone brings Δẏ down. A constant restitution does: the mat
+example under [Other surfaces](#other-surfaces) scores δ 17.2% with Δẏ
+4.6%. Use `Restitution::Constant` for mats.
+
+Source: Biber, S. W., Jones, K. M., Champneys, A. R., Green, R. and
+Szalai, R. (2023), "Measurements and linearized models for golf ball bounce
+on a green", *Sports Engineering* 26:50,
+[doi:10.1007/s12283-023-00442-4](https://doi.org/10.1007/s12283-023-00442-4),
+CC BY 4.0. The fitted coefficients quoted here are from its Table 3 and
+eqs (8)–(9); dimple's figures are its own runs against those fits.
+
 ### Stimpmeter
 
 Green speed is quoted as a stimpmeter reading: how far, in feet, a ball
@@ -756,6 +897,31 @@ NaN, for which `stimp_feet` is NaN.
 A simulated stimpmeter roll (rolling at 1.83 m/s on level ground) on each
 of these surfaces stops within 1e-9 (relative) of the requested distance.
 
+**On a slope.** Brede (1991) showed that the readings a up and b down a
+uniform slope combine as 2ab/(a+b), which reads the level value on slopes
+from 0 to 5.6% (a laboratory carpet runway) and on field greens up to 6%;
+the plain average of the two does not. Constant rolling resistance
+decelerates the ball at g(μ cos θ ± sin θ)/(1+k), so under
+`RollLaw::Constant` the correction is exact apart from the 1/cos θ of
+measuring along the surface (0.005% at 1%, 0.18% at 6%). Under the presets'
+quadratic law the up- and downhill rolls cover different speeds and it is
+approximate:
+
+| Grade | 1% | 2% | 3% | 4% | 5% | 6% |
+|---|---|---|---|---|---|---|
+| `GREEN` up / down (ft) | 9.95 / 13.41 | 8.82 / 16.26 | 7.93 / 20.73 | 7.20 / 28.94 | 6.59 / 51.44 | neither rests |
+| `GREEN` 2ab/(a+b) vs level 11.42 ft | +0.04% | +0.17% | +0.43% | +0.95% | +2.3% | – |
+| `FAIRWAY` 2ab/(a+b) vs level 5.23 ft | +0.01% | +0.05% | +0.11% | +0.20% | +0.33% | +0.49% |
+
+On `GREEN` the plain average is already 10% long at 2%. `GREEN` holds a
+ball at rest only to a 5.5% grade (`tan θ ≤ mu_roll`), so a downhill
+stimpmeter roll on a steeper `GREEN` never stops, and an uphill one stops
+once and rolls back; with `RollLaw::Constant` at the same stimp
+(`mu_roll` 0.0687) it holds to 6.9%.
+
+Source: Brede, A. D. (1991), *Agron. J.* 83:425–426,
+[doi:10.2134/agronj1991.00021962008300020032x](https://doi.org/10.2134/agronj1991.00021962008300020032x).
+
 ### Other surfaces
 
 Beyond the presets above, dimple adds a surface preset only when its
@@ -777,6 +943,22 @@ let exp_fairway = Surface {
     ..Surface::FAIRWAY
 }
 .with_stimp(4.0);
+```
+
+An artificial mat on a rigid base rebounds much more than turf, which the
+`Penner2002` restitution does not give (see
+[Validation against published bounce data](#validation-against-published-bounce-data)).
+This example scores δ 17.2% against Biber et al.'s mat fit (`GREEN`: 30.5%).
+It is built from one mat in one study and is not a preset:
+
+```rust
+// A hitting mat on a rigid base.
+let mat = Surface {
+    restitution: Restitution::Constant(0.45),
+    compliance: 0.4,
+    mu_slide: 0.25,
+    ..Surface::GREEN
+};
 ```
 
 `compliance` moves the bounce and the run most (see the compliance table
@@ -827,13 +1009,24 @@ the ground at the solved crossing.
 
 ### Limitations
 
-- **Green data only.** The restitution fit and the θc law both come from
-  green-like turf. `FAIRWAY` differs from `GREEN` by compliance and rolling
-  resistance; its compliance value has no published source, and the run
-  depends strongly on it.
+- **Natural-turf data only.** The restitution fit and the θc law come from
+  Penner's green and are checked against a natural tee (Biber et al. 2023).
+  An artificial mat on a rigid base needs `Restitution::Constant` (see
+  [Other surfaces](#other-surfaces)). `FAIRWAY` differs from `GREEN` by
+  compliance and rolling resistance; its compliance value has no published
+  source, and the run depends strongly on it.
 - **One impact measurement.** θc rests on a single Haake impact and is
   extrapolated linearly in speed and incidence angle. Spin and turf
-  firmness are not inputs.
+  firmness are not inputs. In Biber et al.'s units Penner's green
+  (`compliance` 1.0) has a higher k_P than either of their fits (the mat
+  0.39, the tee 0.75); `FAIRWAY`'s 0.9 lies between the tee and Penner's
+  green.
+- **Tangential compliance is not modelled.** Measured bounces leave the ground slipping, with more topspin than rolling,
+  and the authors suggest that the tangential and spin error of rigid-contact
+  models needs a tangential compliance of the ground (Biber et al. 2023).
+  dimple's tilted rigid contact plane gives the sign for balls that grip, with
+  about 70% of the fitted mean on natural turf, but not the spread of the
+  measurements, and keeps about a third of the forward speed the tee fit keeps.
 - **Lateral ground effects are unvalidated.** The kick of a curving ball,
   the sidespin throw at impact and rifle-spin drift follow from the
   rigid-sphere contact model; no published measurement is compared against.
@@ -864,12 +1057,15 @@ the ground at the solved crossing.
   off crests, and the normal component of the velocity is removed at
   concave transitions. Exact on planes; a first-order approximation on
   curved ground.
-- **Slopes are unvalidated.** The slope physics (normal load, downhill
-  pull, hold where `tan θ ≤ mu_roll`) is standard rigid-body mechanics, but
-  Penner's impact model was fitted on level turf and `mu_roll` is set by a
-  level stimpmeter roll; no published sloped-turf data is compared
-  against. Penner attributes his model's slightly long drive runs to its
-  assumption of level ground.
+- **Slopes: rolling checked, landings beta.** Rolling on a slope (normal
+  load, downhill pull, hold where `tan θ ≤ mu_roll`) is checked against
+  Brede's stimpmeter slope correction and Cross's break-angle invariance:
+  exact under `RollLaw::Constant`, approximate under the presets' quadratic
+  law. The impact model on a slope is checked only against the 1.5%-green
+  means of Whitlark & Pringle (2012), whose shot mix is unpublished; dimple
+  knows of no published bounce-and-spin measurements on steeper slopes.
+  Penner's impact model was fitted on level turf, and he attributes its
+  slightly long drive runs to its assumption of level ground.
 - **The slope hop rule is a modelling choice.** It ends hop trains that
   Penner's impact model would sustain down a slope (see
   [Hops and the bounce-to-roll transition](#hops-and-the-bounce-to-roll-transition)).
@@ -927,6 +1123,7 @@ Unit tests live beside the code in each module. Test categories:
 - **Ground: hops through air** — at zero density hops are bit-for-bit ballistic (on the parabola, `Surface` and `GroundPhysics` identical); through air a hop arrives earlier, nearer and slower with its spin unchanged; the run lost to drag shrinks with altitude; topspin pushes a hop down and backspin holds it up; sidespin curves a hop right (fade spin) or left, mirrored
 - **Ground: invariants** — energy never increases at an impact or along the ground phase, with ballistic hops and through air; mirror (±sidespin, ±azimuth) and rotation about Y give mirrored and rotated results; fades rest right, draws rest left
 - **Ground: terrain** — rest on slopes (hold below atan `mu_roll`, roll downhill above, both presets; one stop and no chatter rolling uphill), long downhill reports `MaxTime`, near-critical (3.1°) `GREEN` comes to rest within the default `max_time`, slide-to-roll on a plane against the closed form, slip turning across a slope, vertical spin kicks on slopes only, uphill landings check up and downhill landings release, elevated green (shorter carry, lands on it), tee on the terrain, landing and hop crossings on curved terrain to 1e-9 m (ballistic hops on the parabola; hops through air on the surface), first crossing of thin walls and ridges in a landing segment and a hop step, ball kept on the surface; slope hop rule, downhill `FAIRWAY` up to 6° (through air and ballistic, the driver run growing with the slope either way, shorter through air) and `GREEN` up to 2.5° end at rest, side slopes rest and mirror exactly, rest judged on the surface where the ball stops, slide-to-roll on curved ground without flicker; mirror and rotation about Y with a sloped plane through air, and energy on slopes at both densities
+- **Ground: validation against published data** — Brede's (1991) slope correction exact under the constant law and within 0.5–1.5% to 4% under the presets' law, `GREEN`'s 5.5% hold grade; Penner's θc in Biber et al.'s (2023) units and their fitted k_P as `compliance`; agreement with their natural-tee fit (δ, Δẏ, normal rebound, spin reversal, lift-off slip sign; a rigid plane and μ = 1 do worse); their mat needs a higher constant restitution; their typical driver landing; Whitlark & Pringle's (2012) 1.5% green (uphill/downhill asymmetry, the sand wedge stopping by its pitch mark, green speed, `compliance` as firmness); Cross's (2024) speed-independent break angle under the constant law
 - **Ground: API** — per-point surfaces (fairway-to-green roll), `MaxTime`/`MaxImpacts` termination, tunables, interpolated landing, `&dyn GroundModel`
 
 Run: `cargo test`

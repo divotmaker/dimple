@@ -105,7 +105,12 @@ impl Restitution {
 /// law, so `mu_roll` is always the zero-speed value.
 ///
 /// No law is validated above 3 m/s: the only published speed-dependent fits
-/// (Burritt & Henrikson 2024) cover putts, 0–3 m/s. See `docs/AERO.md`.
+/// (Burritt & Henrikson 2024) cover putts, 0–3 m/s. On slopes the published
+/// checks favour [`Constant`](Self::Constant): Brede's (1991) slope
+/// correction of stimpmeter readings is exact under it and Cross's (2024)
+/// speed-independent break angle holds under it alone; at the same stimp
+/// the quadratic law also holds a ball on a gentler grade. See
+/// `docs/AERO.md`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum RollLaw {
@@ -1697,3 +1702,5 @@ mod regression_data;
 mod terrain_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod validation_tests;
