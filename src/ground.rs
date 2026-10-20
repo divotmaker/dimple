@@ -2,7 +2,7 @@ use std::fmt;
 
 use glam::DVec3;
 
-use crate::aero::BallModel;
+use crate::aero::{AeroParams, BallModel};
 use crate::rk4::{self, Integrable};
 use crate::units::{self, G};
 
@@ -69,6 +69,7 @@ const GRAVITY: DVec3 = DVec3::new(0.0, -G, 0.0);
 
 /// Normal coefficient of restitution between ball and turf.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum Restitution {
     /// Constant normal coefficient of restitution (0..1).
     Constant(f64),
@@ -99,6 +100,110 @@ impl Restitution {
     }
 }
 
+/// Speed dependence of the rolling resistance:
+/// μ_eff(v) = [`mu_roll`](Surface::mu_roll) · f(v), with f(0) = 1 for every
+/// law, so `mu_roll` is always the zero-speed value.
+///
+/// No law is validated above 3 m/s: the only published speed-dependent fits
+/// (Burritt & Henrikson 2024) cover putts, 0–3 m/s. See `docs/AERO.md`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum RollLaw {
+    /// f = 1: constant rolling resistance, Penner's (2002) run model (his
+    /// ρ_g = 0.131 reads about 6.0 ft on the stimpmeter).
+    Constant,
+    /// f = 1 + (v / `v_ref`)²: dimple's own empirical law, not a fit to
+    /// published data. The presets use `v_ref` = 2.5 m/s, which keeps
+    /// full-shot rollouts plausible. `v_ref` (m/s) must be nonzero; ±∞ is
+    /// [`Constant`](Self::Constant).
+    Quadratic {
+        /// Speed scale (m/s).
+        v_ref: f64,
+    },
+    /// f = exp(v / `v_ref`): an exponential law of the kind Burritt &
+    /// Henrikson (2024, "Modeling golf ball roll with a variable coefficient
+    /// of friction", *Sports Eng.* 27:39) fit to camera-tracked putts,
+    /// 0–3 m/s, one fit per surface. Positive `v_ref` makes a fast ball
+    /// resist more (three of their four surfaces, `v_ref` roughly 1.6 to
+    /// 4.9 m/s read from their figure); negative makes it resist less (one
+    /// of their mats). `v_ref` (m/s) must be nonzero; ±∞ is
+    /// [`Constant`](Self::Constant).
+    ///
+    /// The law grows quickly past the fitted range: `v_ref` = 1.6 m/s gives
+    /// about 150 × `mu_roll` at 8 m/s, so a fast roll stops almost at once.
+    /// With a negative `v_ref` a ball has no terminal speed on a slope
+    /// steeper than its hold angle, and a fast roll on level ground can run
+    /// to [`GroundPhysics::max_time`].
+    Exponential {
+        /// Speed scale (m/s); negative for resistance that falls with speed.
+        v_ref: f64,
+    },
+}
+
+impl RollLaw {
+    /// The factor f(`speed`) above (`speed` in m/s, ≥ 0).
+    ///
+    /// A `v_ref` of zero or NaN, outside the documented range, is treated as
+    /// [`Constant`](Self::Constant) (f = 1) rather than giving NaN.
+    #[must_use]
+    pub fn speed_factor(&self, speed: f64) -> f64 {
+        match *self {
+            Self::Constant => 1.0,
+            Self::Quadratic { v_ref } => {
+                let s = speed / v_ref;
+                if s.is_finite() { 1.0 + s * s } else { 1.0 }
+            }
+            Self::Exponential { v_ref } => {
+                let s = speed / v_ref;
+                if s.is_finite() { s.exp() } else { 1.0 }
+            }
+        }
+    }
+
+    /// I(v₀) = 2 ∫₀^v₀ v / f(v) dv (m²/s²): a ball rolling from `v0` on level
+    /// ground travels (1+k)·I/(2·`mu_roll`·g). With s₀ = v₀/`v_ref`:
+    ///
+    /// - `Constant`: I = v₀²
+    /// - `Quadratic`: I = `v_ref`²·ln(1 + s₀²)
+    /// - `Exponential`: I = 2·`v_ref`²·(1 − e^(−s₀)·(1 + s₀))
+    ///
+    /// Both parameterised forms tend to v₀² as `v_ref` → ±∞, which s₀ = 0
+    /// gives exactly. NaN when `v_ref` is zero or NaN.
+    fn stimp_integral(&self, v0: f64) -> f64 {
+        let v0_sq = v0 * v0;
+        match *self {
+            Self::Constant => v0_sq,
+            Self::Quadratic { v_ref } => {
+                let x = v0_sq / (v_ref * v_ref);
+                if x == 0.0 {
+                    v0_sq
+                } else {
+                    v0_sq * x.ln_1p() / x
+                }
+            }
+            Self::Exponential { v_ref } => {
+                if v_ref == 0.0 || v_ref.is_nan() {
+                    return f64::NAN;
+                }
+                let s0 = v0 / v_ref;
+                if s0 == 0.0 {
+                    v0_sq
+                } else if s0.abs() < 0.01 {
+                    // (1 − e^(−s)(1 + s))/s² by its series, which the direct
+                    // form loses to cancellation at small s.
+                    let tail = 0.5
+                        + s0 * (-1.0 / 3.0
+                            + s0 * (1.0 / 8.0
+                                + s0 * (-1.0 / 30.0 + s0 * (1.0 / 144.0 - s0 / 840.0))));
+                    2.0 * v0_sq * tail
+                } else {
+                    2.0 * v_ref * v_ref * (1.0 - (-s0).exp() * (1.0 + s0))
+                }
+            }
+        }
+    }
+}
+
 /// Material properties of a patch of ground.
 ///
 /// Plain public fields with `const` presets; adjust one with struct update
@@ -112,14 +217,13 @@ pub struct Surface {
     /// Coulomb friction coefficient between the ball and the turf, used at
     /// impact and while the ball slides.
     pub mu_slide: f64,
-    /// Base rolling-resistance coefficient: the effective friction of a
-    /// slowly rolling ball (stimpmeter speeds).
+    /// Rolling-resistance coefficient at zero speed: the effective friction
+    /// of a slowly rolling ball, and what holds a ball at rest on a slope.
     pub mu_roll: f64,
-    /// Speed scale (m/s) of the speed-dependent rolling resistance,
-    /// μ_eff = `mu_roll` · (1 + (v / `roll_v_ref`)²). This quadratic law is
-    /// dimple's own empirical choice, not a fit to published data: 2.5 m/s
-    /// keeps full-shot rollouts plausible.
-    pub roll_v_ref: f64,
+    /// How the rolling resistance grows (or falls) with speed:
+    /// μ_eff = `mu_roll` · f(v). The presets use
+    /// `RollLaw::Quadratic { v_ref: 2.5 }`.
+    pub roll_law: RollLaw,
     /// Turf compliance: dimensionless multiplier on Penner's (2002) eq. 8
     /// effective contact angle, θc = 15.4° · (v / 18.6 m/s) · (φ / 44.4°),
     /// with v the impact speed and φ the incidence angle from the normal.
@@ -132,7 +236,8 @@ pub struct Surface {
     /// It never changes the velocity of the impact it acts in, nor a slide
     /// or roll on level ground. The path depends on it only through spin
     /// about the normal carried into a later impact, where Penner's tilted
-    /// contact plane turns part of that spin into slip. With the presets'
+    /// contact plane turns part of that spin into slip, and through the
+    /// Magnus force that spin gives the hops in between. With the presets'
     /// 1 mm a full-shot landing removes all of it at once: a driver landing
     /// on `FAIRWAY` can remove up to about 155 rad/s (~1500 rpm), against
     /// the 47 rad/s a 600 rpm-sidespin drive lands with. Any lever that
@@ -153,7 +258,7 @@ impl Surface {
         restitution: Restitution::Penner2002,
         mu_slide: 0.40,
         mu_roll: 0.12,
-        roll_v_ref: 2.5,
+        roll_law: RollLaw::Quadratic { v_ref: 2.5 },
         compliance: 0.9,
         pivot: 0.001,
     };
@@ -164,7 +269,7 @@ impl Surface {
         restitution: Restitution::Penner2002,
         mu_slide: 0.40,
         mu_roll: 0.055,
-        roll_v_ref: 2.5,
+        roll_law: RollLaw::Quadratic { v_ref: 2.5 },
         compliance: 1.0,
         pivot: 0.001,
     };
@@ -183,23 +288,26 @@ impl Surface {
     /// This surface with `mu_roll` set so that it reads `feet` on the
     /// stimpmeter: a ball leaving the ramp rolling at [`STIMPMETER_SPEED`]
     /// rolls `feet` on level ground before it stops. Every other field,
-    /// including `roll_v_ref`, is kept.
+    /// including [`roll_law`](Self::roll_law), is kept.
     ///
     /// Closed form: a rolling ball decelerates at `μ_eff·g/(1+k)` with
-    /// `μ_eff` from [`rolling_friction`](Self::rolling_friction), so from
-    /// `v₀` it rolls
+    /// `μ_eff = mu_roll·f(v)` from [`rolling_friction`](Self::rolling_friction),
+    /// so from `v₀` it rolls `d = (1+k)·I / (2·mu_roll·g)` with
+    /// `I = 2∫₀^v₀ v/f(v) dv`, and `mu_roll = (1+k)·I / (2·g·d)`. With
+    /// s₀ = v₀/`v_ref`, per [`RollLaw`]:
     ///
     /// ```text
-    /// d = (1+k)·v_ref² / (2·mu_roll·g) · ln(1 + v₀²/v_ref²)
+    /// Constant:     I = v₀²
+    /// Quadratic:    I = v_ref²·ln(1 + s₀²)
+    /// Exponential:  I = 2·v_ref²·(1 − e^(−s₀)·(1 + s₀))
     /// ```
     ///
-    /// and `mu_roll = (1+k)·v_ref²·ln(1 + v₀²/v_ref²) / (2·g·d)`, with
     /// k = 2/5 (a uniform solid sphere, the inertia factor of both
     /// [`BallModel`] presets). A ball with another inertia factor rolls
     /// `(1+k)/1.4` times this distance.
     ///
     /// Returns the surface unchanged if `feet` is not finite and positive,
-    /// or if `roll_v_ref` is zero or NaN.
+    /// or if the law's `v_ref` is zero or NaN.
     ///
     /// ```
     /// use dimple::ground::Surface;
@@ -228,8 +336,8 @@ impl Surface {
     /// [`FIRM_GREEN`](Self::FIRM_GREEN), 5.2 ft for
     /// [`FAIRWAY`](Self::FAIRWAY).
     ///
-    /// Infinite when `mu_roll` is zero (the ball never stops); NaN when
-    /// `roll_v_ref` is zero or NaN.
+    /// Infinite when `mu_roll` is zero (the ball never stops); NaN when the
+    /// law's `v_ref` is zero or NaN.
     #[must_use]
     pub fn stimp_feet(&self) -> f64 {
         let distance =
@@ -237,28 +345,18 @@ impl Surface {
         units::meters_to_feet(distance)
     }
 
-    /// `v_ref²·ln(1 + v₀²/v_ref²)` for the stimpmeter speed `v₀` (m²/s²):
-    /// the stimp distance times `2·mu_roll·g/(1+k)`. Tends to `v₀²` as
-    /// `roll_v_ref` grows (constant rolling resistance), which an infinite
-    /// `roll_v_ref` gives exactly.
+    /// The stimp distance times `2·mu_roll·g/(1+k)` (m²/s²).
     fn stimp_integral(&self) -> f64 {
-        let v0_sq = STIMPMETER_SPEED * STIMPMETER_SPEED;
-        let x = v0_sq / (self.roll_v_ref * self.roll_v_ref);
-        if x == 0.0 {
-            v0_sq
-        } else {
-            v0_sq * x.ln_1p() / x
-        }
+        self.roll_law.stimp_integral(STIMPMETER_SPEED)
     }
 
     /// Effective rolling-resistance coefficient at `speed` (m/s):
-    /// `mu_roll · (1 + (speed / roll_v_ref)²)`, dimple's empirical speed
-    /// law (see [`roll_v_ref`](Self::roll_v_ref)). A fast-rolling ball
-    /// decelerates much harder than a stimpmeter roll.
+    /// `mu_roll · f(speed)` with f from [`roll_law`](Self::roll_law). Under
+    /// the presets' quadratic law a fast-rolling ball decelerates much
+    /// harder than a stimpmeter roll.
     #[must_use]
     pub fn rolling_friction(&self, speed: f64) -> f64 {
-        let s = speed / self.roll_v_ref;
-        self.mu_roll * (1.0 + s * s)
+        self.mu_roll * self.roll_law.speed_factor(speed)
     }
 
     /// Effective contact angle β (rad) for an impact with tangential speed
@@ -440,7 +538,8 @@ pub struct BallState {
 /// What the ball is doing between ground points.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
-    /// In the air between impacts (gravity only).
+    /// In the air between impacts: gravity, plus drag and Magnus lift from
+    /// the ball's aero model when there is air, spin held fixed.
     Hop,
     /// On the ground with the contact point slipping: sliding friction.
     Slide,
@@ -583,12 +682,15 @@ impl GroundResult {
 /// Layer 2 of the ground API: dimple's contact physics over any
 /// [`Terrain`].
 ///
-/// Each impact uses [`impact`]; the ball keeps hopping (gravity-only flight,
-/// RK4) while its rebound would rise at least
-/// [`min_hop_height`](Self::min_hop_height) and, on a slope, the hops die
-/// out rather than being sustained by the slope (see `min_hop_height`), then
-/// slides and rolls ([`step`](Self::step)) until it stops. The tunables are public fields; start
-/// from [`GroundPhysics::new`] and override with struct update syntax.
+/// Each impact uses [`impact`]; the ball keeps hopping while its rebound
+/// would rise at least [`min_hop_height`](Self::min_hop_height) and, on a
+/// slope, the hops die out rather than being sustained by the slope (see
+/// `min_hop_height`), then slides and rolls ([`step`](Self::step)) until it
+/// stops. Each hop is RK4 flight under gravity, drag and Magnus lift at the
+/// air density passed to [`settle`](GroundModel::settle), with the
+/// rebound's spin held fixed (ballistic at zero density). The tunables are
+/// public fields; start from [`GroundPhysics::new`] and override with struct
+/// update syntax.
 #[derive(Debug, Clone, Copy)]
 pub struct GroundPhysics<T: Terrain> {
     /// Where the ball is and what it lands on.
@@ -623,7 +725,9 @@ pub struct GroundPhysics<T: Terrain> {
     /// slope. Otherwise the ball goes to the ground at once, as below the
     /// height. Without this a downhill hop train settles at a fixed hop
     /// height just above the transition and never rolls (see
-    /// `docs/AERO.md`). Level ground uses the height alone.
+    /// `docs/AERO.md`). The energy the slope hands back is measured on the
+    /// hop actually flown, through whatever air there is. Level ground uses
+    /// the height alone.
     pub min_hop_height: f64,
     /// Safety bound on impacts. Every hop rises at least
     /// [`min_hop_height`](Self::min_hop_height) and the hops die out, so
@@ -632,7 +736,7 @@ pub struct GroundPhysics<T: Terrain> {
     pub max_impacts: usize,
     /// Time limit (s) on the ground phase, from landing. Default 120 s,
     /// enough for a ball to come to rest on a green sloped just inside its
-    /// hold angle (a drive takes 86 s on a 3.1° `GREEN`). Where the slope
+    /// hold angle (a drive takes 85 s on a 3.1° `GREEN`). Where the slope
     /// is too steep to hold the ball ([`GroundSample::holds_at_rest`]) it
     /// never rests, and a long enough slope runs to this limit.
     pub max_time: f64,
@@ -716,15 +820,32 @@ impl<T: Terrain> GroundPhysics<T> {
         pos.y - self.sample(pos).height
     }
 
-    /// Gravity-only flight from a rebound until the ball meets the ground
-    /// again: `Ok(arrival)`, or `Err(state)` if the time limit `t_end` comes
-    /// first. Sampled points are appended to `points`.
+    /// Flight from a rebound until the ball meets the ground again:
+    /// `Ok(arrival)`, or `Err(state)` if the time limit `t_end` comes first.
+    /// Sampled points are appended to `points`.
+    ///
+    /// RK4 in steps of [`dt`](Self::dt) under [`BallModel::acceleration`]
+    /// (gravity, drag and Magnus lift) at `air_density` (kg/m³), with the
+    /// rebound's spin held fixed for the whole hop: its axis and rate set
+    /// the lift, and the arrival carries it unchanged. At zero density the
+    /// hop is ballistic, under gravity alone.
     fn hop(
         &self,
         start: &BallState,
         t_end: f64,
         points: &mut Vec<GroundPoint>,
+        ball: &BallModel,
+        air_density: f64,
     ) -> Result<BallState, BallState> {
+        // `acceleration` never reads `spin_decay`: the hop holds the spin fixed.
+        let aero = AeroParams::from_spin_vector(start.spin);
+        let accel = |vel: DVec3| {
+            if air_density > 0.0 {
+                ball.acceleration(vel, &aero, air_density)
+            } else {
+                GRAVITY
+            }
+        };
         let mut s = rk4::State {
             pos: start.pos,
             vel: start.vel,
@@ -741,8 +862,17 @@ impl<T: Terrain> GroundPhysics<T> {
                 });
             }
             let h = self.dt.min(t_end - t);
-            let b = rk4::step(s, t, h, |_, _, _| GRAVITY);
-            if let Some(arrival) = self.hop_arrival(s, t, h, self.clearance(b.pos), start.spin) {
+            let b = rk4::step(s, t, h, |_, v, _| accel(v));
+            let end = self.clearance(b.pos);
+            let arrival = if air_density > 0.0 {
+                self.hop_arrival(s, t, h, end, start.spin, |tau| hermite(s, b, h, tau))
+            } else {
+                self.hop_arrival(s, t, h, end, start.spin, |tau| rk4::State {
+                    pos: s.pos + s.vel * tau + 0.5 * GRAVITY * tau * tau,
+                    vel: s.vel + GRAVITY * tau,
+                })
+            };
+            if let Some(arrival) = arrival {
                 return Ok(arrival);
             }
             s = b;
@@ -760,17 +890,20 @@ impl<T: Terrain> GroundPhysics<T> {
         }
     }
 
-    /// First ground crossing within a gravity-only step of length `h` from
-    /// `a` (at time `t`), if there is one; `end` is the clearance at the end
-    /// of the integrated step.
+    /// First ground crossing within a hop step of length `h` from `a` (at
+    /// time `t`), if there is one; `end` is the clearance at the end of the
+    /// integrated step and `arc(τ)` the ball's state `τ` into the step.
     ///
-    /// Within the step the motion is the exact parabola RK4 reproduces. The
-    /// clearance `y(τ) − height(x(τ), z(τ))` is checked at
-    /// [`CROSSING_SUBSTEPS`] equal sub-steps for the first at or below the
-    /// ground, and the crossing is the root inside that sub-step, solved by
-    /// [`find_root`] from the drop time onto the height at the end of the
-    /// step (exact on level ground). The arrival is placed exactly on the
-    /// ground.
+    /// [`hop`](Self::hop) passes one of two arcs. Without air it is the
+    /// exact parabola that RK4 reproduces under gravity alone; with air it
+    /// is the cubic Hermite interpolant of the step's end states (position
+    /// and velocity at both ends), so `arc(h)` is the integrated step end. The clearance
+    /// `y(τ) − height(x(τ), z(τ))` is checked at [`CROSSING_SUBSTEPS`]
+    /// equal sub-steps for the first at or below the ground, and the
+    /// crossing is the root inside that sub-step, solved by [`find_root`]
+    /// from the ballistic drop time onto the height at the end of the step
+    /// (exact on level ground without air). The arrival is placed exactly
+    /// on the ground, with the arc's velocity there and `spin`.
     fn hop_arrival(
         &self,
         a: rk4::State,
@@ -778,23 +911,43 @@ impl<T: Terrain> GroundPhysics<T> {
         h: f64,
         end: f64,
         spin: DVec3,
+        arc: impl Fn(f64) -> rk4::State,
     ) -> Option<BallState> {
-        let at = |tau: f64| a.pos + a.vel * tau + 0.5 * GRAVITY * tau * tau;
-        let clearance = |tau: f64| self.clearance(at(tau));
+        let clearance = |tau: f64| self.clearance(arc(tau).pos);
         let (lo, (hi, f_hi)) = first_crossing(clearance, h, clearance(0.0), end)?;
         let f_hi = if hi == h { clearance(h).min(0.0) } else { f_hi };
-        let end_height = self.sample(at(h)).height;
+        let end_height = self.sample(arc(h).pos).height;
         let guess = drop_time(a.pos.y - end_height, a.vel.y).clamp(lo.0, hi);
         let tau = find_root(clearance, lo, (hi, f_hi), guess);
-        let mut pos = at(tau);
+        let arrival = arc(tau);
+        let mut pos = arrival.pos;
         pos.y = self.sample(pos).height;
         Some(BallState {
             time: t + tau,
             pos,
-            vel: a.vel + GRAVITY * tau,
+            vel: arrival.vel,
             spin,
         })
     }
+}
+
+/// The state `tau` into an integration step of length `h` from `a` to `b`:
+/// the cubic Hermite interpolant of the position through both end states
+/// (position and velocity), and its derivative for the velocity. Exact at
+/// `tau` = 0 and `tau` = `h`; within a 1 ms hop step it is within 1e-14 m
+/// of the integrated path.
+fn hermite(a: rk4::State, b: rk4::State, h: f64, tau: f64) -> rk4::State {
+    let u = tau / h;
+    let (u2, u3) = (u * u, u * u * u);
+    let chord = b.pos - a.pos;
+    let pos = a.pos
+        + a.vel * ((u3 - 2.0 * u2 + u) * h)
+        + chord * (3.0 * u2 - 2.0 * u3)
+        + b.vel * ((u3 - u2) * h);
+    let vel = a.vel * (3.0 * u2 - 4.0 * u + 1.0)
+        + chord * ((6.0 * u - 6.0 * u2) / h)
+        + b.vel * (3.0 * u2 - 2.0 * u);
+    rk4::State { pos, vel }
 }
 
 /// Time (s) for a ball `height` above the ground moving up at `vy` to fall
@@ -952,8 +1105,13 @@ pub trait GroundModel {
     }
 
     /// Everything from the landing state to rest.
+    ///
+    /// `air_density` (kg/m³) is the air the ball hops through between
+    /// impacts ([`simulate_shot`](crate::trajectory::simulate_shot) passes
+    /// the shot's [`Environment::air_density`](crate::environment::Environment::air_density));
+    /// `0.0` makes the hops ballistic, under gravity alone.
     #[must_use]
-    fn settle(&self, landing: &BallState, ball: &BallModel) -> GroundResult;
+    fn settle(&self, landing: &BallState, ball: &BallModel, air_density: f64) -> GroundResult;
 }
 
 /// Flat ground with the default [`GroundPhysics`].
@@ -962,8 +1120,8 @@ impl GroundModel for Surface {
         0.0
     }
 
-    fn settle(&self, landing: &BallState, ball: &BallModel) -> GroundResult {
-        GroundPhysics::new(*self).settle(landing, ball)
+    fn settle(&self, landing: &BallState, ball: &BallModel, air_density: f64) -> GroundResult {
+        GroundPhysics::new(*self).settle(landing, ball, air_density)
     }
 }
 
@@ -972,7 +1130,7 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
         self.terrain.sample(x, z).height
     }
 
-    fn settle(&self, landing: &BallState, ball: &BallModel) -> GroundResult {
+    fn settle(&self, landing: &BallState, ball: &BallModel, air_density: f64) -> GroundResult {
         let t_end = landing.time + self.max_time;
         let radius = ball.radius_m();
         let mut contacts = Vec::new();
@@ -985,10 +1143,30 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
             let n = at.normal.normalize();
             let out = impact(&state, &at, ball);
             let v_n = out.vel.dot(n);
-            let hops = v_n > 0.0
-                && v_n * v_n >= 2.0 * G * n.y * self.min_hop_height
-                && hops_die_out(&state, &out, n, ball, self.min_hop_height);
-            if !hops {
+            // A rebound that would clear the transition height flies its
+            // hop. On a slope the flown hop must also show the train dying
+            // out (`hops_die_out`); otherwise it is discarded and the ball
+            // stays on the ground here.
+            let mut flown = None;
+            if v_n > 0.0 && v_n * v_n >= 2.0 * G * n.y * self.min_hop_height {
+                if contacts.len() + 1 >= self.max_impacts {
+                    contacts.push(Contact::new(&state, &at, &out));
+                    points.push(GroundPoint::new(&out, Phase::Hop));
+                    return GroundResult::new(contacts, points, out, Termination::MaxImpacts);
+                }
+                let mark = points.len();
+                points.push(GroundPoint::new(&out, Phase::Hop));
+                flown = match self.hop(&out, t_end, &mut points, ball, air_density) {
+                    Ok(arrival)
+                        if !hops_die_out(&state, &out, &arrival, n, ball, self.min_hop_height) =>
+                    {
+                        points.truncate(mark);
+                        None
+                    }
+                    hop => Some(hop),
+                };
+            }
+            let Some(hop) = flown else {
                 // The ball stays on the ground: drop the (small or inward)
                 // normal velocity and slide/roll from here.
                 let mut leave = BallState {
@@ -1002,13 +1180,9 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
                 contacts.push(Contact::new(&state, &at, &leave));
                 state = leave;
                 break at;
-            }
+            };
             contacts.push(Contact::new(&state, &at, &out));
-            points.push(GroundPoint::new(&out, Phase::Hop));
-            if contacts.len() >= self.max_impacts {
-                return GroundResult::new(contacts, points, out, Termination::MaxImpacts);
-            }
-            match self.hop(&out, t_end, &mut points) {
+            match hop {
                 Ok(arrival) => state = arrival,
                 Err(stopped) => {
                     points.push(GroundPoint::new(&stopped, Phase::Hop));
@@ -1052,19 +1226,20 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
 /// ground at once, as below [`GroundPhysics::min_hop_height`].
 ///
 /// Always true on level ground, where every hop loses energy. On a slope
-/// gravity hands energy back over each hop: the potential energy released
-/// over the hop on the local plane, `ΔU = −g·Δy` with flight time
-/// `T = 2(v·n)/(g·n_y)` and `Δy = v_y·T − g·T²/2`, positive downhill. The
-/// impact `arrival → rebound` removed
-/// `ΔE = E(arrival) − E(rebound)`, `E = |v|²/2 + k·R²·|ω|²/2` (per unit
-/// mass). The train dies out if the slope returns nothing (`ΔU ≤ 0`) or the
-/// impact removes at least the energy of a `min_hop_height` hop more than
-/// the slope returns (`ΔE − ΔU ≥ g·min_hop_height`). Below that, gravity
-/// re-supplies what each impact takes and the hops would settle at a fixed
-/// size above the 5 mm transition instead of shrinking through it.
+/// gravity hands energy back over each hop. With `E = |v|²/2 + k·R²·|ω|²/2`
+/// (per unit mass), the impact `arrival → rebound` removed
+/// `ΔE = E(arrival) − E(rebound)` and the hop `rebound → next`, flown
+/// through whatever air there is, returned `ΔU = E(next) − E(rebound)`: the
+/// potential energy released down the slope less what drag took. The train
+/// dies out if the slope returns nothing (`ΔU ≤ 0`) or the impact removes at
+/// least the energy of a `min_hop_height` hop more than the hop returns
+/// (`ΔE − ΔU ≥ g·min_hop_height`). Below that, gravity re-supplies what each
+/// impact takes and the hops would settle at a fixed size above the 5 mm
+/// transition instead of shrinking through it.
 fn hops_die_out(
     arrival: &BallState,
     rebound: &BallState,
+    next: &BallState,
     n: DVec3,
     ball: &BallModel,
     min_hop_height: f64,
@@ -1072,16 +1247,16 @@ fn hops_die_out(
     if tangential_gravity(n) == DVec3::ZERO {
         return true;
     }
-    let t = 2.0 * rebound.vel.dot(n) / (G * n.y);
-    let released = -G * (rebound.vel.y * t - 0.5 * G * t * t);
-    if released <= 0.0 {
+    // The hop keeps its spin, so the slope's net return is all translational.
+    let returned = 0.5 * (next.vel.length_squared() - rebound.vel.length_squared());
+    if returned <= 0.0 {
         return true;
     }
     let spin_inertia = ball.inertia_factor * ball.radius_m() * ball.radius_m();
     let energy =
         |s: &BallState| 0.5 * s.vel.length_squared() + 0.5 * spin_inertia * s.spin.length_squared();
     let removed = energy(arrival) - energy(rebound);
-    removed - released >= G * min_hop_height
+    removed - returned >= G * min_hop_height
 }
 
 /// One impact of the ball with the ground: the post-impact state (same time

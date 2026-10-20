@@ -127,7 +127,9 @@ pub mod environment;
 /// spin components that do slip the contact point: a backspin axis that no
 /// longer matches the heading of a curving ball (fades kick right, draws
 /// left), spin along the direction of travel, and, at impact, the part of
-/// any spin lying in Penner's tilted contact plane. The effects are modest.
+/// any spin lying in Penner's tilted contact plane. Between impacts the spin
+/// also curves the hops through Magnus lift, as in flight. The effects are
+/// modest.
 pub mod ground;
 /// Fixed-step fourth-order Runge-Kutta integrators.
 pub mod rk4;

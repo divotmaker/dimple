@@ -291,7 +291,7 @@ pub fn simulate_shot<G: GroundModel + ?Sized>(
     ground: &G,
 ) -> ShotResult {
     let (flight, landing) = fly(input, ball, env, ground);
-    let settled = ground.settle(&landing, ball);
+    let settled = ground.settle(&landing, ball, env.air_density());
     let final_pos = settled.rest.pos;
     let total_m = final_pos.x.hypot(final_pos.z);
 
@@ -1012,7 +1012,8 @@ mod tests {
 
     #[test]
     fn shot_driver_total_distance() {
-        // PGA Tour driver: ~282 carry, ~305-315 total on fairway.
+        // PGA Tour driver: ~282 carry, ~305-315 total on fairway. The model
+        // carries about 269 yd and totals about 298.5 yd on FAIRWAY.
         let r = shot_on_fairway(&ShotInput::driver());
         assert!(
             r.total_yards > 290.0 && r.total_yards < 330.0,
@@ -1024,8 +1025,10 @@ mod tests {
     }
 
     #[test]
-    fn shot_7iron_total_distance() {
-        // PGA Tour 7-iron: 123 mph, 16.3°, 7097 rpm → ~176 carry, ~185-195 total.
+    fn shot_7iron_carry_and_run() {
+        // PGA Tour 7-iron (Trackman): about 120–123 mph, 16°, 7100 rpm,
+        // 172–176 yd carry. The model carries about 171.5 yd and runs about
+        // 6.4 yd on FAIRWAY.
         let input = ShotInput {
             ball_speed_mph: 123.0,
             launch_angle_deg: 16.3,
@@ -1034,12 +1037,15 @@ mod tests {
             sidespin_rpm: 0.0,
         };
         let r = shot_on_fairway(&input);
+        let run = r.total_yards - r.flight.carry_yards;
         assert!(
-            r.total_yards > 178.0 && r.total_yards < 225.0,
-            "7-iron total should be 178-225 yds, got {:.1} (carry={:.1}, rollout={:.1})",
-            r.total_yards,
-            r.flight.carry_yards,
-            r.total_yards - r.flight.carry_yards
+            (165.0..185.0).contains(&r.flight.carry_yards),
+            "7-iron carry should be 165-185 yds, got {:.1}",
+            r.flight.carry_yards
+        );
+        assert!(
+            (3.0..12.0).contains(&run),
+            "7-iron fairway run should be 3-12 yds, got {run:.1}"
         );
     }
 
@@ -1233,6 +1239,30 @@ mod tests {
     }
 
     #[test]
+    fn sidespin_hop_curves_right() {
+        // A hop through air carrying positive sidespin (angular velocity
+        // along -Y, a fade's) curves right, like the flight; the mirrored
+        // spin curves it left by the same amount.
+        let hop = |sidespin: f64| {
+            let leave = BallState {
+                time: 0.0,
+                pos: DVec3::ZERO,
+                vel: DVec3::new(6.0, 2.0, 0.0),
+                spin: DVec3::new(0.0, -sidespin, 0.0),
+            };
+            let g = Surface::FAIRWAY.settle(&leave, &BALL, Environment::SEA_LEVEL.air_density());
+            g.contacts[1].pos
+        };
+        let (right, left) = (hop(200.0), hop(-200.0));
+        assert!(right.z > 1e-3, "fade spin: z {:.6} m", right.z);
+        assert!(
+            (left.z + right.z).abs() < 1e-12,
+            "mirror: {left:?} vs {right:?}"
+        );
+        assert_eq!(hop(0.0).z, 0.0);
+    }
+
+    #[test]
     fn fade_first_bounce_kicks_right_of_its_heading() {
         // A fade lands heading right of its start line while its backspin
         // axis still points across the start line. Friction removes more
@@ -1257,9 +1287,10 @@ mod tests {
         // Pivot friction acts about the true normal, so it never changes an
         // impact's velocity or a slide or roll on level ground. Spin about
         // the normal reaches the path only through a later impact's tilted
-        // contact plane. On rigid ground (no tilt) the lever has no effect at
-        // all; on compliant turf every lever that clears that spin at each
-        // impact, from the presets' 1 mm up, gives the same path.
+        // contact plane and through the Magnus force it gives the hops in
+        // between. Every lever that clears that spin at each impact, from the
+        // presets' 1 mm up, gives the same path, on rigid ground (no tilt)
+        // and on compliant turf.
         let env = Environment::SEA_LEVEL;
         let rigid = Surface {
             compliance: 0.0,
@@ -1268,7 +1299,7 @@ mod tests {
         for side in [600.0, -600.0] {
             let input = driver_with_sidespin(side);
             for (base, levers) in [
-                (rigid, [0.0, 0.001, 0.005]),
+                (rigid, [0.001, 0.002, 0.005]),
                 (Surface::FAIRWAY, [0.001, 0.002, 0.005]),
                 (Surface::GREEN, [0.001, 0.002, 0.005]),
             ] {
@@ -1286,6 +1317,24 @@ mod tests {
                     assert_eq!(shot.ground.contacts.len(), shots[0].ground.contacts.len());
                 }
             }
+            // With no pivot friction on rigid ground the sidespin survives
+            // into the hops, and their Magnus force curves the ball further
+            // the way the sidespin curves it in flight.
+            let kept = simulate_shot(
+                &input,
+                &BALL,
+                &env,
+                &Surface {
+                    pivot: 0.0,
+                    ..rigid
+                },
+            );
+            let cleared = simulate_shot(&input, &BALL, &env, &rigid);
+            let curve = side.signum() * (kept.final_pos.z - cleared.final_pos.z);
+            assert!(
+                curve > 0.0 && curve < 0.2,
+                "sidespin {side}: curve {curve:.3} m"
+            );
             // With no pivot friction on compliant turf the spin survives to
             // the later impacts, whose tilt throws move the rest slightly.
             let free = simulate_shot(
