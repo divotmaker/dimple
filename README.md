@@ -18,7 +18,9 @@ shot:
   then sliding and rolling with speed-dependent rolling resistance. The
   full spin vector is carried through every contact, so spin-back, the
   small kick of a curving ball off the turf, and drift from spin along the
-  direction of travel all fall out of the physics.
+  direction of travel all fall out of the physics. **Beta:** the ground
+  model is not yet validated against launch-monitor or measured roll data,
+  so run and total distances may change between releases.
 - **Stats**: per-shot carry, total, apex, descent angle, and lateral offset,
   plus session averages and dispersion.
 

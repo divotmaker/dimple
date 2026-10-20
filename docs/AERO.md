@@ -260,6 +260,11 @@ Default λ = 0.04 s⁻¹ (~21% loss over 6 seconds). Published data:
 
 ## Ground Model
 
+**Status: beta.** The impact model reproduces Penner's (2002) published
+bounce heights and spin-back, but the run and total distances it produces
+are not yet validated against launch-monitor or measured roll data, and the
+presets may be recalibrated when they are.
+
 Everything after landing is a rigid sphere with point contact, carrying the
 full spin vector ω through every contact. The tracked point is the ball's
 centre, and the ball touches the ground when its centre reaches the ground
