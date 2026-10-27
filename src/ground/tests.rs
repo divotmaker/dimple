@@ -140,14 +140,12 @@ fn planar_impacts_match_reference() {
                 c.pos
             );
         }
-        // The rest positions differ from the reference by 1–16 mm (largest
-        // for the driver on GREEN), mainly because the reference integrates
-        // the slide and roll with a first-order Euler step and this crate
-        // uses RK4 with an exact slide-to-roll switch; the different stop
-        // thresholds account for at most 2 mm.
+        // The reference integrates the slide and roll with 10 µs Euler
+        // steps, this crate with 1 ms RK4 steps and an exact slide-to-roll
+        // switch; the rest positions agree to within 0.01 mm.
         let rest = DVec3::from(r.rest);
         assert!(
-            (g.rest.pos - rest).length() < 0.025,
+            (g.rest.pos - rest).length() < 1e-4,
             "{label}: rest {:?}, reference {rest:?}",
             g.rest.pos
         );
@@ -355,16 +353,18 @@ fn constant_restitution_ignores_speed() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn green_rebound_steeper_and_slower_than_fairway() {
-    // Both presets share Penner's restitution and friction; the green's
-    // larger compliance tilts the effective contact plane further, which
-    // steepens the rebound and takes more forward speed out of it.
+fn fairway_bounces_like_green_and_resists_rolling_more() {
+    // FAIRWAY takes Penner's green impact model whole (restitution,
+    // friction and compliance 1.0): a fairway is no firmer than his green,
+    // so the same landing rebounds identically from both. What sets the
+    // fairway apart is its rolling resistance, stimp 5.2 ft against 11.4.
     let vel = DVec3::new(15.0, -10.0, 0.0);
     let spin = backspin(rpm_to_rads(3000.0));
-    let rf = hit(vel, spin, &Surface::FAIRWAY);
-    let rg = hit(vel, spin, &Surface::GREEN);
-    assert!(rg.vel.x < rf.vel.x);
-    assert!(rg.vel.y.atan2(rg.vel.x) > rf.vel.y.atan2(rf.vel.x));
+    assert_eq!(
+        hit(vel, spin, &Surface::FAIRWAY),
+        hit(vel, spin, &Surface::GREEN)
+    );
+    assert!(Surface::FAIRWAY.stimp_feet() < 0.5 * Surface::GREEN.stimp_feet());
 }
 
 #[test]
@@ -474,6 +474,62 @@ fn compliance_tilt_capped_at_incidence_angle() {
     let vel = DVec3::new(10.0, -10.0, 0.0);
     let r = hit(vel, DVec3::ZERO, &plane(1.0, 0.0, 10.0));
     assert!((r.vel + vel).length() < 1e-9, "got {:?}", r.vel);
+}
+
+#[test]
+fn tilt_fades_in_below_two_metres_per_second() {
+    // Penner's contact angle applies in full from 2 m/s of normal impact
+    // speed up and fades in linearly below it: the tilt stands for the
+    // crater a landing presses into the turf, which a soft contact barely
+    // makes.
+    let v_t = 3.0;
+    let penner = |v_n: f64| {
+        let speed = f64::hypot(v_t, v_n);
+        let phi = v_t.atan2(v_n);
+        PENNER_THETA_C * (speed / PENNER_REF_SPEED) * (phi / PENNER_REF_ANGLE)
+    };
+    for v_n in [2.0, 3.0, 10.0, 20.0] {
+        let beta = Surface::GREEN.contact_angle(v_t, v_n);
+        assert!((beta - penner(v_n)).abs() < 1e-15, "v_n {v_n}: β {beta}");
+    }
+    for v_n in [0.1, 0.5, 1.0, 1.5, 1.99] {
+        let beta = Surface::GREEN.contact_angle(v_t, v_n);
+        let faded = penner(v_n) * v_n / 2.0;
+        assert!(
+            (beta - faded).abs() < 1e-15,
+            "v_n {v_n}: β {beta} vs {faded}"
+        );
+    }
+    // `compliance` scales the faded angle too.
+    let half = Surface {
+        compliance: 0.5,
+        ..Surface::GREEN
+    };
+    assert!(
+        (half.contact_angle(v_t, 1.0) - 0.5 * Surface::GREEN.contact_angle(v_t, 1.0)).abs() < 1e-15
+    );
+}
+
+#[test]
+fn low_skimming_hops_lose_height() {
+    // A ball skimming along at 2–4 m/s in low hops (normal speed 0.3–1.5
+    // m/s, rising 5–115 mm) gets little tilt from its soft contacts, so
+    // each rebound leaves lower than the ball arrived and the hops die out
+    // within a few impacts. Penner's tilt in full would feed forward speed
+    // back into them and hold them at a few millimetres for dozens of
+    // impacts.
+    for surface in [Surface::FAIRWAY, Surface::GREEN] {
+        for v_t in [2.0, 3.0, 4.0] {
+            for w in [0.3, 0.5, 1.0, 1.5] {
+                let r = hit(DVec3::new(v_t, -w, 0.0), rolling(v_t), &surface);
+                assert!(
+                    r.vel.y < 0.85 * w,
+                    "{v_t} m/s skimming at {w} m/s rebounds at {:.3} m/s",
+                    r.vel.y
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -1383,6 +1439,45 @@ fn green_rolls_farther_than_fairway() {
     let fairway = roll(DVec3::new(5.0, 0.0, 0.0), rolling(5.0), &Surface::FAIRWAY);
     let green = roll(DVec3::new(5.0, 0.0, 0.0), rolling(5.0), &Surface::GREEN);
     assert!(green.rest.pos.x > fairway.rest.pos.x);
+}
+
+#[test]
+fn fairway_rolls_less_than_green_from_the_same_landing() {
+    // Both presets bounce alike, so the same landing makes the same hops on
+    // each; the fairway's higher rolling resistance then stops it sooner.
+    // Landings from a lob wedge, a pitch, a low chip, a 7-iron and a drive.
+    for (speed, descent, rpm) in [
+        (19.8, 44.7, 5651.0),
+        (17.6, 39.1, 3599.0),
+        (12.4, 19.1, 2413.0),
+        (24.2, 49.5, 5611.0),
+        (28.8, 39.7, 1914.0),
+    ] {
+        let a = units::deg_to_rad(descent);
+        let landing = state(
+            DVec3::new(speed * a.cos(), -speed * a.sin(), 0.0),
+            backspin(rpm_to_rads(rpm)),
+        );
+        let fairway = Surface::FAIRWAY.settle(&landing, &BALL, air());
+        let green = Surface::GREEN.settle(&landing, &BALL, air());
+        assert_eq!(
+            fairway.contacts,
+            green
+                .contacts
+                .iter()
+                .map(|c| Contact {
+                    surface: Surface::FAIRWAY,
+                    ..*c
+                })
+                .collect::<Vec<_>>()
+        );
+        let (f, g) = (fairway.rest.pos.x, green.rest.pos.x);
+        let landed = fairway.contacts.last().unwrap().pos.x;
+        assert!(
+            f - landed < 0.8 * (g - landed),
+            "{speed} m/s at {descent}°: fairway {f:.2} m, green {g:.2} m"
+        );
+    }
 }
 
 #[test]

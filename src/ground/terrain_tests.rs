@@ -233,7 +233,7 @@ fn long_downhill_reports_max_time() {
 #[test]
 fn near_critical_green_rests_within_default_max_time() {
     // Just inside GREEN's hold angle (atan 0.055 ≈ 3.15°) a slow roll barely
-    // decelerates: on 3.1° a drive takes about 85 s to stop, within the
+    // decelerates: on 3.1° a drive takes about 82 s to stop, within the
     // default limit.
     let n = tilt(3.1, 0.0);
     let ground = plane(n, Surface::GREEN);

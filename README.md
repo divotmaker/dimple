@@ -21,9 +21,8 @@ shot:
   direction of travel all fall out of the physics. Impacts are checked
   against a published fit to bounce measurements, and rolling on slopes
   against published slope studies. **Beta:** run and total distances of
-  full shots are not
-  yet validated against launch-monitor or measured roll data and may change
-  between releases.
+  full shots are compared with measured data only for drives on a fairway,
+  and may change between releases.
 - **Stats**: per-shot carry, total, apex, descent angle, and lateral offset,
   plus session averages and dispersion.
 
@@ -139,7 +138,7 @@ crest). See [docs/AERO.md](docs/AERO.md#ground-model) for the contact
 model and its limitations.
 
 `GREEN` and `FIRM_GREEN` impact like Penner's (2002) green and firm green;
-`FAIRWAY` uses the same impact model with a chosen compliance.
+`FAIRWAY` bounces like `GREEN` and rolls slower (stimp 5.2 ft).
 `Surface::with_stimp(feet)` sets the rolling resistance from a stimpmeter
 reading in closed form, and `Surface::stimp_feet()` reads it back (`GREEN`
 is 11.4 ft). There are no rough or bunker presets, because no published
@@ -194,8 +193,20 @@ Every coefficient is a public field, so you can build your own `BallModel`.
 
 Trackman 2024 PGA Tour averages (25°C, sea level): carry RMSE 2.8 yds,
 descent-angle RMSE 1.3°, 9 of 12 clubs within ±3 yds. Altitude and
-temperature response track published data. Per-club results, sources, and
-known limitations are in [docs/AERO.md](docs/AERO.md).
+temperature response track published data.
+
+Ground (beta): on `GREEN` the impact model reproduces Penner's (2002)
+published bounce heights, spin-back and drive runs (37.1 m and 17.9 m past
+landing against his 37 m and 19 m), and sits at a scaled error of about 12%
+from Biber et al.'s (2023) fit to natural-turf bounces. The PGA Tour
+average drive runs 18 yd on `FAIRWAY`, between the USGA/R&A proposed bounce
+model (17 yd at its 39° landing) and the ShotLink median (21 yd). Penner's
+contact-angle law is faded in below 2 m/s of normal impact speed, which
+ends the long train of millimetre hops the law otherwise sustains after
+the first bounce.
+
+Per-club results, sources, and known limitations are in
+[docs/AERO.md](docs/AERO.md).
 
 ## License
 
@@ -210,9 +221,9 @@ at your option.
 
 dimple is an independent open-source project. It is not affiliated with,
 endorsed by, or sponsored by TrackMan A/S, PGA TOUR, Inc., Acushnet Company,
-Karsten Manufacturing Corporation, or the United States Golf Association.
-TrackMan is a trademark of TrackMan A/S. PGA TOUR is a trademark of PGA TOUR,
-Inc. Titleist is a trademark of Acushnet Company. PING is a trademark of
+Karsten Manufacturing Corporation, the United States Golf Association, or
+The R&A. TrackMan is a trademark of TrackMan A/S. PGA TOUR and ShotLink are
+trademarks of PGA TOUR, Inc. Titleist is a trademark of Acushnet Company. PING is a trademark of
 Karsten Manufacturing Corporation. USGA is a trademark of the United States
 Golf Association. All other trademarks are the property of their respective
 owners. These names appear only to identify the published sources the model

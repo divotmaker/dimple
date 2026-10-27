@@ -37,6 +37,16 @@ const PENNER_REF_ANGLE: f64 = 44.4 * std::f64::consts::PI / 180.0;
 /// Penner's contact angle is zero.
 const MIN_TILT_SPEED: f64 = 0.01;
 
+/// Normal impact speed (m/s) at and above which Penner's contact angle
+/// applies in full. Below it the angle fades in linearly with the normal
+/// speed, `θc · v_n / 2 m/s`: the tilt stands for the crater the ball
+/// presses into the turf, and a contact this soft (the fall from a bounce
+/// under about 20 cm) barely presses one. Lofted landings, from about 4 m/s
+/// for a low chip to 10–20 m/s for full shots, get the full angle; the fade
+/// acts on the low hops that follow them and on landings launched under
+/// about 12°.
+const TILT_ONSET_SPEED: f64 = 2.0;
+
 /// Contact-point slip speed, or rolling speed, (m/s) treated as zero.
 /// Slides end exactly at zero slip and rolls exactly at zero speed; this
 /// only absorbs rounding.
@@ -231,7 +241,8 @@ pub struct Surface {
     pub roll_law: RollLaw,
     /// Turf compliance: dimensionless multiplier on Penner's (2002) eq. 8
     /// effective contact angle, θc = 15.4° · (v / 18.6 m/s) · (φ / 44.4°),
-    /// with v the impact speed and φ the incidence angle from the normal.
+    /// with v the impact speed and φ the incidence angle from the normal,
+    /// faded in below 2 m/s of normal impact speed (see [`impact`]).
     /// `1.0` is Penner's green; `0.0` is a rigid flat surface.
     pub compliance: f64,
     /// Torsional friction lever (m): the friction moment about the surface
@@ -244,7 +255,7 @@ pub struct Surface {
     /// contact plane turns part of that spin into slip, and through the
     /// Magnus force that spin gives the hops in between. With the presets'
     /// 1 mm a full-shot landing removes all of it at once: a driver landing
-    /// on `FAIRWAY` can remove up to about 155 rad/s (~1500 rpm), against
+    /// on `FAIRWAY` can remove up to about 160 rad/s (~1500 rpm), against
     /// the 47 rad/s a 600 rpm-sidespin drive lands with. Any lever that
     /// clears the spin at every impact gives the same path.
     ///
@@ -255,8 +266,9 @@ pub struct Surface {
 }
 
 impl Surface {
-    /// Standard fairway: Penner's restitution and friction with compliance
-    /// 0.9, slightly below the green's so rebounds come off slightly firmer.
+    /// Standard fairway: Penner's (2002) green impact model (restitution,
+    /// friction and compliance 1.0) with a rolling resistance of stimp
+    /// 5.2 ft. It bounces like [`GREEN`](Self::GREEN) and rolls shorter.
     /// The compliance is chosen, not measured; the run is sensitive to it
     /// (see `docs/AERO.md`).
     pub const FAIRWAY: Self = Self {
@@ -264,7 +276,7 @@ impl Surface {
         mu_slide: 0.40,
         mu_roll: 0.12,
         roll_law: RollLaw::Quadratic { v_ref: 2.5 },
-        compliance: 0.9,
+        compliance: 1.0,
         pivot: 0.001,
     };
 
@@ -367,11 +379,12 @@ impl Surface {
     /// Effective contact angle β (rad) for an impact with tangential speed
     /// `v_t` and normal approach speed `v_n` (both ≥ 0).
     ///
-    /// `compliance` times Penner's eq. 8 θc, capped at the incidence angle
-    /// from the normal: at the cap the ball strikes the effective plane
-    /// head-on, and a larger tilt would turn its tangential velocity
-    /// backward. Zero when there is (almost) no tangential motion, since the
-    /// tilt direction is undefined.
+    /// `compliance` times Penner's eq. 8 θc, times the fade
+    /// `min(1, v_n / TILT_ONSET_SPEED)`, capped at the incidence angle from
+    /// the normal: at the cap the ball strikes the effective plane head-on,
+    /// and a larger tilt would turn its tangential velocity backward. Zero
+    /// when there is (almost) no tangential motion, since the tilt direction
+    /// is undefined.
     fn contact_angle(&self, v_t: f64, v_n: f64) -> f64 {
         if v_t <= MIN_TILT_SPEED {
             return 0.0;
@@ -379,7 +392,8 @@ impl Surface {
         let speed = v_t.hypot(v_n);
         let incidence = v_t.atan2(v_n);
         let theta_c = PENNER_THETA_C * (speed / PENNER_REF_SPEED) * (incidence / PENNER_REF_ANGLE);
-        (self.compliance * theta_c).min(incidence)
+        let fade = (v_n / TILT_ONSET_SPEED).min(1.0);
+        (self.compliance * theta_c * fade).min(incidence)
     }
 }
 
@@ -728,8 +742,8 @@ pub struct GroundPhysics<T: Terrain> {
     /// remove at least the energy of a hop this high (`g·min_hop_height` per
     /// unit mass) more than gravity hands back over the next hop down the
     /// slope. Otherwise the ball goes to the ground at once, as below the
-    /// height. Without this a downhill hop train settles at a fixed hop
-    /// height just above the transition and never rolls (see
+    /// height. Without this a steep enough downslope keeps the ball fast
+    /// enough that its hops stop shrinking, and it never rolls (see
     /// `docs/AERO.md`). The energy the slope hands back is measured on the
     /// hop actually flown, through whatever air there is. Level ground uses
     /// the height alone.
@@ -741,7 +755,7 @@ pub struct GroundPhysics<T: Terrain> {
     pub max_impacts: usize,
     /// Time limit (s) on the ground phase, from landing. Default 120 s,
     /// enough for a ball to come to rest on a green sloped just inside its
-    /// hold angle (a drive takes 85 s on a 3.1° `GREEN`). Where the slope
+    /// hold angle (a drive takes 82 s on a 3.1° `GREEN`). Where the slope
     /// is too steep to hold the ball ([`GroundSample::holds_at_rest`]) it
     /// never rests, and a long enough slope runs to this limit.
     pub max_time: f64,
@@ -1239,8 +1253,7 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
 /// dies out if the slope returns nothing (`ΔU ≤ 0`) or the impact removes at
 /// least the energy of a `min_hop_height` hop more than the hop returns
 /// (`ΔE − ΔU ≥ g·min_hop_height`). Below that, gravity re-supplies what each
-/// impact takes and the hops would settle at a fixed size above the 5 mm
-/// transition instead of shrinking through it.
+/// impact takes and the hops need not shrink through the 5 mm transition.
 fn hops_die_out(
     arrival: &BallState,
     rebound: &BallState,
@@ -1272,9 +1285,14 @@ fn hops_die_out(
 /// direction of the incoming tangential velocity, `R` the radius and `k` the
 /// inertia factor:
 ///
-/// 1. Tilt: β = `compliance` · θc (Penner eq. 8), capped at the incidence
+/// 1. Tilt: β = `compliance` · θc (Penner eq. 8) · min(1, v_n / 2 m/s),
+///    with `v_n = −v·n` the normal impact speed, capped at the incidence
 ///    angle; effective normal `n' = n cos β − t̂ sin β`, leaning back toward
-///    the incoming ball.
+///    the incoming ball. The tilt models the crater a landing presses into
+///    the turf, so it fades in linearly below 2 m/s of normal speed, where
+///    the contact barely dents the turf. Landings get Penner's full angle;
+///    the low, near-grazing hops after them get little tilt, so they die
+///    out in a few impacts and the ball goes on to slide and roll.
 /// 2. Normal impulse (per unit mass) `j_n = (1 + e)·|v·n'|`, with `e` from
 ///    [`Surface::restitution`] at the normal speed `|v·n'|`.
 /// 3. Contact-point slip `u = (v − (v·n')n') + ω × (−R n')`. Friction

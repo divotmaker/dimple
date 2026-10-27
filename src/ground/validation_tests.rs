@@ -418,7 +418,7 @@ fn rebound(b: &[Bounce]) -> (f64, f64) {
 #[test]
 fn biber_tee_turf_fit_agreement() {
     // Natural turf (Campaign B). dimple's GREEN against the fit: δ 12.2%
-    // (Δẋ 7.4, Δẏ 2.9, Δω 7.7%); the paper's own physics fits reach 19–35%
+    // (Δẋ 7.4, Δẏ 3.0, Δω 7.7%); the paper's own physics fits reach 19–35%
     // against the data (Table 3), its affine fit 7.8% (Table 2).
     let landings = tee_grid();
     let green = bounces(&TEE, &landings, Surface::GREEN);
@@ -428,7 +428,7 @@ fn biber_tee_turf_fit_agreement() {
     let (fairway_delta, ..) = errors(&bounces(&TEE, &landings, Surface::FAIRWAY));
     assert!(fairway_delta < 0.15, "FAIRWAY δ {fairway_delta}");
 
-    // Normal rebound: 0.390 against the fit's 0.408.
+    // Normal rebound: 0.388 against the fit's 0.408.
     let (fit_rebound, model_rebound) = rebound(&green);
     assert!(
         (fit_rebound - model_rebound).abs() < 0.05,
@@ -547,8 +547,8 @@ fn bounce_and_roll_ft(surface: Surface, grade: f64, (mph, descent, rpm): (f64, f
 
 #[test]
 fn whitlark_slope_asymmetry_on_a_green() {
-    // 7-iron on a 1.5% grade: uphill 27.0 ft, level 34.9 ft, downhill
-    // 46.8 ft. Whitlark & Pringle measured mean totals of 13.5 ft uphill
+    // 7-iron on a 1.5% grade: uphill 26.3 ft, level 33.3 ft, downhill
+    // 42.5 ft. Whitlark & Pringle measured mean totals of 13.5 ft uphill
     // and 32.5 ft downhill over their shot mix, a 19 ft difference.
     let green = whitlark_green();
     let up = bounce_and_roll_ft(green, 0.015, SEVEN_IRON);
@@ -572,7 +572,7 @@ fn whitlark_slope_asymmetry_on_a_green() {
 #[test]
 fn whitlark_green_speed_barely_moves_bounce_and_roll() {
     // Stimp 11 ft 3 in against 12 ft 3 in made no difference to their
-    // bounce and roll; dimple's uphill 7-iron moves 26.4 → 27.2 ft.
+    // bounce and roll; dimple's uphill 7-iron moves 25.5 → 26.6 ft.
     let slow = bounce_and_roll_ft(Surface::GREEN.with_stimp(11.25), 0.015, SEVEN_IRON);
     let fast = bounce_and_roll_ft(Surface::GREEN.with_stimp(12.25), 0.015, SEVEN_IRON);
     assert!((fast - slow).abs() < 2.0, "{slow} vs {fast}");
@@ -581,7 +581,7 @@ fn whitlark_green_speed_barely_moves_bounce_and_roll() {
 #[test]
 fn whitlark_compliance_is_the_firmness_knob() {
     // Firmer turf by 0.08 in on the TruFirm ran 9–12 ft further at their
-    // uphill sites. Compliance 0.9 against 1.0 adds 10.7 ft (27.0 → 37.7)
+    // uphill sites. Compliance 0.9 against 1.0 adds 9.0 ft (26.3 → 35.3)
     // to the uphill 7-iron, the same order.
     let green = whitlark_green();
     let soft = bounce_and_roll_ft(green, 0.015, SEVEN_IRON);

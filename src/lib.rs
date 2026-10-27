@@ -5,8 +5,8 @@
 //! Magnus lift and spin decay, followed by the ground phase (impacts, hops,
 //! slide and roll) with the full spin vector carried through every contact.
 //! Impacts are checked against a published fit to bounce measurements; the
-//! run and total distances of full shots are beta, not yet validated against measured
-//! data, and may change between releases.
+//! run and total distances of full shots are beta, compared with measured
+//! data only for drives on a fairway, and may change between releases.
 //! Pure math: no I/O, no allocation beyond the returned trajectories, no
 //! async runtime.
 //!

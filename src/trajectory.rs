@@ -1012,15 +1012,26 @@ mod tests {
 
     #[test]
     fn shot_driver_total_distance() {
-        // PGA Tour driver: ~282 carry, ~305-315 total on fairway. The model
-        // carries about 269 yd and totals about 298.5 yd on FAIRWAY.
+        // Fairway drives landing near 40° run about 17–21 yd: 16.7 yd at 39°
+        // on the USGA/R&A proposed bounce model's fairway line, a 21 yd
+        // ShotLink median. The preset launches slower than the PGA Tour
+        // average (Trackman: 282 yd carry), carries about 269 yd, lands at
+        // about 41° and runs about 17 yd on FAIRWAY.
         let r = shot_on_fairway(&ShotInput::driver());
+        let run = r.total_yards - r.flight.carry_yards;
         assert!(
-            r.total_yards > 290.0 && r.total_yards < 330.0,
-            "driver total should be 290-330 yds, got {:.1} (carry={:.1}, rollout={:.1})",
-            r.total_yards,
-            r.flight.carry_yards,
-            r.total_yards - r.flight.carry_yards
+            (260.0..280.0).contains(&r.flight.carry_yards),
+            "driver carry should be 260-280 yds, got {:.1}",
+            r.flight.carry_yards
+        );
+        assert!(
+            (14.0..22.0).contains(&run),
+            "driver fairway run should be 14-22 yds, got {run:.1}"
+        );
+        assert!(
+            (276.0..300.0).contains(&r.total_yards),
+            "driver total should be 276-300 yds, got {:.1}",
+            r.total_yards
         );
     }
 
@@ -1028,7 +1039,7 @@ mod tests {
     fn shot_7iron_carry_and_run() {
         // PGA Tour 7-iron (Trackman): about 120–123 mph, 16°, 7100 rpm,
         // 172–176 yd carry. The model carries about 171.5 yd and runs about
-        // 6.4 yd on FAIRWAY.
+        // 4.1 yd on FAIRWAY.
         let input = ShotInput {
             ball_speed_mph: 123.0,
             launch_angle_deg: 16.3,
@@ -1170,20 +1181,114 @@ mod tests {
     }
 
     #[test]
-    fn shot_green_less_rollout_than_fairway() {
-        // Same drive on green vs fairway: green should have less total
-        // rollout because its more compliant turf steepens each rebound and
-        // takes more forward speed out of it, which outweighs the green's
-        // lower rolling friction.
+    fn shot_fairway_less_rollout_than_green() {
+        // Same drive on fairway and green: both presets bounce alike, so the
+        // hops are the same, and the fairway's higher rolling resistance
+        // gives it the shorter run (about 17 yd against 23).
         let input = ShotInput::driver();
         let fairway = shot_on_fairway(&input);
         let green = shot_on_green(&input);
+        assert_eq!(fairway.ground.contacts.len(), green.ground.contacts.len());
         let rollout_fairway = fairway.total_yards - fairway.flight.carry_yards;
         let rollout_green = green.total_yards - green.flight.carry_yards;
         assert!(
-            rollout_green < rollout_fairway,
-            "green rollout ({rollout_green:.1}) should be less than fairway ({rollout_fairway:.1})"
+            rollout_fairway < rollout_green - 3.0,
+            "fairway rollout ({rollout_fairway:.1}) should be well short of green ({rollout_green:.1})"
         );
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  RUN-OUT — the hop train dies out; roll by club
+    // ══════════════════════════════════════════════════════════════════
+
+    /// Trackman's normalisation, 25 °C at sea level, which the carry
+    /// calibration also uses.
+    const TRACKMAN_AIR: Environment = Environment {
+        altitude_m: 0.0,
+        temperature_c: 25.0,
+    };
+
+    fn launch(mph: f64, launch_deg: f64, rpm: f64) -> ShotInput {
+        ShotInput {
+            ball_speed_mph: mph,
+            launch_angle_deg: launch_deg,
+            launch_azimuth_deg: 0.0,
+            backspin_rpm: rpm,
+            sidespin_rpm: 0.0,
+        }
+    }
+
+    #[test]
+    fn shot_hop_train_dies_out() {
+        // After the first bounce each hop rises at most about 0.6× as high as
+        // the one before (asserted: 0.7×), so a shot makes a handful of
+        // impacts and then rolls. No train of hops a few millimetres high
+        // skims on for dozens of impacts: at most two hops below 1 cm, from wedges to drives, on
+        // both presets.
+        let hop = |v: DVec3| v.y * v.y / (2.0 * units::G);
+        for input in [
+            launch(65.0, 32.0, 6500.0),  // lob wedge
+            launch(52.0, 32.0, 4000.0),  // pitch
+            launch(30.0, 18.0, 2500.0),  // low chip
+            launch(120.0, 16.3, 7097.0), // 7-iron
+            launch(171.0, 10.4, 2545.0), // drive
+            ShotInput::driver(),
+            ShotInput::seven_iron(),
+            ShotInput::wedge(),
+        ] {
+            for surface in [Surface::FAIRWAY, Surface::GREEN] {
+                let r = simulate_shot(&input, &BALL, &Environment::SEA_LEVEL, &surface);
+                let contacts = &r.ground.contacts;
+                let label = format!("{input:?} on {surface:?}");
+                assert!(contacts.len() <= 10, "{label}: {} impacts", contacts.len());
+                let heights: Vec<f64> = contacts.iter().map(|c| hop(c.vel_out)).collect();
+                for pair in heights[1..].windows(2) {
+                    assert!(pair[1] <= 0.7 * pair[0], "{label}: hops {heights:?}");
+                }
+                let low = heights[..heights.len() - 1]
+                    .iter()
+                    .filter(|&&h| h < 0.01)
+                    .count();
+                assert!(low <= 2, "{label}: {low} hops below 1 cm");
+            }
+        }
+    }
+
+    #[test]
+    fn shot_roll_by_club_on_fairway() {
+        // FAIRWAY roll and total for three launches in Trackman's air.
+        // A lob wedge (65 mph, 32°, 6500 rpm) lands at about 45° and rolls
+        // about 5.5 yd; a 50-yard pitch (52 mph, 32°, 4000 rpm) lands at
+        // about 39° and rolls about 11 yd. The PGA Tour average drive
+        // (Trackman: 171 mph, 10.4°, 2545 rpm) lands at about 40° and rolls
+        // about 18 yd, between the USGA/R&A proposed bounce model's 16.7 yd
+        // at 39° and the 21 yd ShotLink median there. No published run data
+        // exists for wedges or pitches on a fairway, so their windows guard
+        // against drift rather than validate.
+        for (name, input, roll, total) in [
+            (
+                "lob wedge",
+                launch(65.0, 32.0, 6500.0),
+                4.5..6.5,
+                71.0..77.0,
+            ),
+            ("pitch", launch(52.0, 32.0, 4000.0), 9.5..12.5, 54.5..60.0),
+            (
+                "drive",
+                launch(171.0, 10.4, 2545.0),
+                15.5..21.5,
+                292.0..304.0,
+            ),
+        ] {
+            let r = simulate_shot(&input, &BALL, &TRACKMAN_AIR, &Surface::FAIRWAY);
+            let run = r.total_yards - r.flight.carry_yards;
+            assert!(roll.contains(&run), "{name}: roll {run:.2} yd");
+            assert!(
+                total.contains(&r.total_yards),
+                "{name}: total {:.1} yd",
+                r.total_yards
+            );
+        }
     }
 
     #[test]
