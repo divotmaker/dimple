@@ -12,6 +12,7 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -27,6 +28,7 @@ jobs:
     name: Publish to crates.io
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -41,6 +43,7 @@ jobs:
     name: Version bump
     needs: publish
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -69,6 +72,7 @@ jobs:
     name: Release
     needs: publish
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Create release
         uses: softprops/action-gh-release@v2
