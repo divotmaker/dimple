@@ -57,42 +57,6 @@ pub fn feet_to_meters(feet: f64) -> f64 {
     feet * 0.3048
 }
 
-/// Display unit for distances.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Unit {
-    Yards,
-    Meters,
-}
-
-impl Unit {
-    /// Convert a value in this unit to meters.
-    #[must_use]
-    pub fn to_meters(self, value: f64) -> f64 {
-        match self {
-            Self::Yards => yards_to_meters(value),
-            Self::Meters => value,
-        }
-    }
-
-    /// Convert meters to this unit.
-    #[must_use]
-    pub fn from_meters(self, meters: f64) -> f64 {
-        match self {
-            Self::Yards => meters_to_yards(meters),
-            Self::Meters => meters,
-        }
-    }
-
-    /// Short label for display.
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Yards => "yd",
-            Self::Meters => "m",
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
