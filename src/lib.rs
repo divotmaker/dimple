@@ -135,7 +135,7 @@ pub mod environment;
 /// modest.
 pub mod ground;
 /// Fixed-step fourth-order Runge-Kutta integrators.
-pub mod rk4;
+mod rk4;
 /// Per-shot statistics in display units.
 pub mod stats;
 /// Shot input, flight simulation, and full flight + ground shots.
