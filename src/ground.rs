@@ -1,6 +1,6 @@
 use std::fmt;
 
-use glam::DVec3;
+use crate::Vec3;
 
 use crate::aero::{AeroParams, BallModel};
 use crate::rk4;
@@ -33,7 +33,7 @@ const ROOT_TOL: f64 = 1e-12;
 const ROOT_MAX_ITER: usize = 200;
 
 /// Gravity vector (m/s²).
-const GRAVITY: DVec3 = DVec3::new(0.0, -G, 0.0);
+const GRAVITY: Vec3 = Vec3::new(0.0, -G, 0.0);
 
 /// The ground at one horizontal location.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -47,7 +47,7 @@ pub struct GroundSample {
     /// heightfield `y = h(x, z)` this is `(−∂h/∂x, 1, −∂h/∂z)` normalized.
     /// [`GroundPhysics`] uses it for the impact plane, the normal load and
     /// the downhill pull, so it should match the slope of `height`.
-    pub normal: DVec3,
+    pub normal: Vec3,
     /// Material at this location.
     pub surface: Surface,
 }
@@ -65,7 +65,7 @@ impl GroundSample {
 
 /// Whether rolling resistance at zero speed holds a ball against the slope
 /// of ground with unit normal `n`.
-fn holds_at_rest(n: DVec3, surface: &Surface) -> bool {
+fn holds_at_rest(n: Vec3, surface: &Surface) -> bool {
     tangential_gravity(n).length() <= surface.mu_roll * G * n.y
 }
 
@@ -110,7 +110,7 @@ impl Terrain for Surface {
     fn sample(&self, _x: f64, _z: f64) -> GroundSample {
         GroundSample {
             height: 0.0,
-            normal: DVec3::Y,
+            normal: Vec3::Y,
             surface: *self,
         }
     }
@@ -123,11 +123,11 @@ impl Terrain for Surface {
 ///
 /// ```
 /// use dimple::ground::{FnTerrain, GroundPhysics, GroundSample, Surface};
-/// use glam::DVec3;
+/// use dimple::Vec3;
 ///
 /// let range = GroundPhysics::new(FnTerrain(|x: f64, _z: f64| GroundSample {
 ///     height: 0.0,
-///     normal: DVec3::Y,
+///     normal: Vec3::Y,
 ///     surface: if (150.0..170.0).contains(&x) { Surface::GREEN } else { Surface::FAIRWAY },
 /// }));
 /// # let _ = range;
@@ -141,10 +141,10 @@ impl Terrain for Surface {
 /// use dimple::environment::Environment;
 /// use dimple::ground::{FnTerrain, GroundPhysics, GroundSample, Surface};
 /// use dimple::trajectory::{ShotInput, simulate_shot};
-/// use glam::DVec3;
+/// use dimple::Vec3;
 ///
 /// let (a, b) = (3.0_f64.to_radians().tan(), -(2.0_f64.to_radians().tan()));
-/// let normal = DVec3::new(-a, 1.0, -b).normalize();
+/// let normal = Vec3::new(-a, 1.0, -b).normalize();
 /// let hill = GroundPhysics::new(FnTerrain(move |x: f64, z: f64| GroundSample {
 ///     height: a * x + b * z,
 ///     normal,
@@ -185,11 +185,11 @@ pub struct BallState {
     /// Absolute shot time (s since launch).
     pub time: f64,
     /// Position of the ball's center (m, crate frame).
-    pub pos: DVec3,
+    pub pos: Vec3,
     /// Velocity (m/s).
-    pub vel: DVec3,
+    pub vel: Vec3,
     /// Angular velocity (rad/s, right-hand rule, crate frame).
-    pub spin: DVec3,
+    pub spin: Vec3,
 }
 
 /// What the ball is doing between ground points.
@@ -227,23 +227,23 @@ pub struct Contact {
     /// Absolute shot time (s).
     pub time: f64,
     /// Ball center at impact (m).
-    pub pos: DVec3,
+    pub pos: Vec3,
     /// Unit surface normal at the contact.
-    pub normal: DVec3,
+    pub normal: Vec3,
     /// Surface at the contact point.
     pub surface: Surface,
     /// Velocity arriving at the ground (m/s).
-    pub vel_in: DVec3,
+    pub vel_in: Vec3,
     /// Velocity leaving the contact (m/s). For the last contact before the
     /// ball stays on the ground this is the velocity it slides or rolls
     /// away with: the rebound projected onto the ground plane, with a slip
     /// at or below [`GroundPhysics::roll_threshold`] removed.
-    pub vel_out: DVec3,
+    pub vel_out: Vec3,
     /// Angular velocity arriving (rad/s).
-    pub spin_in: DVec3,
+    pub spin_in: Vec3,
     /// Angular velocity leaving (rad/s); for the last contact, the spin the
     /// ball slides or rolls away with.
-    pub spin_out: DVec3,
+    pub spin_out: Vec3,
 }
 
 impl Contact {
@@ -276,11 +276,11 @@ pub struct GroundPoint {
     /// Absolute shot time (s).
     pub time: f64,
     /// Ball center (m).
-    pub pos: DVec3,
+    pub pos: Vec3,
     /// Velocity (m/s).
-    pub vel: DVec3,
+    pub vel: Vec3,
     /// Angular velocity (rad/s).
-    pub spin: DVec3,
+    pub spin: Vec3,
     /// What the ball does from this point until the next one.
     pub phase: Phase,
 }
@@ -470,12 +470,12 @@ impl<T: Terrain> GroundPhysics<T> {
     }
 
     /// Terrain under a ball centered at `pos`.
-    fn sample(&self, pos: DVec3) -> GroundSample {
+    fn sample(&self, pos: Vec3) -> GroundSample {
         self.terrain.sample(pos.x, pos.z)
     }
 
     /// Height of a ball centered at `pos` above the terrain under it.
-    fn clearance(&self, pos: DVec3) -> f64 {
+    fn clearance(&self, pos: Vec3) -> f64 {
         pos.y - self.sample(pos).height
     }
 
@@ -498,7 +498,7 @@ impl<T: Terrain> GroundPhysics<T> {
     ) -> Result<BallState, BallState> {
         // `acceleration` never reads `spin_decay`: the hop holds the spin fixed.
         let aero = AeroParams::from_spin_vector(start.spin);
-        let accel = |vel: DVec3| {
+        let accel = |vel: Vec3| {
             if air_density > 0.0 {
                 ball.acceleration(vel, &aero, air_density)
             } else {
@@ -569,7 +569,7 @@ impl<T: Terrain> GroundPhysics<T> {
         t: f64,
         h: f64,
         end: f64,
-        spin: DVec3,
+        spin: Vec3,
         arc: impl Fn(f64) -> rk4::State,
     ) -> Option<BallState> {
         let clearance = |tau: f64| self.clearance(arc(tau).pos);
@@ -867,7 +867,7 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
                 next_sample = state.time + SAMPLE_INTERVAL;
             }
             last_phase = Some(phase);
-            let stopped = phase == Phase::Roll && next.vel == DVec3::ZERO;
+            let stopped = phase == Phase::Roll && next.vel == Vec3::ZERO;
             let under = self.sample(next.pos);
             let held = stopped && under.holds_at_rest();
             state = onto_surface(&next, &under, at.normal, rolling, radius);
@@ -898,11 +898,11 @@ fn hops_die_out(
     arrival: &BallState,
     rebound: &BallState,
     next: &BallState,
-    n: DVec3,
+    n: Vec3,
     ball: &BallModel,
     min_hop_height: f64,
 ) -> bool {
-    if tangential_gravity(n) == DVec3::ZERO {
+    if tangential_gravity(n) == Vec3::ZERO {
         return true;
     }
     // The hop keeps its spin, so the slope's net return is all translational.
@@ -965,11 +965,7 @@ pub fn impact(state: &BallState, at: &GroundSample, ball: &BallModel) -> BallSta
     let v_t_vec = v - v_dot_n * n;
     let v_t = v_t_vec.length();
     let beta = surface.contact_angle(v_t, -v_dot_n);
-    let t_hat = if v_t > 0.0 {
-        v_t_vec / v_t
-    } else {
-        DVec3::ZERO
-    };
+    let t_hat = if v_t > 0.0 { v_t_vec / v_t } else { Vec3::ZERO };
     let n_eff = n * beta.cos() - t_hat * beta.sin();
     let v_n_eff = v.dot(n_eff);
     if v_n_eff >= 0.0 {
@@ -986,7 +982,7 @@ pub fn impact(state: &BallState, at: &GroundSample, ball: &BallModel) -> BallSta
     let j_t_vec = if slip_speed > 0.0 {
         slip * (-j_t / slip_speed)
     } else {
-        DVec3::ZERO
+        Vec3::ZERO
     };
 
     let inertia = k * radius * radius; // per unit mass

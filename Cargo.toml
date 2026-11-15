@@ -13,6 +13,3 @@ exclude = [".github/", "rust-toolchain.toml"]
 
 [lib]
 name = "dimple"
-
-[dependencies]
-glam = "0.32"

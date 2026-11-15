@@ -83,8 +83,9 @@
 //! | +Z | right of the target line, from the golfer's view |
 //!
 //! Every position, velocity and angular velocity vector in the public API
-//! (trajectory points, contacts, ground points, final rest position) uses
-//! this frame. Positions are of the ball's center, and the ball touches
+//! (trajectory points, contacts, ground points, final rest position) is a
+//! [`Vec3`] in this frame; convert it to your own math library's vector
+//! through `[f64; 3]`. Positions are of the ball's center, and the ball touches
 //! the ground when its center reaches the ground height: a ball on ground
 //! level with the tee has `y = 0`.
 //!
@@ -142,3 +143,6 @@ pub mod stats;
 pub mod trajectory;
 /// Physical constants and unit conversions.
 pub mod units;
+mod vec3;
+
+pub use vec3::Vec3;

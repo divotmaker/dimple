@@ -1086,7 +1086,7 @@ The ground API has three layers:
    ```rust
    let range = GroundPhysics::new(FnTerrain(|x: f64, z: f64| GroundSample {
        height: 0.0,
-       normal: DVec3::Y,
+       normal: Vec3::Y,
        surface: if on_green(x, z) { Surface::GREEN } else { Surface::FAIRWAY },
    }));
    simulate_shot(&input, &ball, &env, &range);

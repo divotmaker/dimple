@@ -1,4 +1,4 @@
-use glam::DVec3;
+use crate::Vec3;
 
 use crate::units::G;
 
@@ -242,10 +242,10 @@ impl BallModel {
     /// Coordinate frame: +X downrange, +Y up, +Z right of the target line
     /// (right-handed). `vel` and the returned acceleration are in m/s and m/s².
     #[must_use]
-    pub fn acceleration(&self, vel: DVec3, aero: &AeroParams, air_density: f64) -> DVec3 {
+    pub fn acceleration(&self, vel: Vec3, aero: &AeroParams, air_density: f64) -> Vec3 {
         let speed = vel.length();
         if speed < 1e-10 {
-            return DVec3::new(0.0, -G, 0.0);
+            return Vec3::new(0.0, -G, 0.0);
         }
 
         let vel_hat = vel / speed;
@@ -265,14 +265,14 @@ impl BallModel {
                 let lift_hat = lift_dir / lift_mag;
                 lift_hat * (cl * q * self.area_m2() / self.mass_kg)
             } else {
-                DVec3::ZERO
+                Vec3::ZERO
             }
         } else {
-            DVec3::ZERO
+            Vec3::ZERO
         };
 
         // Gravity
-        let gravity = DVec3::new(0.0, -G, 0.0);
+        let gravity = Vec3::new(0.0, -G, 0.0);
 
         gravity + drag + magnus
     }
@@ -288,7 +288,7 @@ pub struct AeroParams {
     /// direction: backspin points along the horizontal axis perpendicular to
     /// the start line (+Z for a straight launch), sidespin that curves the
     /// ball right points along -Y. Fixed for the whole flight.
-    pub spin_axis: DVec3,
+    pub spin_axis: Vec3,
     /// Current spin rate (rad/s). Decays over flight.
     pub spin_rate: f64,
     /// Spin decay constant (s⁻¹). ω(t) = ω₀ × exp(-λ·t).
@@ -318,18 +318,18 @@ impl AeroParams {
     pub fn from_spin(backspin_rpm: f64, sidespin_rpm: f64) -> Self {
         let backspin_rads = backspin_rpm * std::f64::consts::PI / 30.0;
         let sidespin_rads = sidespin_rpm * std::f64::consts::PI / 30.0;
-        Self::from_spin_vector(DVec3::new(0.0, -sidespin_rads, backspin_rads))
+        Self::from_spin_vector(Vec3::new(0.0, -sidespin_rads, backspin_rads))
     }
 
     /// Create aero params from an angular velocity vector (rad/s, crate
     /// frame, right-hand rule). A zero vector gives zero spin about +Z.
     #[must_use]
-    pub fn from_spin_vector(omega: DVec3) -> Self {
+    pub fn from_spin_vector(omega: Vec3) -> Self {
         let spin_rate = omega.length();
         let spin_axis = if spin_rate > 1e-10 {
             omega / spin_rate
         } else {
-            DVec3::Z
+            Vec3::Z
         };
         Self {
             spin_axis,
@@ -340,7 +340,7 @@ impl AeroParams {
 
     /// Current angular velocity vector (rad/s): `spin_axis · spin_rate`.
     #[must_use]
-    pub fn spin_vector(&self) -> DVec3 {
+    pub fn spin_vector(&self) -> Vec3 {
         self.spin_axis * self.spin_rate
     }
 
@@ -366,11 +366,11 @@ mod tests {
     #[test]
     fn gravity_only_no_spin() {
         let aero = AeroParams {
-            spin_axis: DVec3::Z,
+            spin_axis: Vec3::Z,
             spin_rate: 0.0,
             spin_decay: 0.0,
         };
-        let accel = TOUR.acceleration(DVec3::new(50.0, 0.0, 0.0), &aero, SEA_LEVEL_RHO);
+        let accel = TOUR.acceleration(Vec3::new(50.0, 0.0, 0.0), &aero, SEA_LEVEL_RHO);
         assert!((accel.y + G).abs() < 5.0, "gravity should dominate y");
         assert!((accel.z).abs() < 1e-10, "no lateral force without sidespin");
     }
@@ -378,11 +378,11 @@ mod tests {
     #[test]
     fn drag_opposes_velocity() {
         let aero = AeroParams {
-            spin_axis: DVec3::Z,
+            spin_axis: Vec3::Z,
             spin_rate: 0.0,
             spin_decay: 0.0,
         };
-        let vel = DVec3::new(50.0, 0.0, 0.0);
+        let vel = Vec3::new(50.0, 0.0, 0.0);
         let accel = TOUR.acceleration(vel, &aero, SEA_LEVEL_RHO);
         assert!(accel.x < 0.0, "drag should oppose +X velocity");
     }
@@ -390,7 +390,7 @@ mod tests {
     #[test]
     fn positive_sidespin_pushes_right() {
         let aero = AeroParams::from_spin(3000.0, 1000.0);
-        let vel = DVec3::new(50.0, 0.0, 0.0);
+        let vel = Vec3::new(50.0, 0.0, 0.0);
         let accel = TOUR.acceleration(vel, &aero, SEA_LEVEL_RHO);
         assert!(
             accel.z > 0.0,
@@ -402,7 +402,7 @@ mod tests {
     #[test]
     fn negative_sidespin_pushes_left() {
         let aero = AeroParams::from_spin(3000.0, -1000.0);
-        let vel = DVec3::new(50.0, 0.0, 0.0);
+        let vel = Vec3::new(50.0, 0.0, 0.0);
         let accel = TOUR.acceleration(vel, &aero, SEA_LEVEL_RHO);
         assert!(
             accel.z < 0.0,
@@ -414,10 +414,10 @@ mod tests {
     #[test]
     fn backspin_lifts() {
         let aero = AeroParams::from_spin(3000.0, 0.0);
-        let vel = DVec3::new(50.0, 0.0, 0.0);
+        let vel = Vec3::new(50.0, 0.0, 0.0);
         let accel = TOUR.acceleration(vel, &aero, SEA_LEVEL_RHO);
         assert!(
-            accel.y > DVec3::new(0.0, -G, 0.0).y,
+            accel.y > Vec3::new(0.0, -G, 0.0).y,
             "backspin should add upward force: ay={:.3}",
             accel.y
         );
@@ -481,7 +481,7 @@ mod tests {
     #[test]
     fn less_drag_at_altitude() {
         let aero = AeroParams::from_spin(2700.0, 0.0);
-        let vel = DVec3::new(70.0, 10.0, 0.0);
+        let vel = Vec3::new(70.0, 10.0, 0.0);
         let sea = TOUR.acceleration(vel, &aero, Environment::SEA_LEVEL.air_density());
         let denver = TOUR.acceleration(vel, &aero, Environment::DENVER.air_density());
         assert!(

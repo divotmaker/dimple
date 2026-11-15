@@ -1,4 +1,4 @@
-use glam::DVec3;
+use crate::Vec3;
 
 use crate::aero::{AeroParams, BallModel};
 use crate::environment::Environment;
@@ -41,11 +41,11 @@ impl ShotInput {
     /// azimuth, so a pushed or pulled shot with no sidespin flies straight
     /// along its start line.
     #[must_use]
-    pub fn launch_spin_rads(&self) -> DVec3 {
+    pub fn launch_spin_rads(&self) -> Vec3 {
         let backspin = units::rpm_to_rads(self.backspin_rpm);
         let sidespin = units::rpm_to_rads(self.sidespin_rpm);
         let azimuth = units::deg_to_rad(self.launch_azimuth_deg);
-        DVec3::new(
+        Vec3::new(
             -backspin * azimuth.sin(),
             -sidespin,
             backspin * azimuth.cos(),
@@ -98,9 +98,9 @@ pub struct TrajectoryPoint {
     /// Time since launch (s).
     pub time: f64,
     /// Position (m).
-    pub pos: DVec3,
+    pub pos: Vec3,
     /// Velocity (m/s).
-    pub vel: DVec3,
+    pub vel: Vec3,
 }
 
 /// Result of a flight simulation.
@@ -126,7 +126,7 @@ pub struct FlightResult {
     /// The spin axis is fixed during flight (only the rate decays), so this
     /// is the launch spin vector ([`ShotInput::launch_spin_rads`]) scaled by
     /// the decay.
-    pub landing_spin: DVec3,
+    pub landing_spin: Vec3,
     /// Backspin at landing (rad/s): `landing_spin` projected on the launch
     /// backspin axis `(−sin az, 0, cos az)`, positive = backspin. Exact,
     /// because the axis does not move in flight.
@@ -147,11 +147,11 @@ pub fn simulate_flight(input: &ShotInput, ball: &BallModel, env: &Environment) -
 }
 
 /// Launch velocity (m/s): ball speed along the launch direction.
-fn launch_velocity(input: &ShotInput) -> DVec3 {
+fn launch_velocity(input: &ShotInput) -> Vec3 {
     let speed = units::mph_to_mps(input.ball_speed_mph);
     let launch = units::deg_to_rad(input.launch_angle_deg);
     let azimuth = units::deg_to_rad(input.launch_azimuth_deg);
-    DVec3::new(
+    Vec3::new(
         speed * launch.cos() * azimuth.cos(),
         speed * launch.sin(),
         speed * launch.cos() * azimuth.sin(),
@@ -175,7 +175,7 @@ fn fly<G: GroundModel + ?Sized>(
     let mut aero = AeroParams::from_spin_vector(spin);
     let air_density = env.air_density();
 
-    let tee = DVec3::new(0.0, ground.height(0.0, 0.0), 0.0);
+    let tee = Vec3::new(0.0, ground.height(0.0, 0.0), 0.0);
     let mut prev = BallState {
         time: 0.0,
         pos: tee,
@@ -231,7 +231,7 @@ fn fly<G: GroundModel + ?Sized>(
 
     let carry_m = end.pos.x.hypot(end.pos.z);
     let azimuth = units::deg_to_rad(input.launch_azimuth_deg);
-    let backspin_axis = DVec3::new(-azimuth.sin(), 0.0, azimuth.cos());
+    let backspin_axis = Vec3::new(-azimuth.sin(), 0.0, azimuth.cos());
 
     let flight = FlightResult {
         points,
@@ -271,7 +271,7 @@ pub struct ShotResult {
     pub total_yards: f64,
     /// Where the ball came to rest (m, crate frame: `final_pos.z` > 0 is
     /// right of the target line). Equal to `ground.rest.pos`.
-    pub final_pos: DVec3,
+    pub final_pos: Vec3,
 }
 
 /// Simulate a complete shot: flight, landing, and the ground phase.
@@ -310,7 +310,7 @@ pub fn simulate_shot<G: GroundModel + ?Sized>(
 ///
 /// Returns `None` if `t` is outside the trajectory time range.
 #[must_use]
-pub fn interpolate_trajectory(points: &[TrajectoryPoint], t: f64) -> Option<DVec3> {
+pub fn interpolate_trajectory(points: &[TrajectoryPoint], t: f64) -> Option<Vec3> {
     if points.is_empty() || t < points[0].time {
         return None;
     }

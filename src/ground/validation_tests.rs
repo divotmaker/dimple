@@ -46,7 +46,7 @@ fn incline(
     grade: f64,
     surface: Surface,
 ) -> GroundPhysics<FnTerrain<impl Fn(f64, f64) -> GroundSample + Copy>> {
-    let normal = DVec3::new(-grade, 1.0, 0.0).normalize();
+    let normal = Vec3::new(-grade, 1.0, 0.0).normalize();
     GroundPhysics::new(FnTerrain(move |x: f64, _z: f64| GroundSample {
         height: grade * x,
         normal,
@@ -54,16 +54,23 @@ fn incline(
     }))
 }
 
+/// Angle (rad) between `a` and `b`.
+fn angle_between(a: Vec3, b: Vec3) -> f64 {
+    (a.dot(b) / (a.length_squared() * b.length_squared()).sqrt())
+        .clamp(-1.0, 1.0)
+        .acos()
+}
+
 /// A ball at the origin of a plane rising at `grade`, rolling without slip
 /// at `speed` in the direction `heading` (horizontal, unit), which the
 /// velocity follows up or down the plane.
-fn rolling_start(grade: f64, heading: DVec3, speed: f64) -> BallState {
-    let normal = DVec3::new(-grade, 1.0, 0.0).normalize();
-    let along = DVec3::new(heading.x, grade * heading.x, heading.z).normalize();
+fn rolling_start(grade: f64, heading: Vec3, speed: f64) -> BallState {
+    let normal = Vec3::new(-grade, 1.0, 0.0).normalize();
+    let along = Vec3::new(heading.x, grade * heading.x, heading.z).normalize();
     let vel = along * speed;
     BallState {
         time: 0.0,
-        pos: DVec3::ZERO,
+        pos: Vec3::ZERO,
         vel,
         spin: normal.cross(vel) / R,
     }
@@ -73,7 +80,7 @@ fn rolling_start(grade: f64, heading: DVec3, speed: f64) -> BallState {
 /// downhill).
 fn stimp_roll(surface: Surface, grade: f64) -> GroundResult {
     incline(grade, surface).settle(
-        &rolling_start(grade, DVec3::X, STIMPMETER_SPEED),
+        &rolling_start(grade, Vec3::X, STIMPMETER_SPEED),
         &BALL,
         VACUUM,
     )
@@ -167,7 +174,7 @@ fn green_cannot_hold_downhill_stimp_roll_past_hold_grade() {
     // read field greens to 6%.
     let sample = |grade: f64| GroundSample {
         height: 0.0,
-        normal: DVec3::new(grade, 1.0, 0.0).normalize(),
+        normal: Vec3::new(grade, 1.0, 0.0).normalize(),
         surface: Surface::GREEN,
     };
     assert!(sample(0.054).holds_at_rest());
@@ -185,7 +192,7 @@ fn green_cannot_hold_downhill_stimp_roll_past_hold_grade() {
         ..incline(-0.06, Surface::GREEN)
     }
     .settle(
-        &rolling_start(-0.06, DVec3::X, STIMPMETER_SPEED),
+        &rolling_start(-0.06, Vec3::X, STIMPMETER_SPEED),
         &BALL,
         VACUUM,
     );
@@ -317,9 +324,9 @@ fn landing(speed: f64, descent_deg: f64, rpm: f64) -> BallState {
     let a = units::deg_to_rad(descent_deg);
     BallState {
         time: 0.0,
-        pos: DVec3::ZERO,
-        vel: DVec3::new(speed * a.cos(), -speed * a.sin(), 0.0),
-        spin: DVec3::new(0.0, 0.0, units::rpm_to_rads(rpm)),
+        pos: Vec3::ZERO,
+        vel: Vec3::new(speed * a.cos(), -speed * a.sin(), 0.0),
+        spin: Vec3::new(0.0, 0.0, units::rpm_to_rads(rpm)),
     }
 }
 
@@ -615,7 +622,7 @@ fn cross_break_angle_independent_of_speed_under_constant_law() {
     // 2.04° on the 2° plane.
     let surface = same_stimp(Surface::GREEN, RollLaw::Constant);
     let off = units::deg_to_rad(10.0);
-    let heading = DVec3::new(off.cos(), 0.0, off.sin());
+    let heading = Vec3::new(off.cos(), 0.0, off.sin());
     for slope_deg in [1.0, 2.0] {
         let grade = units::deg_to_rad(slope_deg).tan();
         let ground = incline(grade, surface);
@@ -625,7 +632,7 @@ fn cross_break_angle_independent_of_speed_under_constant_law() {
             let g = ground.settle(&start, &BALL, VACUUM);
             assert_eq!(g.termination, Termination::Rest);
             let d = g.rest.pos - start.pos;
-            let angle = units::rad_to_deg(d.angle_between(start.vel));
+            let angle = units::rad_to_deg(angle_between(d, start.vel));
             let scaled_distance = d.length() / (v0 * v0);
             let (a0, s0) = *first.get_or_insert((angle, scaled_distance));
             assert!(

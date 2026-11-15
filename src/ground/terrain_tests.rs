@@ -27,7 +27,7 @@ fn heightfield(
         let (hx, hz) = grad(x, z);
         GroundSample {
             height: h(x, z),
-            normal: DVec3::new(-hx, 1.0, -hz).normalize(),
+            normal: Vec3::new(-hx, 1.0, -hz).normalize(),
             surface: surface(x, z),
         }
     }))
@@ -35,7 +35,7 @@ fn heightfield(
 
 /// The plane through the origin with unit normal `n`, made of `surface`.
 fn plane(
-    n: DVec3,
+    n: Vec3,
     surface: Surface,
 ) -> GroundPhysics<FnTerrain<impl Fn(f64, f64) -> GroundSample + Copy>> {
     let (a, b) = (-n.x / n.y, -n.z / n.y);
@@ -48,27 +48,27 @@ fn plane(
 
 /// Unit normal of a plane inclined `deg` degrees, falling toward the
 /// horizontal direction `azimuth_deg` (0 = downrange, +90 = right).
-fn tilt(deg: f64, azimuth_deg: f64) -> DVec3 {
+fn tilt(deg: f64, azimuth_deg: f64) -> Vec3 {
     let (theta, az) = (units::deg_to_rad(deg), units::deg_to_rad(azimuth_deg));
-    DVec3::new(theta.sin() * az.cos(), theta.cos(), theta.sin() * az.sin())
+    Vec3::new(theta.sin() * az.cos(), theta.cos(), theta.sin() * az.sin())
 }
 
 /// Unit vector down the fall line of a plane with unit normal `n`.
-fn fall_line(n: DVec3) -> DVec3 {
+fn fall_line(n: Vec3) -> Vec3 {
     tangential_gravity(n).normalize()
 }
 
-fn at_origin(vel: DVec3, spin: DVec3) -> BallState {
+fn at_origin(vel: Vec3, spin: Vec3) -> BallState {
     BallState {
         time: 0.0,
-        pos: DVec3::ZERO,
+        pos: Vec3::ZERO,
         vel,
         spin,
     }
 }
 
 /// Mechanical energy per unit mass: translation + rotation + height.
-fn energy(vel: DVec3, spin: DVec3, y: f64) -> f64 {
+fn energy(vel: Vec3, spin: Vec3, y: f64) -> f64 {
     let k = BALL.inertia_factor;
     0.5 * vel.length_squared() + 0.5 * k * R * R * spin.length_squared() + G * y
 }
@@ -135,10 +135,10 @@ fn ball_at_rest_holds_on_gentle_slopes_and_rolls_down_steep_ones() {
             let sample = ground.terrain.sample(0.0, 0.0);
             assert_eq!(sample.holds_at_rest(), holds, "{deg:.2}° vs {limit:.2}°");
 
-            let g = ground.settle(&at_origin(DVec3::ZERO, DVec3::ZERO), &BALL, air());
+            let g = ground.settle(&at_origin(Vec3::ZERO, Vec3::ZERO), &BALL, air());
             if holds {
                 assert_eq!(g.termination, Termination::Rest);
-                assert_eq!(g.rest.pos, DVec3::ZERO);
+                assert_eq!(g.rest.pos, Vec3::ZERO);
                 assert_eq!(g.rest.time, 0.0);
             } else {
                 assert_eq!(g.termination, Termination::MaxTime);
@@ -166,7 +166,7 @@ fn step_until(
     while s.time < t_max {
         let (next, _) = ground.step(&s, &BALL);
         s = next;
-        if s.vel == DVec3::ZERO {
+        if s.vel == Vec3::ZERO {
             stops += 1;
             if ground.terrain.sample(s.pos.x, s.pos.z).holds_at_rest() {
                 break;
@@ -190,7 +190,7 @@ fn ball_rolling_uphill_stops_once_then_rolls_back_or_holds() {
         let (end, stops) = step_until(&ground, start, 6.0);
         assert_eq!(stops, 1, "{deg}°: stopped {stops} times");
         if holds {
-            assert_eq!(end.vel, DVec3::ZERO);
+            assert_eq!(end.vel, Vec3::ZERO);
             assert!(end.pos.dot(up) > 0.0);
             let g = ground.settle(&start, &BALL, air());
             assert_eq!(g.termination, Termination::Rest);
@@ -335,10 +335,10 @@ fn spin_about_vertical_kicks_on_a_slope_only() {
         compliance: 0.0,
         ..Surface::GREEN
     };
-    let vel = DVec3::new(15.0, -10.0, 1.0);
+    let vel = Vec3::new(15.0, -10.0, 1.0);
     let w = 150.0;
     for (n, kicks) in [
-        (DVec3::Y, false),
+        (Vec3::Y, false),
         (tilt(8.0, 90.0), true),
         (tilt(8.0, 0.0), true),
         (tilt(8.0, -135.0), true),
@@ -348,10 +348,10 @@ fn spin_about_vertical_kicks_on_a_slope_only() {
             normal: n,
             surface: rigid,
         };
-        let plain = impact(&at_origin(vel, DVec3::ZERO), &at, &BALL);
-        let spun = impact(&at_origin(vel, w * DVec3::Y), &at, &BALL);
+        let plain = impact(&at_origin(vel, Vec3::ZERO), &at, &BALL);
+        let spun = impact(&at_origin(vel, w * Vec3::Y), &at, &BALL);
         let kick = spun.vel - plain.vel;
-        let expected = k / (1.0 + k) * R * w * DVec3::Y.cross(n);
+        let expected = k / (1.0 + k) * R * w * Vec3::Y.cross(n);
         assert!((kick - expected).length() < 1e-12, "{n:?}: {kick:?}");
         assert_eq!(kick.length() > 0.01, kicks);
     }
@@ -427,7 +427,7 @@ fn elevated_green_shortens_carry_and_lands_on_it() {
     assert!((r.flight.carry_m - landing.x.hypot(landing.z)).abs() < 1e-12);
     let first = &r.ground.contacts[0];
     assert_eq!(first.surface, Surface::GREEN);
-    assert_eq!(first.normal, DVec3::Y);
+    assert_eq!(first.normal, Vec3::Y);
     assert_eq!(r.ground.termination, Termination::Rest);
     assert_eq!(r.final_pos.y, H);
 }
@@ -441,7 +441,7 @@ fn tee_sits_on_the_terrain() {
     );
     let r = shot(&ShotInput::driver(), &ground);
     let tee = r.flight.points[0].pos;
-    assert_eq!(tee, DVec3::new(0.0, 2.0, 0.0));
+    assert_eq!(tee, Vec3::new(0.0, 2.0, 0.0));
     let top = r
         .flight
         .points
@@ -469,16 +469,16 @@ fn landing_root_find_is_on_curved_terrain() {
         let z0 = f64::from(i) * -0.071;
         let a = BallState {
             time: 1.0,
-            pos: DVec3::new(x0, wavy(x0, z0) + 0.3, z0),
-            vel: DVec3::new(8.0, -6.0, 1.0),
-            spin: DVec3::new(0.0, -20.0, 300.0),
+            pos: Vec3::new(x0, wavy(x0, z0) + 0.3, z0),
+            vel: Vec3::new(8.0, -6.0, 1.0),
+            spin: Vec3::new(0.0, -20.0, 300.0),
         };
-        let b_pos = a.pos + DVec3::new(0.4, -0.6, 0.05);
+        let b_pos = a.pos + Vec3::new(0.4, -0.6, 0.05);
         let b = BallState {
             time: 1.05,
-            pos: DVec3::new(b_pos.x, b_pos.y.min(wavy(b_pos.x, b_pos.z) - 0.01), b_pos.z),
-            vel: DVec3::new(8.0, -6.5, 1.0),
-            spin: DVec3::new(0.0, -19.0, 299.0),
+            pos: Vec3::new(b_pos.x, b_pos.y.min(wavy(b_pos.x, b_pos.z) - 0.01), b_pos.z),
+            vel: Vec3::new(8.0, -6.5, 1.0),
+            spin: Vec3::new(0.0, -19.0, 299.0),
         };
         let l = ground.landing(&a, &b).expect("segment crosses the surface");
         let s = (l.time - a.time) / (b.time - a.time);
@@ -526,7 +526,7 @@ fn flight_and_hops_land_on_curved_terrain() {
     let mut on_ground = 0;
     for p in r.ground.points.iter().filter(|p| p.phase != Phase::Hop) {
         let (hx, hz) = bumps_grad(p.pos.x, p.pos.z);
-        let n = DVec3::new(-hx, 1.0, -hz).normalize();
+        let n = Vec3::new(-hx, 1.0, -hz).normalize();
         assert_eq!(p.pos.y, bumps(p.pos.x, p.pos.z));
         assert!(p.vel.dot(n).abs() < 1e-12, "v·n = {:.3e}", p.vel.dot(n));
         on_ground += 1;
@@ -555,7 +555,7 @@ fn hop_arrivals_on_curved_terrain_with_air() {
     let mut on_ground = 0;
     for p in r.ground.points.iter().filter(|p| p.phase != Phase::Hop) {
         let (hx, hz) = bumps_grad(p.pos.x, p.pos.z);
-        let n = DVec3::new(-hx, 1.0, -hz).normalize();
+        let n = Vec3::new(-hx, 1.0, -hz).normalize();
         assert_eq!(p.pos.y, bumps(p.pos.x, p.pos.z));
         assert!(p.vel.dot(n).abs() < 1e-12, "v·n = {:.3e}", p.vel.dot(n));
         on_ground += 1;
@@ -591,7 +591,7 @@ fn mirrored_terrain_and_shot_give_a_mirrored_result() {
     };
     let a = shot(&input, &ground);
     let b = shot(&flipped, &mirrored);
-    let mirror = |v: DVec3| DVec3::new(v.x, v.y, -v.z);
+    let mirror = |v: Vec3| Vec3::new(v.x, v.y, -v.z);
     assert_eq!(a.ground.contacts.len(), b.ground.contacts.len());
     for (ca, cb) in a.ground.contacts.iter().zip(&b.ground.contacts) {
         assert!((mirror(ca.pos) - cb.pos).length() < 1e-9);
@@ -607,9 +607,9 @@ fn rotating_shot_and_sloped_plane_rotates_the_result() {
     // Rotating the launch direction and a sloped plane together about Y
     // rotates the whole result. Positive azimuth ψ maps +X to
     // (cos ψ, 0, sin ψ).
-    let rotate = |v: DVec3, psi: f64| {
+    let rotate = |v: Vec3, psi: f64| {
         let (s, c) = psi.sin_cos();
-        DVec3::new(c * v.x - s * v.z, v.y, s * v.x + c * v.z)
+        Vec3::new(c * v.x - s * v.z, v.y, s * v.x + c * v.z)
     };
     let n = tilt(2.0, 140.0);
     let input = curving_seven_iron();
@@ -638,10 +638,10 @@ fn energy_never_increases_on_slopes() {
     // ground point to the next, on planes tilted in several directions,
     // with ballistic hops and hops through air.
     let starts = [
-        (DVec3::new(21.3, -18.5, 0.0), DVec3::new(0.0, 0.0, 212.0)),
-        (DVec3::new(21.0, -18.0, 2.5), DVec3::new(0.0, -50.0, 210.0)),
-        (DVec3::new(9.0, -20.0, -1.0), DVec3::new(10.0, 40.0, 700.0)),
-        (DVec3::new(3.0, -0.5, 0.5), DVec3::new(-20.0, 30.0, 300.0)),
+        (Vec3::new(21.3, -18.5, 0.0), Vec3::new(0.0, 0.0, 212.0)),
+        (Vec3::new(21.0, -18.0, 2.5), Vec3::new(0.0, -50.0, 210.0)),
+        (Vec3::new(9.0, -20.0, -1.0), Vec3::new(10.0, 40.0, 700.0)),
+        (Vec3::new(3.0, -0.5, 0.5), Vec3::new(-20.0, 30.0, 300.0)),
     ];
     let planes = [
         tilt(2.0, 180.0),
@@ -686,7 +686,7 @@ fn step_keeps_the_ball_on_a_slope() {
     let n = tilt(4.0, 45.0);
     let ground = plane(n, Surface::FAIRWAY);
     let across = n.cross(fall_line(n));
-    let mut s = at_origin(2.0 * across, DVec3::new(10.0, 30.0, -50.0));
+    let mut s = at_origin(2.0 * across, Vec3::new(10.0, 30.0, -50.0));
     let mut phases = Vec::new();
     for _ in 0..400 {
         let (next, phase) = ground.step(&s, &BALL);
@@ -708,7 +708,7 @@ fn step_keeps_the_ball_on_a_slope() {
 
 /// Run past the landing point (yards) and termination of `input` on a
 /// plane through the tee with unit normal `n`.
-fn run_on(input: &ShotInput, n: DVec3, surface: Surface) -> (f64, f64, Termination) {
+fn run_on(input: &ShotInput, n: Vec3, surface: Surface) -> (f64, f64, Termination) {
     run_on_ground(input, &plane(n, surface))
 }
 
@@ -725,19 +725,19 @@ fn run_on_ground(input: &ShotInput, ground: &dyn GroundModel) -> (f64, f64, Term
 
 #[test]
 fn hops_die_out_only_where_the_slope_hands_back_less_than_the_impact_takes() {
-    let state = |vel: DVec3| at_origin(vel, DVec3::ZERO);
+    let state = |vel: Vec3| at_origin(vel, Vec3::ZERO);
     let h = 0.005;
     // Where a rebound off the plane with unit normal `n` lands again under
     // gravity alone.
-    let lands = |rebound: DVec3, n: DVec3| {
+    let lands = |rebound: Vec3, n: Vec3| {
         let t = 2.0 * rebound.dot(n) / (G * n.y);
         state(rebound + GRAVITY * t)
     };
     // Level ground: always, even for an elastic rebound.
-    let level = DVec3::Y;
-    let rebound = DVec3::new(2.0, 0.5, 0.0);
+    let level = Vec3::Y;
+    let rebound = Vec3::new(2.0, 0.5, 0.0);
     assert!(hops_die_out(
-        &state(DVec3::new(2.0, -0.5, 0.0)),
+        &state(Vec3::new(2.0, -0.5, 0.0)),
         &state(rebound),
         &lands(rebound, level),
         level,
@@ -901,20 +901,20 @@ fn wall(x0: f64) -> GroundPhysics<FnTerrain<impl Fn(f64, f64) -> GroundSample + 
     )
 }
 
-fn segment(from: DVec3, to: DVec3) -> (BallState, BallState) {
+fn segment(from: Vec3, to: Vec3) -> (BallState, BallState) {
     let vel = to - from;
     (
         BallState {
             time: 0.0,
             pos: from,
             vel,
-            spin: DVec3::ZERO,
+            spin: Vec3::ZERO,
         },
         BallState {
             time: 1.0,
             pos: to,
             vel,
-            spin: DVec3::ZERO,
+            spin: Vec3::ZERO,
         },
     )
 }
@@ -923,7 +923,7 @@ fn segment(from: DVec3, to: DVec3) -> (BallState, BallState) {
 fn landing_finds_the_first_crossing_of_a_wall_and_a_ridge() {
     // The segment ends below the ground at x = 0.5, but first meets a wall
     // or ridge around x = 0.3 that its ends never see.
-    let (a, b) = segment(DVec3::new(0.0, 0.05, 0.0), DVec3::new(1.0, -0.05, 0.0));
+    let (a, b) = segment(Vec3::new(0.0, 0.05, 0.0), Vec3::new(1.0, -0.05, 0.0));
 
     let l = wall(0.3).landing(&a, &b).expect("hits the wall");
     assert!((l.pos.x - 0.3).abs() < 1e-9, "landed at {:?}", l.pos);
@@ -947,12 +947,12 @@ fn landing_finds_the_first_crossing_of_a_wall_and_a_ridge() {
 #[test]
 fn landing_needs_a_segment_starting_above_the_ground() {
     let ground = plane(tilt(3.0, 0.0), Surface::FAIRWAY);
-    let (a, b) = segment(DVec3::new(0.0, -0.01, 0.0), DVec3::new(0.1, -0.2, 0.0));
+    let (a, b) = segment(Vec3::new(0.0, -0.01, 0.0), Vec3::new(0.1, -0.2, 0.0));
     assert!(ground.landing(&a, &b).is_none());
-    let (a, b) = segment(DVec3::new(0.0, -0.01, 0.0), DVec3::new(0.1, 0.2, 0.0));
+    let (a, b) = segment(Vec3::new(0.0, -0.01, 0.0), Vec3::new(0.1, 0.2, 0.0));
     assert!(ground.landing(&a, &b).is_none());
     // Above the ground at every sub-step: no landing.
-    let (a, b) = segment(DVec3::new(0.0, 0.05, 0.0), DVec3::new(1.0, 0.01, 0.0));
+    let (a, b) = segment(Vec3::new(0.0, 0.05, 0.0), Vec3::new(1.0, 0.01, 0.0));
     assert!(Surface::FAIRWAY.landing(&a, &b).is_none());
 }
 
@@ -974,7 +974,7 @@ fn hop_finds_a_wall_inside_a_step() {
         )
     };
     let g = ground.settle(
-        &at_origin(DVec3::new(10.0, -1.0, 0.0), DVec3::ZERO),
+        &at_origin(Vec3::new(10.0, -1.0, 0.0), Vec3::ZERO),
         &BALL,
         air(),
     );
@@ -994,11 +994,11 @@ fn hop_finds_a_wall_inside_a_step() {
 
 /// Positions at the start and end of the first step that brings the ball
 /// to a stop, stepping from `start` with `GroundPhysics::step`.
-fn first_stop(ground: &GroundPhysics<impl Terrain>, start: BallState) -> (DVec3, DVec3) {
+fn first_stop(ground: &GroundPhysics<impl Terrain>, start: BallState) -> (Vec3, Vec3) {
     let mut s = start;
     for _ in 0..100_000 {
         let (next, _) = ground.step(&s, &BALL);
-        if next.vel == DVec3::ZERO {
+        if next.vel == Vec3::ZERO {
             return (s.pos, next.pos);
         }
         s = next;
@@ -1032,7 +1032,7 @@ fn rest_is_judged_where_the_ball_stops() {
     let g = split(Surface::FAIRWAY, Surface::GREEN, boundary).settle(&start, &BALL, air());
     assert_eq!(g.termination, Termination::Rest);
     assert!(g.rest.pos.x < boundary, "rested at {:?}", g.rest.pos);
-    assert_eq!(g.rest.vel, DVec3::ZERO);
+    assert_eq!(g.rest.vel, Vec3::ZERO);
 
     // GREEN below, FAIRWAY above: the ball stops on FAIRWAY and stays.
     let (before, stop) = first_stop(&plane(n, Surface::GREEN), start);
@@ -1057,11 +1057,11 @@ fn slide_ends_rolling_on_curved_ground_without_flicker() {
     let ground = heightfield(bumps, bumps_grad, |_, _| Surface::FAIRWAY);
     let (x, z) = (3.0, 1.0);
     let (hx, hz) = bumps_grad(x, z);
-    let n = DVec3::new(-hx, 1.0, -hz).normalize();
-    let dir = (DVec3::X - DVec3::X.dot(n) * n).normalize();
+    let n = Vec3::new(-hx, 1.0, -hz).normalize();
+    let dir = (Vec3::X - Vec3::X.dot(n) * n).normalize();
     let start = BallState {
         time: 0.0,
-        pos: DVec3::new(x, bumps(x, z), z),
+        pos: Vec3::new(x, bumps(x, z), z),
         vel: 3.0 * dir,
         spin: 40.0 * n,
     };

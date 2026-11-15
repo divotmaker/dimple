@@ -1,4 +1,4 @@
-use glam::DVec3;
+use crate::Vec3;
 
 use super::{BallState, GRAVITY, GroundSample, Phase, find_root, holds_at_rest};
 use crate::aero::BallModel;
@@ -18,9 +18,9 @@ const MIN_SWITCH_SLIP: f64 = 1e-6;
 /// Position, velocity and spin of a ball on the ground, for RK4.
 #[derive(Debug, Clone, Copy)]
 struct Motion {
-    pos: DVec3,
-    vel: DVec3,
-    spin: DVec3,
+    pos: Vec3,
+    vel: Vec3,
+    spin: Vec3,
 }
 
 impl Integrable for Motion {
@@ -34,19 +34,13 @@ impl Integrable for Motion {
 }
 
 /// Contact-point slip velocity of a ball on ground with unit normal `n`.
-pub(super) fn slip(vel: DVec3, spin: DVec3, n: DVec3, radius: f64) -> DVec3 {
+pub(super) fn slip(vel: Vec3, spin: Vec3, n: Vec3, radius: f64) -> Vec3 {
     (vel - vel.dot(n) * n) + spin.cross(-radius * n)
 }
 
 /// Remove the contact slip with the friction impulse that brings the ball
 /// to rolling (angular momentum about the contact point is conserved).
-pub(super) fn lock_rolling(
-    vel: DVec3,
-    spin: DVec3,
-    n: DVec3,
-    radius: f64,
-    k: f64,
-) -> (DVec3, DVec3) {
+pub(super) fn lock_rolling(vel: Vec3, spin: Vec3, n: Vec3, radius: f64, k: f64) -> (Vec3, Vec3) {
     let u = slip(vel, spin, n, radius);
     (
         vel - u * (k / (1.0 + k)),
@@ -56,7 +50,7 @@ pub(super) fn lock_rolling(
 
 /// Decay the spin component about `n` from `start` to `end` without letting
 /// it cross zero (pivot friction saturates).
-fn saturate_pivot(start: DVec3, end: DVec3, n: DVec3) -> DVec3 {
+fn saturate_pivot(start: Vec3, end: Vec3, n: Vec3) -> Vec3 {
     let w0 = start.dot(n);
     let w1 = end.dot(n);
     if w0 == 0.0 || w0.signum() != w1.signum() {
@@ -68,7 +62,7 @@ fn saturate_pivot(start: DVec3, end: DVec3, n: DVec3) -> DVec3 {
 
 /// Tangential gravity `g − (g·n)n` on ground with unit normal `n`: the
 /// downhill pull (m/s²), zero on level ground.
-pub(super) fn tangential_gravity(n: DVec3) -> DVec3 {
+pub(super) fn tangential_gravity(n: Vec3) -> Vec3 {
     GRAVITY - GRAVITY.dot(n) * n
 }
 
@@ -84,7 +78,7 @@ pub(super) fn tangential_gravity(n: DVec3) -> DVec3 {
 pub(super) fn onto_surface(
     state: &BallState,
     at: &GroundSample,
-    prev_normal: DVec3,
+    prev_normal: Vec3,
     rolling: bool,
     radius: f64,
 ) -> BallState {
@@ -105,9 +99,9 @@ pub(super) fn onto_surface(
 /// The forces on a ball on one ground sample, per unit mass.
 struct Patch {
     /// Unit normal.
-    n: DVec3,
+    n: Vec3,
     /// Tangential gravity (m/s²).
-    g_t: DVec3,
+    g_t: Vec3,
     /// Sliding friction magnitude `μ_slide·g·n_y` (m/s²).
     friction: f64,
     /// Ball radius (m).
@@ -115,12 +109,12 @@ struct Patch {
     /// Inertia factor k.
     k: f64,
     /// Pivot-friction angular acceleration about `n` for this step.
-    pivot_accel: DVec3,
+    pivot_accel: Vec3,
 }
 
 impl Patch {
     /// Rate of change of a sliding ball with slip direction `u_hat`.
-    fn slide_rate(&self, s: &Motion, u_hat: DVec3) -> Motion {
+    fn slide_rate(&self, s: &Motion, u_hat: Vec3) -> Motion {
         Motion {
             pos: s.vel,
             vel: -self.friction * u_hat + self.g_t,
@@ -130,7 +124,7 @@ impl Patch {
 
     /// One RK4 slide step of length `h` along the fixed slip direction
     /// `u_hat`.
-    fn slide_fixed(&self, s: Motion, t: f64, h: f64, u_hat: DVec3) -> Motion {
+    fn slide_fixed(&self, s: Motion, t: f64, h: f64, u_hat: Vec3) -> Motion {
         let accel = -self.friction * u_hat + self.g_t;
         let spin_accel =
             self.friction * self.n.cross(u_hat) / (self.k * self.radius) + self.pivot_accel;
@@ -143,7 +137,7 @@ impl Patch {
 
     /// One RK4 slide step of length `h`, with the slip direction evaluated
     /// at every stage (`fallback` where the slip vanishes).
-    fn slide_turning(&self, s: Motion, t: f64, h: f64, fallback: DVec3) -> Motion {
+    fn slide_turning(&self, s: Motion, t: f64, h: f64, fallback: Vec3) -> Motion {
         rk4::step_state(s, t, h, |s, _| {
             let u = slip(s.vel, s.spin, self.n, self.radius);
             let len = u.length();
@@ -186,7 +180,7 @@ pub(super) fn contact_step(
     // Pivot friction opposes the spin about the normal; with none (of
     // either sign of zero) there is none.
     let pivot_accel = if w_n == 0.0 {
-        DVec3::ZERO
+        Vec3::ZERO
     } else {
         -w_n.signum() * surface.pivot * g_n / inertia * n
     };
@@ -254,7 +248,7 @@ pub(super) fn contact_step(
         let rest = BallState {
             time: state.time + t_stop,
             pos: state.pos + vel * (0.5 * t_stop) + across * (0.5 * t_stop * t_stop),
-            vel: DVec3::ZERO,
+            vel: Vec3::ZERO,
             spin: spin_rest,
         };
         return (rest, Phase::Roll, true);
@@ -328,7 +322,7 @@ fn slide(
         (patch.slide_fixed(s, t, h, u_hat), h, to_roll <= left)
     };
 
-    if patch.g_t == DVec3::ZERO {
+    if patch.g_t == Vec3::ZERO {
         // Level ground: the slip direction is fixed and |u| falls linearly.
         return finish(start, t, dt);
     }

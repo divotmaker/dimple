@@ -1,10 +1,10 @@
-use glam::DVec3;
+use crate::Vec3;
 
 /// State vector for RK4 integration: position and velocity.
 #[derive(Debug, Clone, Copy)]
 pub struct State {
-    pub pos: DVec3,
-    pub vel: DVec3,
+    pub pos: Vec3,
+    pub vel: Vec3,
 }
 
 /// Advance state by one RK4 step.
@@ -13,7 +13,7 @@ pub struct State {
 #[must_use]
 pub fn step<F>(state: State, t: f64, dt: f64, accel_fn: F) -> State
 where
-    F: Fn(DVec3, DVec3, f64) -> DVec3,
+    F: Fn(Vec3, Vec3, f64) -> Vec3,
 {
     let k1_v = accel_fn(state.pos, state.vel, t);
     let k1_x = state.vel;
@@ -83,8 +83,8 @@ mod tests {
         let speed = 50.0;
         let angle = std::f64::consts::FRAC_PI_4;
         let state = State {
-            pos: DVec3::ZERO,
-            vel: DVec3::new(speed * angle.cos(), speed * angle.sin(), 0.0),
+            pos: Vec3::ZERO,
+            vel: Vec3::new(speed * angle.cos(), speed * angle.sin(), 0.0),
         };
 
         let dt = 0.001;
@@ -92,7 +92,7 @@ mod tests {
         let mut t = 0.0;
 
         // Gravity only
-        let gravity = |_pos: DVec3, _vel: DVec3, _t: f64| DVec3::new(0.0, -G, 0.0);
+        let gravity = |_pos: Vec3, _vel: Vec3, _t: f64| Vec3::new(0.0, -G, 0.0);
 
         while s.pos.y >= 0.0 || t < 0.1 {
             s = step(s, t, dt, gravity);
@@ -112,11 +112,11 @@ mod tests {
     #[test]
     fn constant_acceleration() {
         let state = State {
-            pos: DVec3::ZERO,
-            vel: DVec3::ZERO,
+            pos: Vec3::ZERO,
+            vel: Vec3::ZERO,
         };
         let dt = 0.001;
-        let a = DVec3::new(1.0, 0.0, 0.0);
+        let a = Vec3::new(1.0, 0.0, 0.0);
 
         let mut s = state;
         for i in 0..1000 {
@@ -154,24 +154,24 @@ mod tests {
     #[test]
     fn step_state_matches_step_for_constant_acceleration() {
         #[derive(Debug, Clone, Copy)]
-        struct PosVel(DVec3, DVec3);
+        struct PosVel(Vec3, Vec3);
         impl Integrable for PosVel {
             fn add_scaled(&self, rate: &Self, h: f64) -> Self {
                 Self(self.0 + rate.0 * h, self.1 + rate.1 * h)
             }
         }
-        let g = DVec3::new(0.0, -G, 0.0);
+        let g = Vec3::new(0.0, -G, 0.0);
         let a = step(
             State {
-                pos: DVec3::ZERO,
-                vel: DVec3::new(3.0, 4.0, 1.0),
+                pos: Vec3::ZERO,
+                vel: Vec3::new(3.0, 4.0, 1.0),
             },
             0.0,
             0.25,
             |_, _, _| g,
         );
         let b = step_state(
-            PosVel(DVec3::ZERO, DVec3::new(3.0, 4.0, 1.0)),
+            PosVel(Vec3::ZERO, Vec3::new(3.0, 4.0, 1.0)),
             0.0,
             0.25,
             |s, _| PosVel(s.1, g),

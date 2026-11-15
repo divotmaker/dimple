@@ -573,14 +573,14 @@ fn shot_flight_matches_simulate_flight_on_flat_ground() {
 #[test]
 fn launch_spin_axis() {
     let straight = lateral_input(0.0, 600.0).launch_spin_rads();
-    let expected = DVec3::new(0.0, -units::rpm_to_rads(600.0), units::rpm_to_rads(3000.0));
+    let expected = Vec3::new(0.0, -units::rpm_to_rads(600.0), units::rpm_to_rads(3000.0));
     assert!((straight - expected).length() < 1e-12);
 
     // Backspin axis is d × ŷ for launch heading d.
     let az = units::deg_to_rad(7.0);
     let pushed = lateral_input(7.0, 0.0).launch_spin_rads();
-    let d = DVec3::new(az.cos(), 0.0, az.sin());
-    let axis = d.cross(DVec3::Y);
+    let d = Vec3::new(az.cos(), 0.0, az.sin());
+    let axis = d.cross(Vec3::Y);
     assert!((pushed - units::rpm_to_rads(3000.0) * axis).length() < 1e-9);
 }
 
@@ -590,12 +590,12 @@ fn pushed_straight_shot_stays_on_its_start_line() {
     // plane through the start line, so the ball lands on that line.
     let input = lateral_input(6.0, 0.0);
     let az = units::deg_to_rad(6.0);
-    let across = DVec3::new(-az.sin(), 0.0, az.cos()); // horizontal, ⟂ start line
+    let across = Vec3::new(-az.sin(), 0.0, az.cos()); // horizontal, ⟂ start line
 
     let aero = crate::aero::AeroParams::from_spin_vector(input.launch_spin_rads());
-    let v = 60.0 * DVec3::new(az.cos() * 0.9, 0.3, az.sin() * 0.9).normalize();
+    let v = 60.0 * Vec3::new(az.cos() * 0.9, 0.3, az.sin() * 0.9).normalize();
     let gravity_free =
-        BALL.acceleration(v, &aero, Environment::SEA_LEVEL.air_density()) - DVec3::NEG_Y * units::G;
+        BALL.acceleration(v, &aero, Environment::SEA_LEVEL.air_density()) + Vec3::Y * units::G;
     assert!(
         gravity_free.dot(across).abs() < 1e-12,
         "aero force has a sideways component {:.3e}",
@@ -759,7 +759,7 @@ fn shot_bounces_end_by_hop_height_rule() {
     // Every preset shot stops bouncing by Penner's 5 mm hop-height rule,
     // well inside the safety bound on impacts, and comes to rest.
     let physics = GroundPhysics::new(Surface::FAIRWAY);
-    let hop = |v: DVec3| v.y * v.y / (2.0 * units::G);
+    let hop = |v: Vec3| v.y * v.y / (2.0 * units::G);
     for input in [
         ShotInput::driver(),
         ShotInput::seven_iron(),
@@ -800,7 +800,7 @@ fn shot_final_pos_on_ground() {
         "final position should be on ground: y={:.6}",
         r.final_pos.y
     );
-    assert_eq!(r.ground.rest.vel, DVec3::ZERO);
+    assert_eq!(r.ground.rest.vel, Vec3::ZERO);
 }
 
 #[test]
@@ -890,7 +890,7 @@ fn shot_hop_train_dies_out() {
     // impacts and then rolls. No train of hops a few millimeters high
     // skims on for dozens of impacts: at most two hops below 1 cm, from wedges to drives, on
     // both presets.
-    let hop = |v: DVec3| v.y * v.y / (2.0 * units::G);
+    let hop = |v: Vec3| v.y * v.y / (2.0 * units::G);
     for input in [
         launch(65.0, 32.0, 6500.0),  // lob wedge
         launch(52.0, 32.0, 4000.0),  // pitch
@@ -1016,9 +1016,9 @@ fn sidespin_hop_curves_right() {
     let hop = |sidespin: f64| {
         let leave = BallState {
             time: 0.0,
-            pos: DVec3::ZERO,
-            vel: DVec3::new(6.0, 2.0, 0.0),
-            spin: DVec3::new(0.0, -sidespin, 0.0),
+            pos: Vec3::ZERO,
+            vel: Vec3::new(6.0, 2.0, 0.0),
+            spin: Vec3::new(0.0, -sidespin, 0.0),
         };
         let g = Surface::FAIRWAY.settle(&leave, &BALL, Environment::SEA_LEVEL.air_density());
         g.contacts[1].pos
@@ -1126,13 +1126,13 @@ fn pivot_does_not_steer_on_level_ground() {
 //  SYMMETRY — mirror and frame invariance of the full shot
 // ══════════════════════════════════════════════════════════════════
 
-fn mirror_z(v: DVec3) -> DVec3 {
-    DVec3::new(v.x, v.y, -v.z)
+fn mirror_z(v: Vec3) -> Vec3 {
+    Vec3::new(v.x, v.y, -v.z)
 }
 
 /// Mirror of an angular velocity (a pseudovector) in the z = 0 plane.
-fn mirror_spin_z(w: DVec3) -> DVec3 {
-    DVec3::new(-w.x, -w.y, w.z)
+fn mirror_spin_z(w: Vec3) -> Vec3 {
+    Vec3::new(-w.x, -w.y, w.z)
 }
 
 #[test]
@@ -1174,8 +1174,8 @@ fn shot_frame_invariance_about_y() {
     // on flat ground rotates the whole result: every contact and the rest
     // position, velocity and spin.
     let az = units::deg_to_rad(10.0);
-    let rot = |v: DVec3| {
-        DVec3::new(
+    let rot = |v: Vec3| {
+        Vec3::new(
             v.x * az.cos() - v.z * az.sin(),
             v.y,
             v.x * az.sin() + v.z * az.cos(),
@@ -1219,7 +1219,7 @@ fn pinned_shots() -> [[f64; 6]; 3] {
     let env = Environment::SEA_LEVEL;
     let slope = GroundPhysics::new(FnTerrain(|x: f64, z: f64| GroundSample {
         height: -0.03 * x + 0.02 * z,
-        normal: DVec3::new(0.03, 1.0, -0.02).normalize(),
+        normal: Vec3::new(0.03, 1.0, -0.02).normalize(),
         surface: Surface::GREEN,
     }));
     let results = [

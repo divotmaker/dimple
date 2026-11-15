@@ -18,10 +18,10 @@ fn rpm_to_rads(rpm: f64) -> f64 {
     units::rpm_to_rads(rpm)
 }
 
-fn state(vel: DVec3, spin: DVec3) -> BallState {
+fn state(vel: Vec3, spin: Vec3) -> BallState {
     BallState {
         time: 0.0,
-        pos: DVec3::ZERO,
+        pos: Vec3::ZERO,
         vel,
         spin,
     }
@@ -29,35 +29,35 @@ fn state(vel: DVec3, spin: DVec3) -> BallState {
 
 /// Spin about the across-track axis for a ball moving along +X:
 /// positive = backspin.
-fn backspin(w: f64) -> DVec3 {
-    DVec3::new(0.0, 0.0, w)
+fn backspin(w: f64) -> Vec3 {
+    Vec3::new(0.0, 0.0, w)
 }
 
 /// Impact on flat `surface` with incoming `vel` and spin.
-fn hit(vel: DVec3, spin: DVec3, surface: &Surface) -> BallState {
+fn hit(vel: Vec3, spin: Vec3, surface: &Surface) -> BallState {
     impact(&state(vel, spin), &surface.sample(0.0, 0.0), &BALL)
 }
 
 /// Impact at `speed` m/s, `from_vertical_deg` from the vertical, moving +X.
-fn penner_impact(speed: f64, from_vertical_deg: f64) -> DVec3 {
+fn penner_impact(speed: f64, from_vertical_deg: f64) -> Vec3 {
     let phi = units::deg_to_rad(from_vertical_deg);
-    DVec3::new(speed * phi.sin(), -speed * phi.cos(), 0.0)
+    Vec3::new(speed * phi.sin(), -speed * phi.cos(), 0.0)
 }
 
 /// Mechanical energy per unit mass: translation + rotation + height.
-fn energy(vel: DVec3, spin: DVec3, y: f64) -> f64 {
+fn energy(vel: Vec3, spin: Vec3, y: f64) -> f64 {
     let k = BALL.inertia_factor;
     0.5 * vel.length_squared() + 0.5 * k * R * R * spin.length_squared() + G * y
 }
 
 /// Ground phase only: a ball already on flat ground moving horizontally.
-fn roll(vel: DVec3, spin: DVec3, surface: &Surface) -> GroundResult {
+fn roll(vel: Vec3, spin: Vec3, surface: &Surface) -> GroundResult {
     surface.settle(&state(vel, spin), &BALL, air())
 }
 
 /// Rolling spin for a ball moving along +X at `v` (no slip).
-fn rolling(v: f64) -> DVec3 {
-    DVec3::new(0.0, 0.0, -v / R)
+fn rolling(v: f64) -> Vec3 {
+    Vec3::new(0.0, 0.0, -v / R)
 }
 
 /// Asserts that a ground result stopped bouncing by the 5 mm hop rule: every
@@ -86,8 +86,8 @@ fn planar_impacts_match_reference() {
     for r in REFERENCES {
         let landing = BallState {
             time: 0.0,
-            pos: DVec3::from(r.landing_pos),
-            vel: DVec3::from(r.landing_vel),
+            pos: Vec3::from(r.landing_pos),
+            vel: Vec3::from(r.landing_vel),
             spin: backspin(r.backspin),
         };
         let g = r.surface.settle(&landing, &BALL, VACUUM);
@@ -103,7 +103,7 @@ fn planar_impacts_match_reference() {
         assert_eq!(g.contacts.len(), r.impacts.len(), "{label}: impact count");
         let last = r.impacts.len() - 1;
         for (i, (c, &(vel, omega, pos))) in g.contacts.iter().zip(r.impacts).enumerate() {
-            let mut expected = DVec3::from(vel);
+            let mut expected = Vec3::from(vel);
             let mut expected_spin = backspin(-omega);
             if i == last {
                 // The last rebound is below the hop threshold, so the ball
@@ -112,9 +112,9 @@ fn planar_impacts_match_reference() {
                 // onto the ground, with a slip at or below the roll
                 // threshold removed. The reference stops at the projection.
                 expected.y = 0.0;
-                if slip(expected, expected_spin, DVec3::Y, R).length() <= DEFAULT_ROLL_THRESHOLD {
+                if slip(expected, expected_spin, Vec3::Y, R).length() <= DEFAULT_ROLL_THRESHOLD {
                     (expected, expected_spin) =
-                        lock_rolling(expected, expected_spin, DVec3::Y, R, BALL.inertia_factor);
+                        lock_rolling(expected, expected_spin, Vec3::Y, R, BALL.inertia_factor);
                 }
             }
             let scale = expected.length().max(1.0);
@@ -135,7 +135,7 @@ fn planar_impacts_match_reference() {
                 expected_spin.z
             );
             assert!(
-                (c.pos - DVec3::from(pos)).length() <= 1e-8,
+                (c.pos - Vec3::from(pos)).length() <= 1e-8,
                 "{label} impact {i}: pos {:?}, reference {pos:?}",
                 c.pos
             );
@@ -143,7 +143,7 @@ fn planar_impacts_match_reference() {
         // The reference integrates the slide and roll with 10 µs Euler
         // steps, this crate with 1 ms RK4 steps and an exact slide-to-roll
         // switch; the rest positions agree to within 0.01 mm.
-        let rest = DVec3::from(r.rest);
+        let rest = Vec3::from(r.rest);
         assert!(
             (g.rest.pos - rest).length() < 1e-4,
             "{label}: rest {:?}, reference {rest:?}",
@@ -158,7 +158,7 @@ fn planar_impacts_match_reference() {
 
 #[test]
 fn rebound_goes_up() {
-    let r = hit(DVec3::new(0.0, -10.0, 0.0), DVec3::ZERO, &Surface::FAIRWAY);
+    let r = hit(Vec3::new(0.0, -10.0, 0.0), Vec3::ZERO, &Surface::FAIRWAY);
     assert!(r.vel.y > 0.0, "rebound should go up: vy={:.3}", r.vel.y);
 }
 
@@ -166,9 +166,9 @@ fn rebound_goes_up() {
 fn impact_keeps_time_and_position() {
     let s = BallState {
         time: 4.2,
-        pos: DVec3::new(100.0, 0.0, -3.0),
-        vel: DVec3::new(20.0, -15.0, 1.0),
-        spin: DVec3::new(10.0, -60.0, 300.0),
+        pos: Vec3::new(100.0, 0.0, -3.0),
+        vel: Vec3::new(20.0, -15.0, 1.0),
+        spin: Vec3::new(10.0, -60.0, 300.0),
     };
     let out = impact(&s, &Surface::GREEN.sample(0.0, 0.0), &BALL);
     assert!(out.time == s.time && out.pos == s.pos);
@@ -177,7 +177,7 @@ fn impact_keeps_time_and_position() {
 #[test]
 fn no_lateral_without_sidespin() {
     let r = hit(
-        DVec3::new(20.0, -15.0, 0.0),
+        Vec3::new(20.0, -15.0, 0.0),
         backspin(rpm_to_rads(3000.0)),
         &Surface::GREEN,
     );
@@ -191,15 +191,15 @@ fn no_lateral_without_sidespin() {
 #[test]
 fn vertical_drop_no_horizontal() {
     // Ball dropping straight down with no spin should bounce straight up.
-    let r = hit(DVec3::new(0.0, -5.0, 0.0), DVec3::ZERO, &Surface::GREEN);
+    let r = hit(Vec3::new(0.0, -5.0, 0.0), Vec3::ZERO, &Surface::GREEN);
     assert!(r.vel.y > 0.0);
     assert!(r.vel.x.abs() < 1e-12 && r.vel.z.abs() < 1e-12);
 }
 
 #[test]
 fn grazing_impact_applies_no_impulse() {
-    for vel in [DVec3::new(10.0, 0.0, 0.0), DVec3::new(10.0, 0.5, -2.0)] {
-        let s = state(vel, DVec3::new(30.0, -80.0, 250.0));
+    for vel in [Vec3::new(10.0, 0.0, 0.0), Vec3::new(10.0, 0.5, -2.0)] {
+        let s = state(vel, Vec3::new(30.0, -80.0, 250.0));
         for surface in [Surface::FAIRWAY, Surface::GREEN] {
             let out = impact(&s, &surface.sample(0.0, 0.0), &BALL);
             assert_eq!(out, s, "grazing {vel:?} should be untouched");
@@ -226,18 +226,18 @@ fn energy_never_increases_at_impact() {
         },
     ];
     let vels = [
-        DVec3::new(20.0, -15.0, 0.0),
-        DVec3::new(25.0, -10.0, 4.0),
-        DVec3::new(-5.0, -3.0, -2.0),
-        DVec3::new(3.0, -20.0, 0.5),
-        DVec3::new(0.0, -8.0, 0.0),
+        Vec3::new(20.0, -15.0, 0.0),
+        Vec3::new(25.0, -10.0, 4.0),
+        Vec3::new(-5.0, -3.0, -2.0),
+        Vec3::new(3.0, -20.0, 0.5),
+        Vec3::new(0.0, -8.0, 0.0),
     ];
     let spins = [
-        DVec3::ZERO,
+        Vec3::ZERO,
         backspin(800.0),
-        DVec3::new(0.0, -100.0, 300.0),
-        DVec3::new(200.0, 50.0, -100.0),
-        DVec3::new(-150.0, 0.0, 0.0),
+        Vec3::new(0.0, -100.0, 300.0),
+        Vec3::new(200.0, 50.0, -100.0),
+        Vec3::new(-150.0, 0.0, 0.0),
     ];
     for surface in &surfaces {
         for &v in &vels {
@@ -258,14 +258,14 @@ fn energy_never_increases_at_impact() {
 fn impact_mirror_symmetry() {
     // Mirroring the impact in z (a pseudovector spin flips x and y) mirrors
     // the outcome; mirroring in x (spin flips y and z) likewise.
-    let mz = |v: DVec3| DVec3::new(v.x, v.y, -v.z);
-    let mz_spin = |w: DVec3| DVec3::new(-w.x, -w.y, w.z);
-    let mx = |v: DVec3| DVec3::new(-v.x, v.y, v.z);
-    let mx_spin = |w: DVec3| DVec3::new(w.x, -w.y, -w.z);
+    let mz = |v: Vec3| Vec3::new(v.x, v.y, -v.z);
+    let mz_spin = |w: Vec3| Vec3::new(-w.x, -w.y, w.z);
+    let mx = |v: Vec3| Vec3::new(-v.x, v.y, v.z);
+    let mx_spin = |w: Vec3| Vec3::new(w.x, -w.y, -w.z);
     for (vel, spin) in [
-        (DVec3::new(5.0, -3.0, 0.0), backspin(-5.0 / R)),
-        (DVec3::new(15.0, -10.0, 2.0), DVec3::new(20.0, -60.0, 300.0)),
-        (DVec3::new(23.8, -16.0, -1.0), DVec3::new(0.0, 80.0, 900.0)),
+        (Vec3::new(5.0, -3.0, 0.0), backspin(-5.0 / R)),
+        (Vec3::new(15.0, -10.0, 2.0), Vec3::new(20.0, -60.0, 300.0)),
+        (Vec3::new(23.8, -16.0, -1.0), Vec3::new(0.0, 80.0, 900.0)),
     ] {
         for surface in [Surface::FAIRWAY, Surface::GREEN] {
             let fwd = hit(vel, spin, &surface);
@@ -282,16 +282,16 @@ fn impact_mirror_symmetry() {
 #[test]
 fn impact_frame_invariance_about_y() {
     let a = 0.7_f64;
-    let rot = |v: DVec3| {
-        DVec3::new(
+    let rot = |v: Vec3| {
+        Vec3::new(
             v.x * a.cos() - v.z * a.sin(),
             v.y,
             v.x * a.sin() + v.z * a.cos(),
         )
     };
     for (vel, spin) in [
-        (DVec3::new(20.0, -15.0, 1.5), DVec3::new(10.0, -60.0, 250.0)),
-        (DVec3::new(6.0, -2.0, -0.5), DVec3::new(-30.0, 40.0, -200.0)),
+        (Vec3::new(20.0, -15.0, 1.5), Vec3::new(10.0, -60.0, 250.0)),
+        (Vec3::new(6.0, -2.0, -0.5), Vec3::new(-30.0, 40.0, -200.0)),
     ] {
         for surface in [Surface::FAIRWAY, Surface::GREEN] {
             let base = hit(vel, spin, &surface);
@@ -358,7 +358,7 @@ fn fairway_bounces_like_green_and_resists_rolling_more() {
     // friction and compliance 1.0): a fairway is no firmer than his green,
     // so the same landing rebounds identically from both. What sets the
     // fairway apart is its rolling resistance, stimp 5.2 ft against 11.4.
-    let vel = DVec3::new(15.0, -10.0, 0.0);
+    let vel = Vec3::new(15.0, -10.0, 0.0);
     let spin = backspin(rpm_to_rads(3000.0));
     assert_eq!(
         hit(vel, spin, &Surface::FAIRWAY),
@@ -369,7 +369,7 @@ fn fairway_bounces_like_green_and_resists_rolling_more() {
 
 #[test]
 fn backspin_reduces_forward_speed() {
-    let vel = DVec3::new(15.0, -10.0, 0.0);
+    let vel = Vec3::new(15.0, -10.0, 0.0);
     let low = hit(vel, backspin(rpm_to_rads(2000.0)), &Surface::GREEN);
     let high = hit(vel, backspin(rpm_to_rads(8000.0)), &Surface::GREEN);
     assert!(
@@ -384,7 +384,7 @@ fn backspin_reduces_forward_speed() {
 fn very_high_backspin_can_reverse() {
     // Wedge shot: steep angle, very high backspin on green → spin back.
     let angle = units::deg_to_rad(50.0);
-    let vel = 25.0 * DVec3::new(angle.cos(), -angle.sin(), 0.0);
+    let vel = 25.0 * Vec3::new(angle.cos(), -angle.sin(), 0.0);
     let r = hit(vel, backspin(rpm_to_rads(10000.0)), &Surface::GREEN);
     assert!(r.vel.x < 0.0, "should spin back: vx={:.3}", r.vel.x);
 }
@@ -392,7 +392,7 @@ fn very_high_backspin_can_reverse() {
 #[test]
 fn driver_bounces_forward() {
     let angle = units::deg_to_rad(30.0);
-    let vel = 30.0 * DVec3::new(angle.cos(), -angle.sin(), 0.0);
+    let vel = 30.0 * Vec3::new(angle.cos(), -angle.sin(), 0.0);
     let r = hit(vel, backspin(rpm_to_rads(2500.0)), &Surface::FAIRWAY);
     assert!(
         r.vel.x > 0.0,
@@ -404,9 +404,9 @@ fn driver_bounces_forward() {
 #[test]
 fn seven_iron_checks_on_green() {
     let angle = units::deg_to_rad(45.0);
-    let vel = 25.0 * DVec3::new(angle.cos(), -angle.sin(), 0.0);
+    let vel = 25.0 * Vec3::new(angle.cos(), -angle.sin(), 0.0);
     let spin = hit(vel, backspin(rpm_to_rads(7000.0)), &Surface::GREEN);
-    let no_spin = hit(vel, DVec3::ZERO, &Surface::GREEN);
+    let no_spin = hit(vel, Vec3::ZERO, &Surface::GREEN);
     assert!(spin.vel.x < no_spin.vel.x);
 }
 
@@ -425,11 +425,11 @@ fn plane(restitution: f64, mu: f64, compliance: f64) -> Surface {
 
 #[test]
 fn compliance_steepens_rebound() {
-    let vel = DVec3::new(20.0, -15.0, 0.0);
+    let vel = Vec3::new(20.0, -15.0, 0.0);
     let spin = backspin(rpm_to_rads(5000.0));
     let firm = hit(vel, spin, &plane(0.35, 0.4, 0.2));
     let soft = hit(vel, spin, &plane(0.35, 0.4, 1.0));
-    let angle = |v: DVec3| v.y.atan2(v.x.abs().max(0.001));
+    let angle = |v: Vec3| v.y.atan2(v.x.abs().max(0.001));
     assert!(angle(soft.vel) > angle(firm.vel));
 }
 
@@ -440,9 +440,9 @@ fn compliance_rotates_mirror_rebound_by_two_beta() {
     // the specular rebound is the flat-ground mirror direction rotated up by
     // 2β, at full speed. The same holds for any heading.
     for heading in [0.0_f64, 0.4, -2.0] {
-        let h = DVec3::new(heading.cos(), 0.0, heading.sin());
-        let vel = 10.0 * h - DVec3::new(0.0, 10.0, 0.0);
-        let r = hit(vel, DVec3::ZERO, &plane(1.0, 0.0, 1.0));
+        let h = Vec3::new(heading.cos(), 0.0, heading.sin());
+        let vel = 10.0 * h - Vec3::new(0.0, 10.0, 0.0);
+        let r = hit(vel, Vec3::ZERO, &plane(1.0, 0.0, 1.0));
         let incidence = std::f64::consts::FRAC_PI_4;
         let beta =
             units::deg_to_rad(15.4) * (vel.length() / 18.6) * (incidence / units::deg_to_rad(44.4));
@@ -450,7 +450,7 @@ fn compliance_rotates_mirror_rebound_by_two_beta() {
         assert!((rebound_angle - (incidence + 2.0 * beta)).abs() < 1e-12);
         assert!((r.vel.length() - vel.length()).abs() < 1e-12);
         assert!(
-            r.vel.dot(DVec3::Y.cross(h)).abs() < 1e-12,
+            r.vel.dot(Vec3::Y.cross(h)).abs() < 1e-12,
             "stays in the plane of travel"
         );
     }
@@ -459,11 +459,11 @@ fn compliance_rotates_mirror_rebound_by_two_beta() {
 #[test]
 fn no_compliance_is_exact_mirror() {
     let r = hit(
-        DVec3::new(10.0, -10.0, 0.0),
-        DVec3::ZERO,
+        Vec3::new(10.0, -10.0, 0.0),
+        Vec3::ZERO,
         &plane(1.0, 0.0, 0.0),
     );
-    assert!((r.vel - DVec3::new(10.0, 10.0, 0.0)).length() < 1e-12);
+    assert!((r.vel - Vec3::new(10.0, 10.0, 0.0)).length() < 1e-12);
 }
 
 #[test]
@@ -471,8 +471,8 @@ fn compliance_tilt_capped_at_incidence_angle() {
     // 10 × θc ≈ 119° would overshoot; β is capped at the 45° incidence
     // angle, so the ball meets the effective plane head-on and an elastic
     // frictionless impact sends it straight back.
-    let vel = DVec3::new(10.0, -10.0, 0.0);
-    let r = hit(vel, DVec3::ZERO, &plane(1.0, 0.0, 10.0));
+    let vel = Vec3::new(10.0, -10.0, 0.0);
+    let r = hit(vel, Vec3::ZERO, &plane(1.0, 0.0, 10.0));
     assert!((r.vel + vel).length() < 1e-9, "got {:?}", r.vel);
 }
 
@@ -521,7 +521,7 @@ fn low_skimming_hops_lose_height() {
     for surface in [Surface::FAIRWAY, Surface::GREEN] {
         for v_t in [2.0, 3.0, 4.0] {
             for w in [0.3, 0.5, 1.0, 1.5] {
-                let r = hit(DVec3::new(v_t, -w, 0.0), rolling(v_t), &surface);
+                let r = hit(Vec3::new(v_t, -w, 0.0), rolling(v_t), &surface);
                 assert!(
                     r.vel.y < 0.85 * w,
                     "{v_t} m/s skimming at {w} m/s rebounds at {:.3} m/s",
@@ -544,7 +544,7 @@ fn spin_back_into_ground_rolls_instead_of_rebounding_down() {
         compliance: 2.0,
         ..Surface::GREEN
     };
-    let vel = DVec3::new(10.0, -10.0, 0.0);
+    let vel = Vec3::new(10.0, -10.0, 0.0);
     let raw = hit(vel, backspin(1500.0), &surface);
     assert!(raw.vel.y < 0.0, "impulse alone points into the ground");
     let g = surface.settle(&state(vel, backspin(1500.0)), &BALL, air());
@@ -590,7 +590,7 @@ fn penner_nine_iron_bounces_backward_on_green() {
 
 /// Net run (m) along x from the landing point: hops, slide and roll.
 /// Run (m) past the landing point with ballistic hops, as in Penner's model.
-fn run_out(vel: DVec3, w: f64, surface: &Surface) -> f64 {
+fn run_out(vel: Vec3, w: f64, surface: &Surface) -> f64 {
     let g = surface.settle(&state(vel, backspin(w)), &BALL, VACUUM);
     assert_ends_by_hop_height(&g);
     g.rest.pos.x
@@ -655,7 +655,7 @@ fn ball_rolling_backward_keeps_rolling_backward() {
     // and leaves still moving backward, spinning in the backward-rolling
     // sense (+Z for travel along −X).
     let r = hit(
-        DVec3::new(-5.0, -3.0, 0.0),
+        Vec3::new(-5.0, -3.0, 0.0),
         backspin(5.0 / R),
         &Surface::GREEN,
     );
@@ -674,7 +674,7 @@ fn ball_rolling_backward_keeps_rolling_backward() {
 #[test]
 fn bounce_sequence_terminates() {
     let g = Surface::FAIRWAY.settle(
-        &state(DVec3::new(20.0, -15.0, 0.0), backspin(rpm_to_rads(3000.0))),
+        &state(Vec3::new(20.0, -15.0, 0.0), backspin(rpm_to_rads(3000.0))),
         &BALL,
         air(),
     );
@@ -687,11 +687,7 @@ fn bounce_sequence_stops_below_threshold() {
     // Penner's e rising toward 0.51 as the ball slows. Rebounds of 2.26,
     // 0.97, 0.46 and 0.23 m/s rise 260, 48, 10.8 and 2.6 mm: the fourth is
     // below the 5 mm transition height.
-    let g = Surface::FAIRWAY.settle(
-        &state(DVec3::new(0.0, -15.0, 0.0), DVec3::ZERO),
-        &BALL,
-        air(),
-    );
+    let g = Surface::FAIRWAY.settle(&state(Vec3::new(0.0, -15.0, 0.0), Vec3::ZERO), &BALL, air());
     assert_eq!(g.contacts.len(), 4);
     assert_ends_by_hop_height(&g);
     assert!(g.rest.pos.length() < 1e-9);
@@ -706,7 +702,7 @@ fn bounce_sequence_safety_bound() {
         max_time: 1000.0,
         ..GroundPhysics::new(plane(1.0, 0.0, 0.0))
     };
-    let start = state(DVec3::new(5.0, -5.0, 0.0), DVec3::ZERO);
+    let start = state(Vec3::new(5.0, -5.0, 0.0), Vec3::ZERO);
     let g = physics.settle(&start, &BALL, VACUUM);
     assert_eq!(g.termination, Termination::MaxImpacts);
     assert_eq!(g.contacts.len(), 200);
@@ -724,7 +720,7 @@ fn bounce_sequence_safety_bound() {
 #[test]
 fn bounce_sequence_height_decreases() {
     let g = Surface::FAIRWAY.settle(
-        &state(DVec3::new(15.0, -10.0, 0.0), backspin(rpm_to_rads(2000.0))),
+        &state(Vec3::new(15.0, -10.0, 0.0), backspin(rpm_to_rads(2000.0))),
         &BALL,
         air(),
     );
@@ -739,13 +735,13 @@ fn contacts_record_true_arrival_velocity() {
     // ground with ballistic hops, the previous rebound with its vertical
     // component reversed.
     let g = Surface::GREEN.settle(
-        &state(DVec3::new(12.0, -9.0, 1.0), DVec3::new(0.0, -40.0, 400.0)),
+        &state(Vec3::new(12.0, -9.0, 1.0), Vec3::new(0.0, -40.0, 400.0)),
         &BALL,
         VACUUM,
     );
     assert!(g.contacts.len() > 3);
     for w in g.contacts.windows(2) {
-        let expected = DVec3::new(w[0].vel_out.x, -w[0].vel_out.y, w[0].vel_out.z);
+        let expected = Vec3::new(w[0].vel_out.x, -w[0].vel_out.y, w[0].vel_out.z);
         assert!((w[1].vel_in - expected).length() < 1e-9);
         assert!(w[1].vel_in.y < 0.0);
         assert_eq!(w[1].spin_in, w[0].spin_out);
@@ -756,7 +752,7 @@ fn contacts_record_true_arrival_velocity() {
 #[test]
 fn soft_drop_ends_by_hop_height() {
     let g = Surface::GREEN.settle(
-        &state(DVec3::new(5.0, -1.0, 0.0), backspin(rpm_to_rads(500.0))),
+        &state(Vec3::new(5.0, -1.0, 0.0), backspin(rpm_to_rads(500.0))),
         &BALL,
         air(),
     );
@@ -770,7 +766,7 @@ fn soft_drop_ends_by_hop_height() {
 /// A single hop on `FAIRWAY`: a ball leaving the ground at `vel` (moving
 /// up, so the first contact applies no impulse) with `spin`, through air of
 /// `air_density`. Returns the arrival contact.
-fn hop_with(vel: DVec3, spin: DVec3, air_density: f64) -> Contact {
+fn hop_with(vel: Vec3, spin: Vec3, air_density: f64) -> Contact {
     let g = Surface::FAIRWAY.settle(&state(vel, spin), &BALL, air_density);
     assert_eq!(g.contacts[0].vel_out, vel, "no impulse leaving the ground");
     g.contacts[1]
@@ -781,7 +777,7 @@ fn vacuum_hops_are_bit_identical() {
     // At zero density `Surface` and `GroundPhysics` give the same result to
     // the bit, and every arrival is on the parabola from the rebound before
     // it, with the spin carried unchanged.
-    let start = state(DVec3::new(21.3, -18.5, 0.0), backspin(212.0));
+    let start = state(Vec3::new(21.3, -18.5, 0.0), backspin(212.0));
     let physics = GroundPhysics::new(Surface::FAIRWAY).settle(&start, &BALL, VACUUM);
     let surface = Surface::FAIRWAY.settle(&start, &BALL, VACUUM);
     assert_eq!(physics, surface);
@@ -801,7 +797,7 @@ fn hops_lose_speed_to_drag() {
     // The same landing with and without air: the first impact is the same,
     // and the hop through air arrives earlier, nearer and slower, on the
     // ground, still carrying the rebound's spin exactly.
-    let start = state(DVec3::new(21.3, -18.5, 0.0), backspin(212.0));
+    let start = state(Vec3::new(21.3, -18.5, 0.0), backspin(212.0));
     let vacuum = Surface::FAIRWAY.settle(&start, &BALL, VACUUM);
     let air = Surface::FAIRWAY.settle(&start, &BALL, air());
     assert_eq!(vacuum.contacts[0], air.contacts[0]);
@@ -824,7 +820,7 @@ fn hops_lose_speed_to_drag() {
 fn hop_drag_scales_with_density() {
     // Thinner air takes less of the run: the loss against ballistic hops
     // shrinks from sea level to Denver to Mexico City.
-    let start = state(DVec3::new(21.3, -18.5, 0.0), backspin(212.0));
+    let start = state(Vec3::new(21.3, -18.5, 0.0), backspin(212.0));
     let run = |air_density: f64| {
         Surface::FAIRWAY
             .settle(&start, &BALL, air_density)
@@ -850,10 +846,10 @@ fn topspin_hop_lands_sooner_than_spinless() {
     // Magnus lift is spin × velocity: topspin (forward rolling spin) pushes
     // a hop down, backspin holds it up. The same spin rate either way, so
     // the drag is the same.
-    let vel = DVec3::new(6.0, 2.0, 0.0);
+    let vel = Vec3::new(6.0, 2.0, 0.0);
     let w = 6.0 / R;
     let top = hop_with(vel, backspin(-w), air());
-    let none = hop_with(vel, DVec3::ZERO, air());
+    let none = hop_with(vel, Vec3::ZERO, air());
     let back = hop_with(vel, backspin(w), air());
     assert!(
         top.time < none.time && none.time < back.time,
@@ -881,9 +877,9 @@ fn kick_matches_grip_formula() {
     // arriving with velocity (v_x, ·, v_z) and backspin ω_b about +Z.
     let surface = plane(0.5, 1.0, 0.0);
     for (vel, w) in [
-        (DVec3::new(20.0, -12.0, 3.0), 250.0),
-        (DVec3::new(15.0, -14.0, -2.0), 300.0),
-        (DVec3::new(30.0, -10.0, 4.0), 150.0),
+        (Vec3::new(20.0, -12.0, 3.0), 250.0),
+        (Vec3::new(15.0, -14.0, -2.0), 300.0),
+        (Vec3::new(30.0, -10.0, 4.0), 150.0),
     ] {
         let out = hit(vel, backspin(w), &surface);
         let expected = ((5.0 / 7.0) * vel.z).atan2((5.0 / 7.0) * vel.x - (2.0 / 7.0) * R * w);
@@ -898,7 +894,7 @@ fn kick_matches_grip_formula() {
         let heading_in = vel.z.atan2(vel.x);
         assert!(heading.abs() > heading_in.abs() && heading.signum() == heading_in.signum());
         // Grip: the contact point leaves without slip.
-        assert!(slip(out.vel, out.spin, DVec3::Y, R).length() < 1e-12);
+        assert!(slip(out.vel, out.spin, Vec3::Y, R).length() < 1e-12);
     }
 }
 
@@ -913,8 +909,8 @@ fn spin_about_normal_gives_no_kick_on_rigid_ground() {
     };
     for w_y in [-150.0, 150.0] {
         let out = hit(
-            DVec3::new(15.0, -10.0, 0.0),
-            DVec3::new(0.0, w_y, 0.0),
+            Vec3::new(15.0, -10.0, 0.0),
+            Vec3::new(0.0, w_y, 0.0),
             &surface,
         );
         assert!(out.vel.z == 0.0, "vz={}", out.vel.z);
@@ -927,10 +923,10 @@ fn spin_about_normal_gives_no_drift_on_the_ground() {
     // Sliding (with backspin) and rolling balls carrying spin about the
     // vertical go straight; pivot friction removes the vertical spin.
     for spin in [
-        DVec3::new(0.0, 120.0, -4.0 / R),
-        DVec3::new(0.0, -120.0, 400.0),
+        Vec3::new(0.0, 120.0, -4.0 / R),
+        Vec3::new(0.0, -120.0, 400.0),
     ] {
-        let g = roll(DVec3::new(4.0, 0.0, 0.0), spin, &Surface::FAIRWAY);
+        let g = roll(Vec3::new(4.0, 0.0, 0.0), spin, &Surface::FAIRWAY);
         assert!(g.points.iter().all(|p| p.pos.z == 0.0));
         assert!(g.rest.pos.z == 0.0);
         assert!(g.rest.spin.y.abs() < spin.y.abs());
@@ -946,8 +942,8 @@ fn pivot_friction_at_impact() {
         compliance: 0.0,
         ..Surface::FAIRWAY
     };
-    let vel = DVec3::new(15.0, -10.0, 0.0);
-    let out = hit(vel, DVec3::new(0.0, -200.0, 0.0), &surface);
+    let vel = Vec3::new(15.0, -10.0, 0.0);
+    let out = hit(vel, Vec3::new(0.0, -200.0, 0.0), &surface);
     let j_n = 1.4 * 10.0;
     let expected = -200.0 + surface.pivot * j_n / (0.4 * R * R);
     assert!(
@@ -956,17 +952,17 @@ fn pivot_friction_at_impact() {
         out.spin.y
     );
     // Small spins stop rather than reverse.
-    let out = hit(vel, DVec3::new(0.0, 5.0, 0.0), &surface);
+    let out = hit(vel, Vec3::new(0.0, 5.0, 0.0), &surface);
     assert!(out.spin.y == 0.0);
 
     // On tilted (compliant) impacts it still acts about the true normal ŷ:
     // the velocity is untouched and only ω_y changes, so the spin along the
     // heading that drives a curving ball's kick is kept.
     for spin in [
-        DVec3::new(30.0, -60.0, 300.0),
-        DVec3::new(-80.0, 400.0, 900.0),
+        Vec3::new(30.0, -60.0, 300.0),
+        Vec3::new(-80.0, 400.0, 900.0),
     ] {
-        let vel = DVec3::new(20.0, -14.0, 3.0);
+        let vel = Vec3::new(20.0, -14.0, 3.0);
         let free = hit(
             vel,
             spin,
@@ -988,9 +984,9 @@ fn tilted_impact_throws_against_sidespin() {
     // part of a spin about the vertical lies in the contact plane and slips
     // the contact point sideways. A ball spinning clockwise from above
     // (fade sidespin, ω_y < 0) is thrown left, like side spin off a cushion.
-    let vel = DVec3::new(18.0, -15.0, 0.0);
-    let fade = hit(vel, DVec3::new(0.0, -60.0, 0.0), &Surface::GREEN);
-    let draw = hit(vel, DVec3::new(0.0, 60.0, 0.0), &Surface::GREEN);
+    let vel = Vec3::new(18.0, -15.0, 0.0);
+    let fade = hit(vel, Vec3::new(0.0, -60.0, 0.0), &Surface::GREEN);
+    let draw = hit(vel, Vec3::new(0.0, 60.0, 0.0), &Surface::GREEN);
     assert!(fade.vel.z < 0.0 && draw.vel.z > 0.0);
     assert!((fade.vel.z + draw.vel.z).abs() < 1e-12);
 }
@@ -1005,15 +1001,15 @@ fn tilt_throw_magnitude() {
     //   slip:  Δv_z = μ·j_n·R·w·sin β / |u|,  j_n = (1+e)·|v·n'|
     let k = BALL.inertia_factor;
     let e = 0.4;
-    let vel = DVec3::new(18.0, -15.0, 0.0);
+    let vel = Vec3::new(18.0, -15.0, 0.0);
     let incidence = vel.x.atan2(-vel.y);
     let beta =
         units::deg_to_rad(15.4) * (vel.length() / 18.6) * (incidence / units::deg_to_rad(44.4));
-    let n_eff = DVec3::new(-beta.sin(), beta.cos(), 0.0);
+    let n_eff = Vec3::new(-beta.sin(), beta.cos(), 0.0);
     let v_n = vel.dot(n_eff);
     for w in [-60.0, 60.0, -150.0] {
         let lateral_slip = -R * w * beta.sin();
-        let grip = hit(vel, DVec3::new(0.0, w, 0.0), &plane(e, 10.0, 1.0));
+        let grip = hit(vel, Vec3::new(0.0, w, 0.0), &plane(e, 10.0, 1.0));
         let expected = -k / (1.0 + k) * lateral_slip;
         assert!(
             (grip.vel.z - expected).abs() < 1e-12,
@@ -1022,7 +1018,7 @@ fn tilt_throw_magnitude() {
         );
 
         let mu = 0.05;
-        let sliding = hit(vel, DVec3::new(0.0, w, 0.0), &plane(e, mu, 1.0));
+        let sliding = hit(vel, Vec3::new(0.0, w, 0.0), &plane(e, mu, 1.0));
         let in_plane = (vel - v_n * n_eff).length();
         let slip_speed = in_plane.hypot(lateral_slip);
         assert!(mu * (1.0 + e) * -v_n < slip_speed * k / (1.0 + k), "slides");
@@ -1044,8 +1040,8 @@ fn rifle_spin_drifts_laterally_while_sliding() {
     // ball toward +Z while it slides, then it rolls on its new heading.
     for w_x in [200.0, -200.0] {
         let g = roll(
-            DVec3::new(4.0, 0.0, 0.0),
-            DVec3::new(w_x, 0.0, -4.0 / R),
+            Vec3::new(4.0, 0.0, 0.0),
+            Vec3::new(w_x, 0.0, -4.0 / R),
             &Surface::GREEN,
         );
         let slide_end = g
@@ -1066,9 +1062,9 @@ fn rifle_spin_drifts_laterally_while_sliding() {
 fn slide_ends_exactly_at_roll_time() {
     // On flat ground the slip falls linearly at ((1+k)/k)·μ·g; the slide is
     // stepped exactly to its end, where the ball leaves without slip.
-    let vel = DVec3::new(3.0, 0.0, 0.5);
-    let spin = DVec3::new(-20.0, 30.0, 300.0);
-    let u0 = slip(vel, spin, DVec3::Y, R).length();
+    let vel = Vec3::new(3.0, 0.0, 0.5);
+    let spin = Vec3::new(-20.0, 30.0, 300.0);
+    let u0 = slip(vel, spin, Vec3::Y, R).length();
     let expected = u0 / (3.5 * 0.40 * G);
     let g = roll(vel, spin, &Surface::GREEN);
     let roll_start = g.points.iter().find(|p| p.phase == Phase::Roll).unwrap();
@@ -1077,10 +1073,10 @@ fn slide_ends_exactly_at_roll_time() {
         "roll starts at {:.9} s, expected {expected:.9} s",
         roll_start.time
     );
-    assert!(slip(roll_start.vel, roll_start.spin, DVec3::Y, R).length() < 1e-12);
+    assert!(slip(roll_start.vel, roll_start.spin, Vec3::Y, R).length() < 1e-12);
     // Sliding friction acts along the initial slip direction throughout:
     // velocity change is exactly −μ g t û.
-    let u_hat = slip(vel, spin, DVec3::Y, R).normalize();
+    let u_hat = slip(vel, spin, Vec3::Y, R).normalize();
     let dv = roll_start.vel - vel;
     let expected_dv = -0.40 * G * expected * u_hat;
     assert!(
@@ -1096,7 +1092,7 @@ fn stimpmeter_roll_matches_closed_form() {
     // (1+k)·v_ref²/(2·μ_roll·g) · ln(1 + v₀²/v_ref²).
     let v0 = STIMPMETER_SPEED;
     for surface in [Surface::GREEN, Surface::FAIRWAY] {
-        let g = roll(DVec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
+        let g = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
         let RollLaw::Quadratic { v_ref: vr } = surface.roll_law else {
             panic!("presets use the quadratic law");
         };
@@ -1109,7 +1105,7 @@ fn stimpmeter_roll_matches_closed_form() {
         );
     }
     // The green preset is a stimp ≈ 11.4 ft green.
-    let green = roll(DVec3::new(v0, 0.0, 0.0), rolling(v0), &Surface::GREEN);
+    let green = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &Surface::GREEN);
     let feet = units::meters_to_feet(green.rest.pos.x);
     assert!((feet - 11.4).abs() < 0.1, "stimp {feet:.2} ft");
     assert!((feet - Surface::GREEN.stimp_feet()).abs() < 1e-4);
@@ -1118,8 +1114,8 @@ fn stimpmeter_roll_matches_closed_form() {
 #[test]
 fn stimpmeter_fairway_shorter() {
     let v0 = STIMPMETER_SPEED;
-    let green = roll(DVec3::new(v0, 0.0, 0.0), rolling(v0), &Surface::GREEN);
-    let fairway = roll(DVec3::new(v0, 0.0, 0.0), rolling(v0), &Surface::FAIRWAY);
+    let green = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &Surface::GREEN);
+    let fairway = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &Surface::FAIRWAY);
     assert!(fairway.rest.pos.x < green.rest.pos.x);
 }
 
@@ -1221,8 +1217,8 @@ fn with_stimp_rolls_the_requested_distance() {
     for feet in [6.0, 8.0, 10.0, 12.0, 14.0] {
         let surface = Surface::GREEN.with_stimp(feet);
         let physics = GroundPhysics::new(surface);
-        let mut s = state(DVec3::new(v0, 0.0, 0.0), rolling(v0));
-        while s.vel != DVec3::ZERO {
+        let mut s = state(Vec3::new(v0, 0.0, 0.0), rolling(v0));
+        while s.vel != Vec3::ZERO {
             assert!(s.time < 30.0, "{feet} ft: still rolling");
             s = physics.step(&s, &BALL).0;
         }
@@ -1231,7 +1227,7 @@ fn with_stimp_rolls_the_requested_distance() {
             (stepped - feet).abs() < 1e-9 * feet,
             "{feet} ft: stepped roll {stepped:.9} ft"
         );
-        let settled = roll(DVec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
+        let settled = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
         assert_eq!(settled.termination, Termination::Rest);
         let settled = units::meters_to_feet(settled.rest.pos.x);
         assert!(
@@ -1277,7 +1273,7 @@ fn invalid_v_ref_rolls_as_the_constant_law() {
         roll_law: RollLaw::Constant,
         ..Surface::GREEN
     };
-    let expected = roll(DVec3::new(v0, 0.0, 0.0), rolling(v0), &constant);
+    let expected = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &constant);
     for v_ref in [0.0, f64::NAN] {
         for roll_law in [RollLaw::Quadratic { v_ref }, RollLaw::Exponential { v_ref }] {
             assert_eq!(roll_law.speed_factor(0.0), 1.0, "{roll_law:?}");
@@ -1286,7 +1282,7 @@ fn invalid_v_ref_rolls_as_the_constant_law() {
                 roll_law,
                 ..Surface::GREEN
             };
-            let g = roll(DVec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
+            let g = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
             assert_eq!(g.termination, Termination::Rest, "{roll_law:?}");
             assert_eq!(g.rest.pos, expected.rest.pos, "{roll_law:?}");
         }
@@ -1322,7 +1318,7 @@ fn exponential_rollout_matches_closed_form() {
             roll_law: RollLaw::Exponential { v_ref },
             ..Surface::GREEN
         };
-        let g = roll(DVec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
+        let g = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
         assert_eq!(g.termination, Termination::Rest);
         let s0 = v0 / v_ref;
         let expected =
@@ -1364,12 +1360,12 @@ fn exponential_with_positive_rate_shortens_fast_rollouts() {
     };
     let v0 = 5.0;
     let constant = roll(
-        DVec3::new(v0, 0.0, 0.0),
+        Vec3::new(v0, 0.0, 0.0),
         rolling(v0),
         &with_law(RollLaw::Constant),
     );
     let exponential = roll(
-        DVec3::new(v0, 0.0, 0.0),
+        Vec3::new(v0, 0.0, 0.0),
         rolling(v0),
         &with_law(RollLaw::Exponential { v_ref: 3.8 }),
     );
@@ -1379,9 +1375,9 @@ fn exponential_with_positive_rate_shortens_fast_rollouts() {
 
 #[test]
 fn rollout_stops_and_moves_forward() {
-    let g = roll(DVec3::new(10.0, 0.0, 0.0), rolling(10.0), &Surface::FAIRWAY);
+    let g = roll(Vec3::new(10.0, 0.0, 0.0), rolling(10.0), &Surface::FAIRWAY);
     assert_eq!(g.termination, Termination::Rest);
-    assert_eq!(g.rest.vel, DVec3::ZERO);
+    assert_eq!(g.rest.vel, Vec3::ZERO);
     assert!(g.rest.pos.x > 0.0);
     assert_eq!(
         g.contacts.len(),
@@ -1393,13 +1389,13 @@ fn rollout_stops_and_moves_forward() {
 
 #[test]
 fn rollout_on_ground_plane() {
-    let g = roll(DVec3::new(10.0, 0.0, 2.0), DVec3::ZERO, &Surface::GREEN);
+    let g = roll(Vec3::new(10.0, 0.0, 2.0), Vec3::ZERO, &Surface::GREEN);
     assert!(g.points.iter().all(|p| p.pos.y == 0.0 && p.vel.y == 0.0));
 }
 
 #[test]
 fn speed_monotonically_decreases_pure_roll() {
-    let g = roll(DVec3::new(8.0, 0.0, 0.0), rolling(8.0), &Surface::GREEN);
+    let g = roll(Vec3::new(8.0, 0.0, 0.0), rolling(8.0), &Surface::GREEN);
     assert!(g.points.iter().all(|p| p.phase == Phase::Roll));
     for w in g.points.windows(2) {
         assert!(w[1].vel.length() <= w[0].vel.length());
@@ -1411,10 +1407,10 @@ fn energy_never_increases_over_the_ground_phase() {
     // Translation + rotation + height never grows from one ground point to
     // the next, through hops, impacts, slides and rolls.
     let starts = [
-        (DVec3::new(21.3, -18.5, 0.0), backspin(212.0)),
-        (DVec3::new(21.0, -18.0, 2.5), DVec3::new(0.0, -50.0, 210.0)),
-        (DVec3::new(9.0, -20.0, -1.0), DVec3::new(10.0, 40.0, 700.0)),
-        (DVec3::new(3.0, 0.0, 0.5), DVec3::new(-20.0, 30.0, 300.0)),
+        (Vec3::new(21.3, -18.5, 0.0), backspin(212.0)),
+        (Vec3::new(21.0, -18.0, 2.5), Vec3::new(0.0, -50.0, 210.0)),
+        (Vec3::new(9.0, -20.0, -1.0), Vec3::new(10.0, 40.0, 700.0)),
+        (Vec3::new(3.0, 0.0, 0.5), Vec3::new(-20.0, 30.0, 300.0)),
     ];
     for (vel, spin) in starts {
         for surface in [Surface::FAIRWAY, Surface::GREEN] {
@@ -1436,8 +1432,8 @@ fn energy_never_increases_over_the_ground_phase() {
 
 #[test]
 fn green_rolls_farther_than_fairway() {
-    let fairway = roll(DVec3::new(5.0, 0.0, 0.0), rolling(5.0), &Surface::FAIRWAY);
-    let green = roll(DVec3::new(5.0, 0.0, 0.0), rolling(5.0), &Surface::GREEN);
+    let fairway = roll(Vec3::new(5.0, 0.0, 0.0), rolling(5.0), &Surface::FAIRWAY);
+    let green = roll(Vec3::new(5.0, 0.0, 0.0), rolling(5.0), &Surface::GREEN);
     assert!(green.rest.pos.x > fairway.rest.pos.x);
 }
 
@@ -1455,7 +1451,7 @@ fn fairway_rolls_less_than_green_from_the_same_landing() {
     ] {
         let a = units::deg_to_rad(descent);
         let landing = state(
-            DVec3::new(speed * a.cos(), -speed * a.sin(), 0.0),
+            Vec3::new(speed * a.cos(), -speed * a.sin(), 0.0),
             backspin(rpm_to_rads(rpm)),
         );
         let fairway = Surface::FAIRWAY.settle(&landing, &BALL, air());
@@ -1482,9 +1478,9 @@ fn fairway_rolls_less_than_green_from_the_same_landing() {
 
 #[test]
 fn backspin_reduces_rollout() {
-    let no_spin = roll(DVec3::new(5.0, 0.0, 0.0), rolling(5.0), &Surface::GREEN);
+    let no_spin = roll(Vec3::new(5.0, 0.0, 0.0), rolling(5.0), &Surface::GREEN);
     let with_spin = roll(
-        DVec3::new(5.0, 0.0, 0.0),
+        Vec3::new(5.0, 0.0, 0.0),
         backspin(rpm_to_rads(5000.0)),
         &Surface::GREEN,
     );
@@ -1494,7 +1490,7 @@ fn backspin_reduces_rollout() {
 #[test]
 fn extreme_backspin_can_reverse() {
     let g = roll(
-        DVec3::new(2.0, 0.0, 0.0),
+        Vec3::new(2.0, 0.0, 0.0),
         backspin(rpm_to_rads(8000.0)),
         &Surface::GREEN,
     );
@@ -1505,7 +1501,7 @@ fn extreme_backspin_can_reverse() {
 fn driver_rollout_reasonable() {
     // ~10 m/s forward, nearly rolling: the speed-dependent rolling
     // resistance keeps a firm-fairway roll short.
-    let g = roll(DVec3::new(10.0, 0.0, 0.0), rolling(8.0), &Surface::FAIRWAY);
+    let g = roll(Vec3::new(10.0, 0.0, 0.0), rolling(8.0), &Surface::FAIRWAY);
     let yards = units::meters_to_yards(g.rest.pos.x);
     assert!(yards > 5.0 && yards < 60.0, "rollout {yards:.1} yds");
 }
@@ -1513,21 +1509,21 @@ fn driver_rollout_reasonable() {
 #[test]
 fn ground_physics_step() {
     let physics = GroundPhysics::new(Surface::GREEN);
-    let sliding = state(DVec3::new(3.0, 0.0, 0.0), backspin(300.0));
+    let sliding = state(Vec3::new(3.0, 0.0, 0.0), backspin(300.0));
     let (next, phase) = physics.step(&sliding, &BALL);
     assert_eq!(phase, Phase::Slide);
     assert!((next.time - 0.001).abs() < 1e-15 && next.vel.x < 3.0);
 
-    let rolling_ball = state(DVec3::new(3.0, 0.0, 0.0), rolling(3.0));
+    let rolling_ball = state(Vec3::new(3.0, 0.0, 0.0), rolling(3.0));
     let (next, phase) = physics.step(&rolling_ball, &BALL);
     assert_eq!(phase, Phase::Roll);
     assert!((next.spin.z + next.vel.x / R).abs() < 1e-9);
 
     // A ball slower than one step's deceleration stops inside the step.
-    let creeping = state(DVec3::new(1e-4, 0.0, 0.0), rolling(1e-4));
+    let creeping = state(Vec3::new(1e-4, 0.0, 0.0), rolling(1e-4));
     let (next, phase) = physics.step(&creeping, &BALL);
     assert_eq!(phase, Phase::Roll);
-    assert_eq!(next.vel, DVec3::ZERO);
+    assert_eq!(next.vel, Vec3::ZERO);
     assert!(next.time < 0.001 && next.pos.x > 0.0);
 
     // The step uses the instance's tunables: its `dt`, and its
@@ -1539,9 +1535,9 @@ fn ground_physics_step() {
     };
     let (next, _) = tuned.step(&rolling_ball, &BALL);
     assert!((next.time - 0.002).abs() < 1e-15);
-    let slow = state(DVec3::new(0.3, 0.0, 0.0), rolling(0.3));
-    assert_ne!(physics.step(&slow, &BALL).0.vel, DVec3::ZERO);
-    assert_eq!(tuned.step(&slow, &BALL).0.vel, DVec3::ZERO);
+    let slow = state(Vec3::new(0.3, 0.0, 0.0), rolling(0.3));
+    assert_ne!(physics.step(&slow, &BALL).0.vel, Vec3::ZERO);
+    assert_eq!(tuned.step(&slow, &BALL).0.vel, Vec3::ZERO);
 
     // It samples its own terrain under the ball.
     let split = GroundPhysics::new(FnTerrain(|x: f64, _z: f64| {
@@ -1552,7 +1548,7 @@ fn ground_physics_step() {
         }
     }));
     let far = BallState {
-        pos: DVec3::new(5.0, 0.0, 0.0),
+        pos: Vec3::new(5.0, 0.0, 0.0),
         ..rolling_ball
     };
     let on_fairway = GroundPhysics::new(Surface::FAIRWAY).step(&far, &BALL);
@@ -1576,19 +1572,19 @@ fn hollow_ball_follows_generalized_formulas() {
     // Grip on rigid ground: heading atan(v_z / (v_x − k·R·ω_b)).
     let rigid = plane(0.5, 1.0, 0.0);
     for (vel, w) in [
-        (DVec3::new(20.0, -12.0, 3.0), 250.0),
-        (DVec3::new(15.0, -14.0, -2.0), 300.0),
+        (Vec3::new(20.0, -12.0, 3.0), 250.0),
+        (Vec3::new(15.0, -14.0, -2.0), 300.0),
     ] {
         let out = impact(&state(vel, backspin(w)), &rigid.sample(0.0, 0.0), &hollow);
         let expected = vel.z.atan2(vel.x - k * R * w);
         assert!((out.vel.z.atan2(out.vel.x) - expected).abs() < 1e-12);
-        assert!(slip(out.vel, out.spin, DVec3::Y, R).length() < 1e-12);
+        assert!(slip(out.vel, out.spin, Vec3::Y, R).length() < 1e-12);
     }
 
     // Slide to roll after |u₀| / (((1+k)/k)·μ·g).
-    let vel = DVec3::new(3.0, 0.0, 0.5);
-    let spin = DVec3::new(-20.0, 30.0, 300.0);
-    let expected = slip(vel, spin, DVec3::Y, R).length() / ((1.0 + k) / k * 0.40 * G);
+    let vel = Vec3::new(3.0, 0.0, 0.5);
+    let spin = Vec3::new(-20.0, 30.0, 300.0);
+    let expected = slip(vel, spin, Vec3::Y, R).length() / ((1.0 + k) / k * 0.40 * G);
     let g = Surface::GREEN.settle(&state(vel, spin), &hollow, air());
     let roll_start = g.points.iter().find(|p| p.phase == Phase::Roll).unwrap();
     assert!((roll_start.time - expected).abs() < 1e-12);
@@ -1596,11 +1592,7 @@ fn hollow_ball_follows_generalized_formulas() {
     // Stimpmeter: (1+k)·v_ref²/(2·μ_roll·g)·ln(1 + v₀²/v_ref²).
     let v0 = STIMPMETER_SPEED;
     for surface in [Surface::GREEN, Surface::FAIRWAY] {
-        let g = surface.settle(
-            &state(DVec3::new(v0, 0.0, 0.0), rolling(v0)),
-            &hollow,
-            air(),
-        );
+        let g = surface.settle(&state(Vec3::new(v0, 0.0, 0.0), rolling(v0)), &hollow, air());
         let RollLaw::Quadratic { v_ref: vr } = surface.roll_law else {
             panic!("presets use the quadratic law");
         };
@@ -1623,12 +1615,12 @@ fn ground_point_times_are_monotonic() {
     // deceleration in one step (up to ~26 ms on `GREEN`).
     let mut results = vec![
         roll(
-            DVec3::new(3.0, 0.0, 0.5),
-            DVec3::new(-20.0, 30.0, 300.0),
+            Vec3::new(3.0, 0.0, 0.5),
+            Vec3::new(-20.0, 30.0, 300.0),
             &Surface::GREEN,
         ),
         roll(
-            DVec3::new(2.0, 0.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
             backspin(rpm_to_rads(8000.0)),
             &Surface::GREEN,
         ),
@@ -1637,7 +1629,7 @@ fn ground_point_times_are_monotonic() {
             ..GroundPhysics::new(Surface::GREEN)
         }
         .settle(
-            &state(DVec3::new(3.0, 0.0, 0.0), backspin(300.0)),
+            &state(Vec3::new(3.0, 0.0, 0.0), backspin(300.0)),
             &BALL,
             air(),
         ),
@@ -1646,15 +1638,15 @@ fn ground_point_times_are_monotonic() {
             ..GroundPhysics::new(Surface::FAIRWAY)
         }
         .settle(
-            &state(DVec3::new(21.3, -18.5, 0.0), backspin(212.0)),
+            &state(Vec3::new(21.3, -18.5, 0.0), backspin(212.0)),
             &BALL,
             air(),
         ),
     ];
     for (vel, spin) in [
-        (DVec3::new(21.3, -18.5, 0.0), backspin(212.0)),
-        (DVec3::new(21.0, -18.0, 2.5), DVec3::new(0.0, -50.0, 210.0)),
-        (DVec3::new(9.0, -20.0, -1.0), DVec3::new(10.0, 40.0, 700.0)),
+        (Vec3::new(21.3, -18.5, 0.0), backspin(212.0)),
+        (Vec3::new(21.0, -18.0, 2.5), Vec3::new(0.0, -50.0, 210.0)),
+        (Vec3::new(9.0, -20.0, -1.0), Vec3::new(10.0, 40.0, 700.0)),
     ] {
         for surface in [Surface::FAIRWAY, Surface::GREEN] {
             results.push(surface.settle(&state(vel, spin), &BALL, air()));
@@ -1693,17 +1685,17 @@ fn roll_from_fairway_onto_green_ends_between() {
     let v0 = 6.0;
     let mixed = GroundPhysics::new(FnTerrain(|x: f64, _z: f64| GroundSample {
         height: 0.0,
-        normal: DVec3::Y,
+        normal: Vec3::Y,
         surface: if x < 2.0 {
             Surface::FAIRWAY
         } else {
             Surface::GREEN
         },
     }));
-    let start = state(DVec3::new(v0, 0.0, 0.0), rolling(v0));
+    let start = state(Vec3::new(v0, 0.0, 0.0), rolling(v0));
     let g = mixed.settle(&start, &BALL, air());
-    let fairway = roll(DVec3::new(v0, 0.0, 0.0), rolling(v0), &Surface::FAIRWAY);
-    let green = roll(DVec3::new(v0, 0.0, 0.0), rolling(v0), &Surface::GREEN);
+    let fairway = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &Surface::FAIRWAY);
+    let green = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &Surface::GREEN);
     assert_eq!(g.termination, Termination::Rest);
     assert!(
         fairway.rest.pos.x < g.rest.pos.x && g.rest.pos.x < green.rest.pos.x,
@@ -1721,7 +1713,7 @@ fn landing_on_green_from_fn_terrain_uses_green() {
     // The surface at each contact comes from the terrain at that point.
     let terrain = FnTerrain(|x: f64, _z: f64| GroundSample {
         height: 0.0,
-        normal: DVec3::Y,
+        normal: Vec3::Y,
         surface: if x > 0.5 {
             Surface::GREEN
         } else {
@@ -1729,7 +1721,7 @@ fn landing_on_green_from_fn_terrain_uses_green() {
         },
     });
     let g = GroundPhysics::new(terrain).settle(
-        &state(DVec3::new(10.0, -8.0, 0.0), backspin(300.0)),
+        &state(Vec3::new(10.0, -8.0, 0.0), backspin(300.0)),
         &BALL,
         air(),
     );
@@ -1747,11 +1739,7 @@ fn long_roll_reports_max_time() {
             ..Surface::GREEN
         })
     };
-    let g = physics.settle(
-        &state(DVec3::new(3.0, 0.0, 0.0), rolling(3.0)),
-        &BALL,
-        air(),
-    );
+    let g = physics.settle(&state(Vec3::new(3.0, 0.0, 0.0), rolling(3.0)), &BALL, air());
     assert_eq!(g.termination, Termination::MaxTime);
     assert!((g.rest.time - 2.0).abs() < 1e-9);
     assert!((g.rest.pos.x - 6.0).abs() < 1e-6);
@@ -1760,7 +1748,7 @@ fn long_roll_reports_max_time() {
 
 #[test]
 fn ground_physics_tunables() {
-    let start = state(DVec3::new(15.0, -10.0, 0.0), backspin(250.0));
+    let start = state(Vec3::new(15.0, -10.0, 0.0), backspin(250.0));
     let default = GroundPhysics::new(Surface::FAIRWAY).settle(&start, &BALL, air());
     assert_eq!(default, Surface::FAIRWAY.settle(&start, &BALL, air()));
     // A higher hop transition ends the bouncing sooner.
@@ -1783,24 +1771,24 @@ fn ground_physics_tunables() {
 fn default_landing_interpolates_crossing() {
     let a = BallState {
         time: 1.0,
-        pos: DVec3::new(10.0, 0.3, 1.0),
-        vel: DVec3::new(10.0, -3.0, 1.0),
+        pos: Vec3::new(10.0, 0.3, 1.0),
+        vel: Vec3::new(10.0, -3.0, 1.0),
         spin: backspin(100.0),
     };
     let b = BallState {
         time: 1.1,
-        pos: DVec3::new(11.0, -0.1, 1.1),
-        vel: DVec3::new(10.0, -4.0, 1.0),
+        pos: Vec3::new(11.0, -0.1, 1.1),
+        vel: Vec3::new(10.0, -4.0, 1.0),
         spin: backspin(90.0),
     };
     let l = Surface::GREEN.landing(&a, &b).unwrap();
     assert!((l.time - 1.075).abs() < 1e-12);
-    assert!((l.pos - DVec3::new(10.75, 0.0, 1.075)).length() < 1e-12 && l.pos.y == 0.0);
+    assert!((l.pos - Vec3::new(10.75, 0.0, 1.075)).length() < 1e-12 && l.pos.y == 0.0);
     assert!((l.vel.y + 3.75).abs() < 1e-12 && (l.spin.z - 92.5).abs() < 1e-12);
     // Leaving the ground is not a landing.
     assert!(Surface::GREEN.landing(&b, &a).is_none());
     let tee = BallState {
-        pos: DVec3::ZERO,
+        pos: Vec3::ZERO,
         ..a
     };
     assert!(Surface::GREEN.landing(&tee, &a).is_none());
