@@ -13,11 +13,9 @@
 //! # Example
 //!
 //! ```
-//! use dimple::aero::BallModel;
-//! use dimple::environment::Environment;
-//! use dimple::ground::Surface;
-//! use dimple::stats::ShotStats;
-//! use dimple::trajectory::{ShotInput, simulate_flight, simulate_shot};
+//! use dimple::{
+//!     BallModel, Environment, ShotInput, ShotStats, Surface, simulate_flight, simulate_shot,
+//! };
 //!
 //! // A right-handed fade: starts 1° right, curves further right.
 //! let input = ShotInput {
@@ -145,4 +143,9 @@ pub mod trajectory;
 pub mod units;
 mod vec3;
 
+pub use aero::BallModel;
+pub use environment::Environment;
+pub use ground::Surface;
+pub use stats::ShotStats;
+pub use trajectory::{ShotInput, simulate_flight, simulate_shot};
 pub use vec3::Vec3;
