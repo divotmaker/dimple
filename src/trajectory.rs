@@ -305,7 +305,8 @@ pub fn simulate_shot<G: GroundModel + ?Sized>(
 
 /// Interpolate trajectory position at a given time.
 ///
-/// Returns `None` if `t` is outside the trajectory time range.
+/// Returns `None` for an empty trajectory or a `t` before its first point; a
+/// `t` past the last point returns the last position.
 #[must_use]
 pub fn interpolate_trajectory(points: &[TrajectoryPoint], t: f64) -> Option<Vec3> {
     if points.is_empty() || t < points[0].time {
