@@ -65,6 +65,11 @@
 //! lands where the flight crosses the surface;
 //! [`trajectory::simulate_flight`] always lands on the plane y = 0.
 //!
+//! **Parameter structs grow.** [`Surface`], [`BallModel`],
+//! [`ground::GroundPhysics`] and [`Environment`] gain fields in minor
+//! releases, so build them from a preset (or [`ground::GroundPhysics::new`])
+//! with `..`, e.g. `BallModel { mass_kg: 0.046, ..BallModel::TOUR }`.
+//!
 //! # Conventions
 //!
 //! **Units.** All internal computation is SI (meters, seconds, kilograms,
