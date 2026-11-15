@@ -258,10 +258,10 @@ fn energy_never_increases_at_impact() {
 fn impact_mirror_symmetry() {
     // Mirroring the impact in z (a pseudovector spin flips x and y) mirrors
     // the outcome; mirroring in x (spin flips y and z) likewise.
-    let mz = |v: Vec3| Vec3::new(v.x, v.y, -v.z);
-    let mz_spin = |w: Vec3| Vec3::new(-w.x, -w.y, w.z);
-    let mx = |v: Vec3| Vec3::new(-v.x, v.y, v.z);
-    let mx_spin = |w: Vec3| Vec3::new(w.x, -w.y, -w.z);
+    let sideways = |v: Vec3| Vec3::new(v.x, v.y, -v.z);
+    let sideways_spin = |w: Vec3| Vec3::new(-w.x, -w.y, w.z);
+    let backward = |v: Vec3| Vec3::new(-v.x, v.y, v.z);
+    let backward_spin = |w: Vec3| Vec3::new(w.x, -w.y, -w.z);
     for (vel, spin) in [
         (Vec3::new(5.0, -3.0, 0.0), backspin(-5.0 / R)),
         (Vec3::new(15.0, -10.0, 2.0), Vec3::new(20.0, -60.0, 300.0)),
@@ -269,12 +269,12 @@ fn impact_mirror_symmetry() {
     ] {
         for surface in [Surface::FAIRWAY, Surface::GREEN] {
             let fwd = hit(vel, spin, &surface);
-            let z = hit(mz(vel), mz_spin(spin), &surface);
-            assert!((z.vel - mz(fwd.vel)).length() < 1e-12);
-            assert!((z.spin - mz_spin(fwd.spin)).length() < 1e-9);
-            let x = hit(mx(vel), mx_spin(spin), &surface);
-            assert!((x.vel - mx(fwd.vel)).length() < 1e-12);
-            assert!((x.spin - mx_spin(fwd.spin)).length() < 1e-9);
+            let z = hit(sideways(vel), sideways_spin(spin), &surface);
+            assert!((z.vel - sideways(fwd.vel)).length() < 1e-12);
+            assert!((z.spin - sideways_spin(fwd.spin)).length() < 1e-9);
+            let x = hit(backward(vel), backward_spin(spin), &surface);
+            assert!((x.vel - backward(fwd.vel)).length() < 1e-12);
+            assert!((x.spin - backward_spin(fwd.spin)).length() < 1e-9);
         }
     }
 }

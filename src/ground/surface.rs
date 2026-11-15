@@ -75,7 +75,7 @@ impl Restitution {
 }
 
 /// Speed dependence of the rolling resistance:
-/// μ_eff(v) = [`mu_roll`](Surface::mu_roll) · f(v), with f(0) = 1 for every
+/// `μ_eff(v)` = [`mu_roll`](Surface::mu_roll) · f(v), with f(0) = 1 for every
 /// law, so `mu_roll` is always the zero-speed value.
 ///
 /// No law is validated above 3 m/s: the only published speed-dependent fits
@@ -89,7 +89,7 @@ impl Restitution {
 #[non_exhaustive]
 pub enum RollLaw {
     /// f = 1: constant rolling resistance, Penner's (2002) run model (his
-    /// ρ_g = 0.131 reads about 6.0 ft on the stimpmeter).
+    /// `ρ_g` = 0.131 reads about 6.0 ft on the stimpmeter).
     Constant,
     /// f = 1 + (v / `v_ref`)²: dimple's own empirical law, not a fit to
     /// published data. The presets use `v_ref` = 2.5 m/s, which keeps
@@ -200,7 +200,7 @@ pub struct Surface {
     /// of a slowly rolling ball, and what holds a ball at rest on a slope.
     pub mu_roll: f64,
     /// How the rolling resistance grows (or falls) with speed:
-    /// μ_eff = `mu_roll` · f(v). The presets use
+    /// `μ_eff` = `mu_roll` · f(v). The presets use
     /// `RollLaw::Quadratic { v_ref: 2.5 }`.
     pub roll_law: RollLaw,
     /// Turf compliance: dimensionless multiplier on Penner's (2002) eq. 8

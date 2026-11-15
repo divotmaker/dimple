@@ -120,7 +120,7 @@ mod tests {
 
         let mut s = state;
         for i in 0..1000 {
-            s = step(s, i as f64 * dt, dt, |_, _, _| a);
+            s = step(s, f64::from(i) * dt, dt, |_, _, _| a);
         }
 
         let t = 1.0;

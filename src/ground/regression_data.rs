@@ -17,6 +17,11 @@
 //! deceleration below 5 cm/s, so it agrees with the RK4 ground phase to
 //! about 0.01 mm.
 
+#![allow(
+    clippy::unreadable_literal,
+    reason = "reference values digit for digit as the solver prints them"
+)]
+
 pub(super) struct Reference {
     pub name: &'static str,
     pub surface: super::Surface,

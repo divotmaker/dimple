@@ -82,6 +82,10 @@ pub(super) fn onto_surface(
     rolling: bool,
     radius: f64,
 ) -> BallState {
+    #[allow(
+        clippy::float_cmp,
+        reason = "only an exact match may skip the projection"
+    )]
     if at.normal == prev_normal && state.pos.y == at.height {
         return *state;
     }
@@ -152,6 +156,17 @@ impl Patch {
     }
 }
 
+/// Angular acceleration of pivot friction, `pivot_rate` (rad/s²) against
+/// the spin `w_n` about the normal `n`. Pivot friction opposes that spin;
+/// with none (of either sign of zero) there is none.
+fn pivot_friction(w_n: f64, pivot_rate: f64, n: Vec3) -> Vec3 {
+    if w_n == 0.0 {
+        Vec3::ZERO
+    } else {
+        -w_n.signum() * pivot_rate * n
+    }
+}
+
 /// One ground step of at most `dt` on the ground sample `at`; see
 /// [`GroundPhysics::step`]. Returns the new state, the phase over the step
 /// and whether the ball ends it rolling. The ball is left in the tangent
@@ -177,13 +192,7 @@ pub(super) fn contact_step(
     let vel = state.vel - state.vel.dot(n) * n;
     let spin = state.spin;
     let w_n = spin.dot(n);
-    // Pivot friction opposes the spin about the normal; with none (of
-    // either sign of zero) there is none.
-    let pivot_accel = if w_n == 0.0 {
-        Vec3::ZERO
-    } else {
-        -w_n.signum() * surface.pivot * g_n / inertia * n
-    };
+    let pivot_accel = pivot_friction(w_n, surface.pivot * g_n / inertia, n);
 
     let slip_speed = slip(vel, spin, n, radius).length();
 

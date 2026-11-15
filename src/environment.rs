@@ -38,7 +38,7 @@ impl Environment {
     /// - M = 0.0289644 kg/mol (molar mass of dry air)
     /// - R = 8.31447 J/(mol·K) (universal gas constant)
     ///
-    /// Temperature correction: scales by T_standard / T_actual at altitude.
+    /// Temperature correction: scales by `T_standard` / `T_actual` at altitude.
     #[must_use]
     pub fn air_density(&self) -> f64 {
         const RHO_0: f64 = 1.225;

@@ -5,7 +5,7 @@
 //!   green", *Sports Engineering* 26:50, doi:10.1007/s12283-023-00442-4,
 //!   CC BY 4.0. Bounces on an artificial mat on a rigid base (Campaign A)
 //!   and on a natural tee (Campaign B). Used here: the fitted contact-angle
-//!   coefficients k_P of Table 3, the "typical driver landing" of Fig. 3,
+//!   coefficients `k_P` of Table 3, the "typical driver landing" of Fig. 3,
 //!   and the piecewise-affine landing-to-lift-off fits of eqs (8) (A) and
 //!   (9) (B), with their error measures, eqs (5)–(6). The paper publishes
 //!   its per-bounce measurements as figures and fits, so the fits stand in
@@ -19,7 +19,7 @@
 //!   Green?", *USGA Green Section Record* 50(25): landing shots on a 1.5%
 //!   bermudagrass green, mowed to about 12 ft. Summary values only: mean
 //!   bounce and roll 32.5 ft downhill and 13.5 ft uphill, firmer turf
-//!   (0.08 in on the TruFirm) 9–12 ft further uphill, green speeds 11 ft 3 in
+//!   (0.08 in on the USGA firmness gauge) 9–12 ft further uphill, green speeds 11 ft 3 in
 //!   and 12 ft 3 in no different, some wedge distances negative.
 //! - Cross, R. (2024), "Trajectory of a golf ball on a sloping green", *Eur.
 //!   J. Phys.* 45, 035002, doi:10.1088/1361-6404/ad2c2d: under constant rolling
@@ -236,7 +236,7 @@ fn penner_contact_angle_in_scaled_units() {
     }
 }
 
-/// One branch of a piecewise-affine bounce fit, p_F = A·p₀ + b, in Biber et
+/// One branch of a piecewise-affine bounce fit, `p_F` = A·p₀ + b, in Biber et
 /// al.'s scaled units: p = (ẋ, ẏ, ω), velocities in ball radii per second,
 /// ω in rad/s with backspin positive.
 struct Affine {
@@ -394,8 +394,9 @@ fn bounces(fit: &BounceFit, landings: &[BallState], surface: Surface) -> Vec<Bou
 }
 
 /// Biber et al.'s error measures, eqs (5)–(6), of dimple against the fit:
-/// δ = mean of |p_F − P_F| / |p₀|, and per component Δq = mean of
-/// |q_F − Q_F| / |p₀|. Returns (δ, Δẋ, Δẏ, Δω).
+/// δ = mean of |`p_F` − `P_F`| / |p₀|, and per component Δq = mean of
+/// |`q_F` − `Q_F`| / |p₀|. Returns (δ, Δẋ, Δẏ, Δω).
+#[allow(clippy::cast_precision_loss, reason = "a few dozen bounces")]
 fn errors(b: &[Bounce]) -> (f64, f64, f64, f64) {
     let n = b.len() as f64;
     let mut e = (0.0, 0.0, 0.0, 0.0);
@@ -405,16 +406,17 @@ fn errors(b: &[Bounce]) -> (f64, f64, f64, f64) {
             x.fit[1] - x.model[1],
             x.fit[2] - x.model[2],
         ];
-        let p = dot(x.p0, x.p0).sqrt();
-        e.0 += dot(d, d).sqrt() / p;
-        e.1 += d[0].abs() / p;
-        e.2 += d[1].abs() / p;
-        e.3 += d[2].abs() / p;
+        let p0 = dot(x.p0, x.p0).sqrt();
+        e.0 += dot(d, d).sqrt() / p0;
+        e.1 += d[0].abs() / p0;
+        e.2 += d[1].abs() / p0;
+        e.3 += d[2].abs() / p0;
     }
     (e.0 / n, e.1 / n, e.2 / n, e.3 / n)
 }
 
-/// Mean normal rebound ratio |ẏ_F / ẏ₀| of the fit and of dimple.
+/// Mean normal rebound ratio |`ẏ_F` / ẏ₀| of the fit and of dimple.
+#[allow(clippy::cast_precision_loss, reason = "a few dozen bounces")]
 fn rebound(b: &[Bounce]) -> (f64, f64) {
     let n = b.len() as f64;
     let fit = b.iter().map(|x| x.fit[1] / -x.p0[1]).sum::<f64>() / n;

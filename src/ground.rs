@@ -574,6 +574,10 @@ impl<T: Terrain> GroundPhysics<T> {
     ) -> Option<BallState> {
         let clearance = |tau: f64| self.clearance(arc(tau).pos);
         let (lo, (hi, f_hi)) = first_crossing(clearance, h, clearance(0.0), end)?;
+        #[allow(
+            clippy::float_cmp,
+            reason = "`hi` is `h` itself when the crossing is in the last sub-step"
+        )]
         let f_hi = if hi == h { clearance(h).min(0.0) } else { f_hi };
         let end_height = self.sample(arc(h).pos).height;
         let guess = drop_time(a.pos.y - end_height, a.vel.y).clamp(lo.0, hi);
@@ -925,7 +929,7 @@ fn hops_die_out(
 /// direction of the incoming tangential velocity, `R` the radius and `k` the
 /// inertia factor:
 ///
-/// 1. Tilt: β = `compliance` · θc (Penner eq. 8) · min(1, v_n / 2 m/s),
+/// 1. Tilt: β = `compliance` · θc (Penner eq. 8) · min(1, `v_n` / 2 m/s),
 ///    with `v_n = −v·n` the normal impact speed, capped at the incidence
 ///    angle; effective normal `n' = n cos β − t̂ sin β`, leaning back toward
 ///    the incoming ball. The tilt models the crater a landing presses into
@@ -975,8 +979,8 @@ pub fn impact(state: &BallState, at: &GroundSample, ball: &BallModel) -> BallSta
     let e = surface.restitution.coefficient_at(v_n_eff);
     let j_n = (1.0 + e) * -v_n_eff;
 
-    let r = -radius * n_eff;
-    let slip = (v - v_n_eff * n_eff) + state.spin.cross(r);
+    let lever = -radius * n_eff;
+    let slip = (v - v_n_eff * n_eff) + state.spin.cross(lever);
     let slip_speed = slip.length();
     let j_t = (slip_speed * k / (1.0 + k)).min(surface.mu_slide * j_n);
     let j_t_vec = if slip_speed > 0.0 {
@@ -987,7 +991,7 @@ pub fn impact(state: &BallState, at: &GroundSample, ball: &BallModel) -> BallSta
 
     let inertia = k * radius * radius; // per unit mass
     let vel = v + j_n * n_eff + j_t_vec;
-    let mut spin = state.spin + r.cross(j_t_vec) / inertia;
+    let mut spin = state.spin + lever.cross(j_t_vec) / inertia;
 
     let w_n = spin.dot(n);
     let dw = w_n.abs().min(surface.pivot * j_n / inertia);
@@ -1003,8 +1007,10 @@ pub fn impact(state: &BallState, at: &GroundSample, ball: &BallModel) -> BallSta
 #[cfg(test)]
 mod regression_data;
 #[cfg(test)]
+#[allow(clippy::float_cmp, reason = "the tests assert exact results")]
 mod terrain_tests;
 #[cfg(test)]
+#[allow(clippy::float_cmp, reason = "the tests assert exact results")]
 mod tests;
 #[cfg(test)]
 mod validation_tests;

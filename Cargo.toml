@@ -2,7 +2,7 @@
 name = "dimple"
 version = "0.0.8"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.94"
 license = "MIT OR Apache-2.0"
 description = "Golf ball-flight physics: aerodynamics, RK4 trajectory, bounce and roll on pluggable terrain"
 repository = "https://github.com/divotmaker/dimple"
@@ -13,3 +13,9 @@ exclude = [".github/", "rust-toolchain.toml"]
 
 [lib]
 name = "dimple"
+
+[lints.rust]
+missing_docs = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }

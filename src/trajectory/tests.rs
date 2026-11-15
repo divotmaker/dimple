@@ -1009,6 +1009,7 @@ fn fade_rests_right_draw_rests_left() {
 }
 
 #[test]
+#[allow(clippy::float_cmp, reason = "no sidespin, no lateral motion at all")]
 fn sidespin_hop_curves_right() {
     // A hop through air carrying positive sidespin (angular velocity
     // along -Y, a fade's) curves right, like the flight; the mirrored
@@ -1255,6 +1256,10 @@ fn pinned_shots() -> [[f64; 6]; 3] {
 }
 
 #[test]
+#[allow(
+    clippy::unreadable_literal,
+    reason = "exact f64 values as `{:?}` prints them"
+)]
 fn full_shot_outputs_are_pinned() {
     assert_eq!(
         pinned_shots(),

@@ -216,17 +216,14 @@ fn fly<G: GroundModel + ?Sized>(
         prev = next;
     }
 
-    let end = match landing {
-        Some(l) => {
-            points.push(trajectory_point(&l));
-            l
+    let end = if let Some(l) = landing {
+        points.push(trajectory_point(&l));
+        l
+    } else {
+        if points.last().is_none_or(|p| p.time < prev.time) {
+            points.push(trajectory_point(&prev));
         }
-        None => {
-            if points.last().is_none_or(|p| p.time < prev.time) {
-                points.push(trajectory_point(&prev));
-            }
-            prev
-        }
+        prev
     };
 
     let carry_m = end.pos.x.hypot(end.pos.z);

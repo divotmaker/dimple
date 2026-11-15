@@ -42,29 +42,29 @@ pub struct BallModel {
     // Cd = cd_base(Re) + cd_spin × SR / (1 + SR / sr_sat)
     //   where cd_base = cd_sub + (cd_super - cd_sub) × σ(Re)
     //   and σ(Re) = sigmoid transition at the drag crisis
-    /// Drag coefficient in the subcritical regime (Re < re_crit).
+    /// Drag coefficient in the subcritical regime (Re < `re_crit`).
     /// This is the base Cd before the ball's dimples trigger the drag crisis.
     /// Lower values mean less drag at low speeds (late in flight, short chips).
     /// Typical range: 0.18–0.25.
     pub cd_sub: f64,
 
-    /// Base drag coefficient in the supercritical regime (Re > re_crit), at zero spin.
+    /// Base drag coefficient in the supercritical regime (Re > `re_crit`), at zero spin.
     /// This is the "cruise" Cd for a non-spinning ball at full flight speed.
     /// Modern tour balls: ~0.20. 1990s balls: ~0.30. Range balls: ~0.25.
     /// Lower values = longer carry. This is the single most sensitive constant
     /// for carry distance.
     pub cd_super: f64,
 
-    /// Spin-dependent drag slope: Cd += cd_spin × SR / (1 + SR / sr_sat).
+    /// Spin-dependent drag slope: Cd += `cd_spin` × SR / (1 + SR / `sr_sat`).
     /// Spin drag is dominated by induced drag from Magnus lift, so it
-    /// saturates as Cl saturates — the term is near-linear (slope cd_spin)
-    /// below SR ≈ sr_sat and approaches the cap cd_spin × sr_sat at high SR.
+    /// saturates as Cl saturates — the term is near-linear (slope `cd_spin`)
+    /// below SR ≈ `sr_sat` and approaches the cap `cd_spin` × `sr_sat` at high SR.
     /// At driver SR≈0.08: adds ~0.05. At wedge SR≈0.46: adds ~0.14.
     pub cd_spin: f64,
 
     /// Saturation constant for spin drag (dimensionless spin ratio).
-    /// The spin-drag term reaches half its asymptotic cap at SR = sr_sat and
-    /// caps at cd_spin × sr_sat. Set to `f64::INFINITY` for a purely linear
+    /// The spin-drag term reaches half its asymptotic cap at SR = `sr_sat` and
+    /// caps at `cd_spin` × `sr_sat`. Set to `f64::INFINITY` for a purely linear
     /// spin-drag term (1990s patent model).
     pub sr_sat: f64,
 
@@ -72,7 +72,7 @@ pub struct BallModel {
     //
     // Cl = cl_max(Re) × (1 - exp(-SR / sr_scale))
     //   where cl_max = cl_sub + (cl_super - cl_sub) × σ(Re)
-    /// Lift coefficient ceiling in the subcritical regime (Re < re_crit).
+    /// Lift coefficient ceiling in the subcritical regime (Re < `re_crit`).
     /// Controls how much Magnus lift the ball generates at low speeds (late in
     /// flight). Critical for high-trajectory shots (wedges, high-launch drivers)
     /// that decelerate through the drag crisis. Too low and these shots fall short.
@@ -86,7 +86,7 @@ pub struct BallModel {
     pub cl_super: f64,
 
     /// Exponential saturation rate for lift vs spin ratio.
-    /// Controls how quickly Cl approaches cl_super as SR increases.
+    /// Controls how quickly Cl approaches `cl_super` as SR increases.
     /// Smaller values = faster saturation = more lift at low SR (driver).
     /// Larger values = slower saturation = Cl stays low until high SR (irons).
     /// TOUR gives Cl ≈ 0.19 at SR=0.1 (Li et al. 2017 LES: 0.135).
@@ -99,7 +99,7 @@ pub struct BallModel {
     /// smooth spheres (~300,000) because dimples trip the boundary layer early.
     pub re_crit: f64,
 
-    /// Width of the sigmoid transition region around re_crit.
+    /// Width of the sigmoid transition region around `re_crit`.
     /// Controls how abruptly the drag crisis transition happens.
     /// Smaller values = sharper transition. Larger = more gradual blending.
     pub re_width: f64,
@@ -113,11 +113,11 @@ impl BallModel {
     /// (carry, peak height, descent, offline across 26–153 mph and
     /// 0.8k–14k rpm). See docs/AERO.md for the full model documentation.
     ///
-    /// Key structural feature: **saturating spin drag** (sr_sat). Spin drag is
+    /// Key structural feature: **saturating spin drag** (`sr_sat`). Spin drag is
     /// mostly induced drag from Magnus lift, which saturates in SR as Cl does.
-    /// The high-slope/early-cap form (cd_spin=0.85, sr_sat=0.25) lets high-spin
+    /// The high-slope/early-cap form (`cd_spin` = 0.85, `sr_sat` = 0.25) lets high-spin
     /// irons carry heavy late-flight drag (steep 47-52° descent matching
-    /// Trackman) without collapsing subcritical lift — cl_sub sits at a
+    /// Trackman) without collapsing subcritical lift — `cl_sub` sits at a
     /// physically plausible 0.203 (wind tunnel: 0.15-0.28).
     ///
     /// Aerodynamic sources:
@@ -125,7 +125,7 @@ impl BallModel {
     ///   Re=1.1e5: Cd=0.217 (static), Cd=0.240 (spinning, G=0.1), Cl=0.135.
     ///   This model at driver SR≈0.08: Cd≈0.24, Cl≈0.16.
     /// - Lyu, Kensrud, Smith & Tosaya (2018), ISEA Proc. 2(6):238 — trajectory fit
-    ///   on 13 production balls, Cd~0.20 average at high Re (cd_super=0.186 + spin)
+    ///   on 13 production balls, Cd~0.20 average at high Re (`cd_super` = 0.186 + spin)
     /// - Crabill (2019), Sports Eng. 22:1-9 — high-order CFD at Re=1.5e5: Cd=0.247
     /// - Bearman & Harvey (1976), Aero. Q. 27:112-122 — original wind tunnel study
     ///
@@ -161,7 +161,7 @@ impl BallModel {
     /// - **Base Cd much higher** (0.29 vs 0.186 + spin term): 1990s dimple patterns
     ///   created more drag.
     ///   This is the dominant factor — accounts for ~80% of the carry distance gap.
-    /// - **Cl saturates almost instantly** (sr_scale=0.01 vs 0.115): patent data shows
+    /// - **Cl saturates almost instantly** (`sr_scale` = 0.01 vs 0.115): patent data shows
     ///   nearly constant Cl≈0.28 across all SR values, meaning lift was independent of
     ///   spin ratio. Modern balls have spin-sensitive lift (low Cl at low SR, high Cl
     ///   at high SR), rewarding the "high launch, low spin" strategy.
@@ -556,10 +556,10 @@ mod tests {
     // aerodynamic behavior of 1990s golf balls. The constants were fitted by
     // minimizing RMSE across all 7 data points (RMSE: Cd=0.008, Cl=0.006).
 
-    fn patent_cd_cl(v_fps: f64, spin_revs: f64) -> (f64, f64) {
-        let v_mps = v_fps * 0.3048;
-        let spin_rads = spin_revs * 2.0 * std::f64::consts::PI;
-        PATENT.cd_cl(spin_rads, v_mps, SEA_LEVEL_RHO)
+    fn patent_cd_cl(feet_per_s: f64, revs_per_s: f64) -> (f64, f64) {
+        let speed = feet_per_s * 0.3048;
+        let spin_rads = revs_per_s * 2.0 * std::f64::consts::PI;
+        PATENT.cd_cl(spin_rads, speed, SEA_LEVEL_RHO)
     }
 
     #[test]

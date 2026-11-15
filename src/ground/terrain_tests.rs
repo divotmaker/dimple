@@ -490,8 +490,8 @@ fn landing_root_find_is_on_curved_terrain() {
 
         let fa = a.pos.y - wavy(a.pos.x, a.pos.z);
         let fb = b.pos.y - wavy(b.pos.x, b.pos.z);
-        let p = a.pos.lerp(b.pos, fa / (fa - fb));
-        worst_linear = worst_linear.max((p.y - wavy(p.x, p.z)).abs());
+        let guess = a.pos.lerp(b.pos, fa / (fa - fb));
+        worst_linear = worst_linear.max((guess.y - wavy(guess.x, guess.z)).abs());
     }
     assert!(
         worst_linear > 1e-3,
@@ -939,8 +939,8 @@ fn landing_finds_the_first_crossing_of_a_wall_and_a_ridge() {
     assert!((on_segment.y - ridge(on_segment.x, 0.0)).abs() < 1e-9);
     // Nothing earlier on the segment is below the ridge.
     for i in 0..1000 {
-        let p = a.pos.lerp(b.pos, s * f64::from(i) / 1000.0);
-        assert!(p.y > ridge(p.x, 0.0));
+        let before = a.pos.lerp(b.pos, s * f64::from(i) / 1000.0);
+        assert!(before.y > ridge(before.x, 0.0));
     }
 }
 
@@ -1085,18 +1085,18 @@ fn slide_ends_rolling_on_curved_ground_without_flicker() {
     );
 
     // The same in `settle`: one switch from Slide to Roll.
-    let g = ground.settle(&start, &BALL, air());
-    let switches = g
+    let settled = ground.settle(&start, &BALL, air());
+    let switches = settled
         .points
         .windows(2)
         .filter(|w| w[0].phase != w[1].phase)
         .count();
-    assert_eq!(g.points[0].phase, Phase::Slide);
+    assert_eq!(settled.points[0].phase, Phase::Slide);
     assert_eq!(
         switches,
         1,
         "{:?}",
-        g.points.iter().map(|p| p.phase).collect::<Vec<_>>()
+        settled.points.iter().map(|p| p.phase).collect::<Vec<_>>()
     );
-    assert_eq!(g.termination, Termination::Rest);
+    assert_eq!(settled.termination, Termination::Rest);
 }
