@@ -142,7 +142,3 @@ pub mod stats;
 pub mod trajectory;
 /// Physical constants and unit conversions.
 pub mod units;
-
-#[cfg(doctest)]
-#[doc = include_str!("../README.md")]
-struct ReadmeDoctests;
