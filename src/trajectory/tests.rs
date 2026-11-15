@@ -1198,3 +1198,91 @@ fn shot_frame_invariance_about_y() {
         );
     }
 }
+
+// ══════════════════════════════════════════════════════════════════
+//  PINNED OUTPUTS — exact f64 results of three full shots
+// ══════════════════════════════════════════════════════════════════
+
+/// `[carry_m, apex_m, total_m, final_pos.x, final_pos.y, final_pos.z]` of
+/// a driver on `FAIRWAY`, a 7-iron fade on `GREEN`, and a wedge draw onto
+/// a tilted plane, bit for bit.
+fn pinned_shots() -> [[f64; 6]; 3] {
+    use crate::ground::{FnTerrain, GroundPhysics, GroundSample};
+
+    let shot = |speed, launch, az, back, side| ShotInput {
+        ball_speed_mph: speed,
+        launch_angle_deg: launch,
+        launch_azimuth_deg: az,
+        backspin_rpm: back,
+        sidespin_rpm: side,
+    };
+    let env = Environment::SEA_LEVEL;
+    let slope = GroundPhysics::new(FnTerrain(|x: f64, z: f64| GroundSample {
+        height: -0.03 * x + 0.02 * z,
+        normal: DVec3::new(0.03, 1.0, -0.02).normalize(),
+        surface: Surface::GREEN,
+    }));
+    let results = [
+        simulate_shot(
+            &shot(167.0, 10.9, 0.0, 2686.0, 0.0),
+            &BALL,
+            &env,
+            &Surface::FAIRWAY,
+        ),
+        simulate_shot(
+            &shot(120.0, 16.3, 1.5, 7097.0, 900.0),
+            &BALL,
+            &env,
+            &Surface::GREEN,
+        ),
+        simulate_shot(
+            &shot(102.0, 24.2, -2.0, 9304.0, -700.0),
+            &BALL,
+            &env,
+            &slope,
+        ),
+    ];
+    results.map(|r| {
+        [
+            r.flight.carry_m,
+            r.flight.apex_m,
+            r.total_m,
+            r.final_pos.x,
+            r.final_pos.y,
+            r.final_pos.z,
+        ]
+    })
+}
+
+#[test]
+fn full_shot_outputs_are_pinned() {
+    assert_eq!(
+        pinned_shots(),
+        [
+            [
+                246.51510523254217,
+                34.38767873276154,
+                261.9496801636913,
+                261.9496801636913,
+                0.0,
+                0.0,
+            ],
+            [
+                152.2390348557556,
+                28.45641073160605,
+                158.42910845329266,
+                157.74023756597762,
+                0.0,
+                14.7580438383313,
+            ],
+            [
+                123.75756309767006,
+                27.77561824315454,
+                127.03104465367497,
+                126.64267404800755,
+                -3.9977941159404144,
+                -9.92569472500941,
+            ],
+        ]
+    );
+}
