@@ -105,6 +105,7 @@ pub struct TrajectoryPoint {
 
 /// Result of a flight simulation.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct FlightResult {
     /// Sampled trajectory from launch (t = 0) to landing (last point). The
     /// last point is the interpolated ground crossing, exactly on the ground.
@@ -256,6 +257,7 @@ fn trajectory_point(s: &BallState) -> TrajectoryPoint {
 
 /// Result of a full shot simulation: flight, then everything on the ground.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ShotResult {
     /// Airborne phase, launch to first ground contact.
     pub flight: FlightResult,

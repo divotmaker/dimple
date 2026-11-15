@@ -3,6 +3,7 @@ use crate::units;
 
 /// Statistics for a single shot, in display-friendly units.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct ShotStats {
     /// Carry distance (yards).
     pub carry_yards: f64,

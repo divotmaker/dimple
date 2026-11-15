@@ -194,6 +194,7 @@ pub struct BallState {
 
 /// What the ball is doing between ground points.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Phase {
     /// In the air between impacts: gravity, plus drag and Magnus lift from
     /// the ball's aero model when there is air, spin held fixed.
@@ -206,6 +207,7 @@ pub enum Phase {
 
 /// Why the ground phase ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Termination {
     /// The ball came to rest.
     Rest,
