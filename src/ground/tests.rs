@@ -45,12 +45,6 @@ fn hit(vel: Vec3, spin: Vec3, surface: &Surface) -> BallState {
     impact(&state(vel, spin), &surface.sample(0.0, 0.0), &BALL)
 }
 
-/// Impact at `speed` m/s, `from_vertical_deg` from the vertical, moving +X.
-fn penner_impact(speed: f64, from_vertical_deg: f64) -> Vec3 {
-    let phi = units::deg_to_rad(from_vertical_deg);
-    Vec3::new(speed * phi.sin(), -speed * phi.cos(), 0.0)
-}
-
 /// Mechanical energy per unit mass: translation + rotation + height.
 fn energy(vel: Vec3, spin: Vec3, y: f64) -> f64 {
     let k = BALL.inertia_factor();
@@ -360,24 +354,31 @@ fn constant_restitution_ignores_speed() {
 // ══════════════════════════════════════════════════════════════════
 
 #[test]
-fn fairway_bounces_like_green_and_resists_rolling_more() {
-    // FAIRWAY takes Penner's green impact model whole (restitution,
-    // friction and compliance 1.0): a fairway is no firmer than his green,
-    // so the same landing rebounds identically from both. What sets the
-    // fairway apart is on the ground: its rolling resistance and plowing,
-    // stimp 4.8 ft against 11.4.
+fn fairway_bounces_lower_than_green_and_resists_rolling_more() {
+    // The same landing leaves FAIRWAY lower than GREEN (32.5° against
+    // 35.0° at 15 m/s, 34° and 3000 rpm): the measured greens are softer
+    // and grip a little harder. On the ground the fairway resists rolling
+    // more, stimp 5 ft 8 in against 10.5 ft.
     let vel = Vec3::new(15.0, -10.0, 0.0);
     let spin = backspin(rpm_to_rads(3000.0));
-    assert_eq!(
-        hit(vel, spin, &Surface::FAIRWAY),
-        hit(vel, spin, &Surface::GREEN)
+    let angle = |v: Vec3| v.y.atan2(v.x);
+    let fairway = hit(vel, spin, &Surface::FAIRWAY);
+    let green = hit(vel, spin, &Surface::GREEN);
+    assert!(
+        angle(fairway.vel) < angle(green.vel),
+        "{:?} vs {:?}",
+        fairway.vel,
+        green.vel
     );
-    assert!(Surface::FAIRWAY.stimp_feet() < 0.5 * Surface::GREEN.stimp_feet());
+    assert!(Surface::FAIRWAY.stimp_feet() < 0.6 * Surface::GREEN.stimp_feet());
 }
 
 #[test]
 fn backspin_reduces_forward_speed() {
-    let vel = Vec3::new(15.0, -10.0, 0.0);
+    // Up to the friction bound, more backspin leaves less forward speed: on
+    // GREEN a 20 m/s, 53° landing leaves at 3.35 m/s with 2000 rpm and at
+    // 2.22 m/s with 8000 rpm, where the impact slides throughout.
+    let vel = Vec3::new(12.0, -16.0, 0.0);
     let low = hit(vel, backspin(rpm_to_rads(2000.0)), &Surface::GREEN);
     let high = hit(vel, backspin(rpm_to_rads(8000.0)), &Surface::GREEN);
     assert!(
@@ -390,11 +391,16 @@ fn backspin_reduces_forward_speed() {
 
 #[test]
 fn very_high_backspin_can_reverse() {
-    // Wedge shot: steep angle, very high backspin on green → spin back.
-    let angle = units::deg_to_rad(50.0);
-    let vel = 25.0 * Vec3::new(angle.cos(), -angle.sin(), 0.0);
-    let r = hit(vel, backspin(rpm_to_rads(10000.0)), &Surface::GREEN);
-    assert!(r.vel.x < 0.0, "should spin back: vx={:.3}", r.vel.x);
+    // Wedge at 20 m/s, 55° with 10000 rpm on GREEN: the first impact slides
+    // throughout and the ball hops forward still carrying backspin, then
+    // spins back and comes to rest behind its pitch mark.
+    let angle = units::deg_to_rad(55.0);
+    let vel = 20.0 * Vec3::new(angle.cos(), -angle.sin(), 0.0);
+    let spin = backspin(rpm_to_rads(10000.0));
+    let first = hit(vel, spin, &Surface::GREEN);
+    assert!(first.vel.x > 0.0 && first.spin.z > 0.0, "{first:?}");
+    let g = Surface::GREEN.settle(&state(vel, spin), air());
+    assert!(g.rest.pos.x < 0.0, "rests at {:.2} m", g.rest.pos.x);
 }
 
 #[test]
@@ -444,16 +450,14 @@ fn compliance_steepens_rebound() {
 #[test]
 fn compliance_rotates_mirror_rebound_by_two_beta() {
     // Elastic, frictionless impact at 45°: the effective plane is tilted by
-    // Penner's θc = 15.4° · (v / 18.6 m/s) · (φ / 44.4°) toward the ball, so
-    // the specular rebound is the flat-ground mirror direction rotated up by
+    // the fitted contact angle toward the ball, so the specular rebound is the flat-ground mirror direction rotated up by
     // 2β, at full speed. The same holds for any heading.
     for heading in [0.0_f64, 0.4, -2.0] {
         let h = Vec3::new(heading.cos(), 0.0, heading.sin());
         let vel = 10.0 * h - Vec3::new(0.0, 10.0, 0.0);
         let r = hit(vel, Vec3::ZERO, &plane(1.0, 0.0, 1.0));
         let incidence = std::f64::consts::FRAC_PI_4;
-        let beta =
-            units::deg_to_rad(15.4) * (vel.length() / 18.6) * (incidence / units::deg_to_rad(44.4));
+        let beta = fitted_tilt(10.0, 10.0);
         let rebound_angle = r.vel.y.atan2(r.vel.dot(h));
         assert!((rebound_angle - (incidence + 2.0 * beta)).abs() < 1e-12);
         assert!((r.vel.length() - vel.length()).abs() < 1e-12);
@@ -476,7 +480,7 @@ fn no_compliance_is_exact_mirror() {
 
 #[test]
 fn compliance_tilt_capped_at_incidence_angle() {
-    // 10 × θc ≈ 119° would overshoot; β is capped at the 45° incidence
+    // 10 × 11.3° = 113° would overshoot; β is capped at the 45° incidence
     // angle, so the ball meets the effective plane head-on and an elastic
     // frictionless impact sends it straight back.
     let vel = Vec3::new(10.0, -10.0, 0.0);
@@ -484,115 +488,74 @@ fn compliance_tilt_capped_at_incidence_angle() {
     assert!((r.vel + vel).length() < 1e-9, "got {:?}", r.vel);
 }
 
-#[test]
-fn tilt_fades_in_below_two_meters_per_second() {
-    // Penner's contact angle applies in full from 2 m/s of normal impact
-    // speed up and fades in linearly below it: the tilt stands for the
-    // crater a landing presses into the turf, which a soft contact barely
-    // makes. At 0.5 m/s along the ground every case lands at 11° or
-    // steeper, where the shallow-landing cap does not bind.
-    let v_t = 0.5;
-    let penner = |v_n: f64| {
-        let speed = f64::hypot(v_t, v_n);
-        let phi = v_t.atan2(v_n);
-        PENNER_THETA_C * (speed / PENNER_REF_SPEED) * (phi / PENNER_REF_ANGLE)
-    };
-    for v_n in [2.0, 3.0, 10.0, 20.0] {
-        let beta = Surface::GREEN.contact_angle(v_t, v_n);
-        assert!((beta - penner(v_n)).abs() < 1e-15, "v_n {v_n}: β {beta}");
-    }
-    for v_n in [0.1, 0.5, 1.0, 1.5, 1.99] {
-        let beta = Surface::GREEN.contact_angle(v_t, v_n);
-        let faded = penner(v_n) * v_n / 2.0;
-        assert!(
-            (beta - faded).abs() < 1e-15,
-            "v_n {v_n}: β {beta} vs {faded}"
-        );
-    }
-    // `compliance` scales the faded angle too.
-    let half = Surface {
-        compliance: 0.5,
-        ..Surface::GREEN
-    };
-    assert!(
-        (half.contact_angle(v_t, 1.0) - 0.5 * Surface::GREEN.contact_angle(v_t, 1.0)).abs() < 1e-15
-    );
+/// The contact-angle law at compliance 1.0, written out independently of
+/// `Surface::contact_angle`: tan β = (`v_t` / 50 m/s)·(1 − exp(−(θ / 20°)³)).
+fn fitted_tilt(v_t: f64, v_n: f64) -> f64 {
+    let theta = v_n.atan2(v_t);
+    let factor = 1.0 - (-(theta / units::deg_to_rad(20.0)).powi(3)).exp();
+    (v_t / 50.0 * factor).atan()
 }
 
 #[test]
-fn contact_angle_is_eq8_at_published_landings_and_capped_below_22_degrees() {
-    let eq8 = |speed: f64, from_vertical: f64| {
-        PENNER_THETA_C * (speed / PENNER_REF_SPEED) * (from_vertical / PENNER_REF_ANGLE)
-    };
-    // Haake's impact and Penner's (2002) drives and 9-iron (speed, degrees
-    // from the vertical): the tilt is eq. 8 untouched.
-    for (speed, deg) in [(18.6, 44.4), (26.8, 68.0), (26.2, 46.2), (23.8, 34.0)] {
-        let phi = units::deg_to_rad(deg);
-        let (v_t, v_n) = (speed * phi.sin(), speed * phi.cos());
-        for surface in [Surface::FAIRWAY, Surface::GREEN] {
-            let beta = surface.contact_angle(v_t, v_n);
-            assert!(
-                (beta - eq8(speed, phi)).abs() < 1e-12,
-                "{speed} m/s at {deg}°: β {beta}"
-            );
-        }
-    }
-    // A thin shot landing at 35 m/s and 10°: eq. 8 gives 52°, the cap
-    // 34° · (10/22)^3.5 = 2.16°.
-    let theta = units::deg_to_rad(10.0);
-    let (v_t, v_n) = (35.0 * theta.cos(), 35.0 * theta.sin());
-    let cap = units::deg_to_rad(34.0) * (10.0_f64 / 22.0).powf(3.5);
-    let beta = Surface::FAIRWAY.contact_angle(v_t, v_n);
-    assert!((beta - cap).abs() < 1e-12, "β {beta} vs cap {cap}");
-    assert!(units::rad_to_deg(beta) > 2.1 && units::rad_to_deg(beta) < 2.2);
-    // `compliance` scales the capped tilt.
-    let half = Surface {
-        compliance: 0.5,
+fn contact_angle_follows_the_fitted_law() {
+    // The four landings Penner (2002) publishes, a green impact, two drives
+    // and a 9-iron (speed, degrees from the vertical), at compliance 1.0:
+    // 14.6°, 20.1°, 20.7° and 14.9°. The presets multiply the angle by their compliance.
+    let firm = Surface {
+        compliance: 1.0,
         ..Surface::FAIRWAY
     };
-    assert!((half.contact_angle(v_t, v_n) - 0.5 * cap).abs() < 1e-12);
-}
-
-#[test]
-fn fast_landing_digs_in_at_v_n_9() {
-    // A landing at 9 m/s of normal speed and 14° from the surface presses a
-    // crater of depth x / (1 + x) = 0.5 ball radii (x = (9 − 8) / 1), whose
-    // far wall rises at atan(0.5) = 26.57°: above the shallow-landing cap
-    // (34° · (14/22)^3.5 = 6.8°) and below eq. 8 (about 51°).
-    let theta = units::deg_to_rad(14.0);
-    let (v_t, v_n) = (9.0 / theta.tan(), 9.0);
-    let wall = 0.5_f64.atan();
-    for compliance in [1.0, 0.5] {
-        let surface = Surface {
-            compliance,
-            ..Surface::FAIRWAY
-        };
-        let beta = surface.contact_angle(v_t, v_n);
+    for (speed, deg, tilt) in [
+        (18.6, 44.4, 14.589),
+        (26.8, 68.0, 20.086),
+        (26.2, 46.2, 20.716),
+        (23.8, 34.0, 14.905),
+    ] {
+        let phi = units::deg_to_rad(deg);
+        let (v_t, v_n) = (speed * phi.sin(), speed * phi.cos());
+        let beta = firm.contact_angle(v_t, v_n);
+        assert!((beta - fitted_tilt(v_t, v_n)).abs() < 1e-12);
         assert!(
-            (beta - compliance * wall).abs() < 1e-12,
-            "compliance {compliance}: β {beta} vs {}",
-            compliance * wall
+            (units::rad_to_deg(beta) - tilt).abs() < 1e-3,
+            "{speed} m/s at {deg}°: β {}",
+            units::rad_to_deg(beta)
+        );
+        for surface in [Surface::FAIRWAY, Surface::GREEN, Surface::FIRM_GREEN] {
+            let scaled = surface.contact_angle(v_t, v_n);
+            assert!((scaled - surface.compliance * beta).abs() < 1e-12);
+        }
+    }
+    // A steep landing tilts by atan(v_t / 50 m/s) whatever its normal speed:
+    // at 45° and steeper the factor in θ is within 2e-5 of 1.
+    for (v_t, v_n) in [(10.0, 10.0), (10.0, 30.0), (30.0, 40.0)] {
+        let beta = firm.contact_angle(v_t, v_n);
+        assert!(
+            ((beta.tan() * 50.0 / v_t) - 1.0).abs() < 2e-5,
+            "{v_t}, {v_n}"
         );
     }
-    assert!((units::rad_to_deg(wall) - 26.57).abs() < 0.005);
-}
-
-#[test]
-fn crater_wall_tends_to_45_degrees() {
-    // At 100 m/s of normal speed (300 m/s along the surface) the crater is
-    // 92/93 of a ball radius deep and its wall rises at atan(92/93) =
-    // 44.69°, just under the 45° it tends to.
-    let beta = Surface::FAIRWAY.contact_angle(300.0, 100.0);
-    let wall = (92.0_f64 / 93.0).atan();
-    assert!((beta - wall).abs() < 1e-12, "β {beta} vs {wall}");
-    assert!(units::rad_to_deg(beta) > 44.68 && units::rad_to_deg(beta) < 45.0);
+    // A thin shot landing at 35 m/s and 10°: the factor in θ is
+    // 1 − exp(−1/8) = 0.1175, so β = 4.63°, where the steep law alone would
+    // give 34.6°.
+    let theta = units::deg_to_rad(10.0);
+    let (v_t, v_n) = (35.0 * theta.cos(), 35.0 * theta.sin());
+    let beta = firm.contact_angle(v_t, v_n);
+    assert!((units::rad_to_deg(beta) - 4.631).abs() < 1e-3, "β {beta}");
+    // `compliance` scales the angle, not its tangent.
+    let half = Surface {
+        compliance: 0.5,
+        ..firm
+    };
+    assert!((half.contact_angle(v_t, v_n) - 0.5 * beta).abs() < 1e-12);
+    // The tilt vanishes as the normal speed goes to zero.
+    assert!(firm.contact_angle(30.0, 0.01) < 1e-6);
+    assert_eq!(firm.contact_angle(0.0, 10.0), 0.0);
 }
 
 #[test]
 fn fast_low_landing_hops_forward() {
-    // A landing at 46 m/s and 15° (normal speed 11.9 m/s) meets the crater
-    // wall: it never turns backward and its first hop stays under 10 m
-    // (9.68 m without spin, lower with backspin).
+    // A landing at 46 m/s and 15° (normal speed 11.9 m/s) never turns
+    // backward and its first hop stays under 10 m (about 5 m without spin).
     for surface in [Surface::FAIRWAY, Surface::GREEN, Surface::FIRM_GREEN] {
         for rpm in [0.0, 2000.0, 4000.0] {
             let theta = units::deg_to_rad(15.0);
@@ -661,11 +624,10 @@ fn shallow_landings_skip_forward_and_lower() {
 #[test]
 fn low_skimming_hops_lose_height() {
     // A ball skimming along at 2–4 m/s in low hops (normal speed 0.3–1.5
-    // m/s, rising 5–115 mm) gets little tilt from its soft contacts, so
-    // each rebound leaves lower than the ball arrived and the hops die out
-    // within a few impacts. Penner's tilt in full would feed forward speed
-    // back into them and hold them at a few millimeters for dozens of
-    // impacts.
+    // m/s, rising 5–115 mm) gets little tilt from its flat contacts, where
+    // the landing-angle factor of the contact angle is small, so each
+    // rebound leaves lower than the ball arrived and the hops die out
+    // within a few impacts.
     for surface in [Surface::FAIRWAY, Surface::GREEN] {
         for v_t in [2.0, 3.0, 4.0] {
             for w in [0.3, 0.5, 1.0, 1.5] {
@@ -700,101 +662,6 @@ fn spin_back_into_ground_rolls_instead_of_rebounding_down() {
     assert!(g.contacts[0].vel_out.y == 0.0);
     assert!(g.contacts[0].vel_out.x < 0.0);
     assert!(g.rest.pos.x < 0.0, "rolls back: x={:.3}", g.rest.pos.x);
-}
-
-// ══════════════════════════════════════════════════════════════════
-//  PENNER (2002) VALIDATION — GREEN reproduces the published model
-// ══════════════════════════════════════════════════════════════════
-
-#[test]
-fn penner_drive_first_bounce_heights_on_green() {
-    // Penner (2002) §3.1: drives land at 26.8 m/s, 68.0° from vertical with
-    // 224 rad/s backspin and at 26.2 m/s, 46.2° with 315 rad/s; the first
-    // bounce rises 2.82 m and 1.17 m respectively, and the ball leaves with
-    // topspin.
-    for (speed, angle, w, height) in [(26.8, 68.0, 224.0, 2.82), (26.2, 46.2, 315.0, 1.17)] {
-        let r = hit(penner_impact(speed, angle), backspin(w), &Surface::GREEN);
-        let peak = r.vel.y * r.vel.y / (2.0 * G);
-        assert!(
-            (peak - height).abs() < 0.03,
-            "{speed} m/s at {angle}°: first bounce peak {peak:.3} m, Penner {height} m"
-        );
-        assert!(
-            r.vel.x > 0.0 && r.spin.z < 0.0,
-            "leaves forward with topspin"
-        );
-    }
-}
-
-#[test]
-fn penner_nine_iron_bounces_backward_on_green() {
-    // Penner (2002) §3.2: a 9-iron landing at 23.8 m/s, 34.0° from vertical
-    // with 809 rad/s backspin bounces backward once the rebound is rotated
-    // back to the ground frame.
-    let r = hit(penner_impact(23.8, 34.0), backspin(809.0), &Surface::GREEN);
-    assert!(r.vel.x < 0.0, "bounces backward: vx={:.3}", r.vel.x);
-    assert!(r.vel.y * r.vel.y / (2.0 * G) >= 0.005);
-}
-
-/// Net run (m) along x from the landing point: hops, slide and roll.
-/// Run (m) past the landing point with ballistic hops, as in Penner's model.
-fn run_out(vel: Vec3, w: f64, surface: &Surface) -> f64 {
-    let g = surface.settle(&state(vel, backspin(w)), VACUUM);
-    assert_ends_by_hop_height(&g);
-    g.rest.pos.x
-}
-
-#[test]
-fn penner_drive_runs_match_fig4() {
-    // Penner (2002) Fig. 4: the two drives stop about 37 m and 19 m past
-    // the landing point on his green.
-    let long = run_out(penner_impact(26.8, 68.0), 224.0, &Surface::GREEN);
-    let short = run_out(penner_impact(26.2, 46.2), 315.0, &Surface::GREEN);
-    assert!((long - 37.0).abs() < 4.0, "68° drive runs {long:.1} m");
-    assert!((short - 19.0).abs() < 3.0, "46° drive runs {short:.1} m");
-}
-
-#[test]
-fn penner_nine_iron_spin_back_grows_with_backspin() {
-    // Penner (2002) Fig. 7: the 9-iron landing on his green with 809, 1000
-    // and 1200 rad/s backspin. More backspin carries the ball further back.
-    let runs: Vec<f64> = [809.0, 1000.0, 1200.0]
-        .iter()
-        .map(|&w| run_out(penner_impact(23.8, 34.0), w, &Surface::GREEN))
-        .collect();
-    assert!(
-        runs[0] <= 0.0 && runs[1] < runs[0] - 1.0 && runs[2] < runs[1] - 1.0,
-        "backward run should grow with backspin: {runs:.2?} m"
-    );
-}
-
-#[test]
-fn penner_nine_iron_firm_green_bounces_forward_then_spins_back() {
-    // Penner (2002) Fig. 8: with μ = 0.25 the friction cannot check the
-    // backspin on the first impact, so the ball bounces forward still
-    // carrying backspin, then runs back; with 1000 and 1200 rad/s it
-    // finishes behind its landing point.
-    let firm = Surface::FIRM_GREEN;
-    assert_eq!(
-        firm,
-        Surface {
-            mu_slide: 0.25,
-            ..Surface::GREEN
-        }
-    );
-    for w in [809.0, 1000.0, 1200.0] {
-        let first = hit(penner_impact(23.8, 34.0), backspin(w), &firm);
-        assert!(
-            first.vel.x > 0.0 && first.spin.z > 0.0,
-            "{w} rad/s: first bounce forward with backspin"
-        );
-    }
-    let low = run_out(penner_impact(23.8, 34.0), 1000.0, &firm);
-    let high = run_out(penner_impact(23.8, 34.0), 1200.0, &firm);
-    assert!(
-        low < 0.0 && high < low,
-        "spin-back: {low:.2} m, {high:.2} m"
-    );
 }
 
 #[test]
@@ -1146,9 +1013,7 @@ fn tilt_throw_magnitude() {
     let k = BALL.inertia_factor();
     let e = 0.4;
     let vel = Vec3::new(18.0, -15.0, 0.0);
-    let incidence = vel.x.atan2(-vel.y);
-    let beta =
-        units::deg_to_rad(15.4) * (vel.length() / 18.6) * (incidence / units::deg_to_rad(44.4));
+    let beta = fitted_tilt(vel.x, -vel.y);
     let n_eff = Vec3::new(-beta.sin(), beta.cos(), 0.0);
     let v_n = vel.dot(n_eff);
     for w in [-60.0, 60.0, -150.0] {
@@ -1210,7 +1075,7 @@ fn slide_ends_exactly_at_roll_time() {
     let spin = Vec3::new(-20.0, 30.0, 300.0);
     let u0 = slip(vel, spin, Vec3::Y, R).length();
     let expected = u0 / (3.5 * 0.40 * G);
-    let g = roll(vel, spin, &Surface::GREEN);
+    let g = roll(vel, spin, &TEST_TURF);
     let roll_start = g.points.iter().find(|p| p.phase == Phase::Roll).unwrap();
     assert!(
         (roll_start.time - expected).abs() < 1e-12,
@@ -1232,38 +1097,31 @@ fn slide_ends_exactly_at_roll_time() {
 #[test]
 fn stimpmeter_roll_matches_closed_form() {
     // A stimpmeter roll leaves the ramp at 1.83 m/s, already rolling. With
-    // a = μ_roll(1 + (v/v_ref)²)·g/(1+k) (GREEN) the distance is
-    // (1+k)·v_ref²/(2·μ_roll·g) · ln(1 + v₀²/v_ref²).
+    // a constant rolling resistance a = μ_roll·g/(1+k) the distance is
+    // (1+k)·v₀²/(2·μ_roll·g).
     let v0 = STIMPMETER_SPEED;
-    let surface = Surface::GREEN;
-    let g = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
-    let RollLaw::Quadratic { v_ref: vr } = surface.roll_law else {
-        panic!("GREEN uses the quadratic law");
-    };
-    let expected = 1.4 * vr * vr / (2.0 * surface.mu_roll * G) * (1.0 + v0 * v0 / (vr * vr)).ln();
+    let g = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &TEST_TURF);
+    let expected = 1.4 * v0 * v0 / (2.0 * TEST_TURF.mu_roll * G);
     assert!(
         (g.rest.pos.x - expected).abs() < 1e-5,
         "roll {:.6} m, closed form {expected:.6} m",
         g.rest.pos.x
     );
-    // With a constant law and plowing c (FAIRWAY), a = (μ_roll·g + c·v)/(1+k)
-    // and the distance is (1+k)·[v₀/c − (μ_roll·g/c²)·ln(1 + c·v₀/(μ_roll·g))].
-    let fairway = Surface::FAIRWAY;
-    assert_eq!(fairway.roll_law, RollLaw::Constant);
-    let (mu_g, c) = (fairway.mu_roll * G, fairway.plow);
-    let expected = 1.4 * (v0 / c - mu_g / (c * c) * (c * v0 / mu_g).ln_1p());
-    let g = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &fairway);
-    assert!(
-        (g.rest.pos.x - expected).abs() < 1e-5,
-        "roll {:.6} m, closed form {expected:.6} m",
-        g.rest.pos.x
-    );
-    assert!((units::meters_to_feet(g.rest.pos.x) - fairway.stimp_feet()).abs() < 1e-4);
-    // The green preset is a stimp ≈ 11.4 ft green.
-    let green = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &Surface::GREEN);
-    let feet = units::meters_to_feet(green.rest.pos.x);
-    assert!((feet - 11.4).abs() < 0.1, "stimp {feet:.2} ft");
-    assert!((feet - Surface::GREEN.stimp_feet()).abs() < 1e-4);
+    assert!((units::meters_to_feet(g.rest.pos.x) - TEST_TURF.stimp_feet()).abs() < 1e-4);
+    // With plowing c as well, a = (μ_roll·g + c·v)/(1+k) and the distance
+    // is (1+k)·[v₀/c − (μ_roll·g/c²)·ln(1 + c·v₀/(μ_roll·g))].
+    for surface in [Surface::FAIRWAY, Surface::GREEN] {
+        assert_eq!(surface.roll_law, RollLaw::Constant);
+        let (mu_g, c) = (surface.mu_roll * G, surface.plow);
+        let expected = 1.4 * (v0 / c - mu_g / (c * c) * (c * v0 / mu_g).ln_1p());
+        let g = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
+        assert!(
+            (g.rest.pos.x - expected).abs() < 1e-5,
+            "roll {:.6} m, closed form {expected:.6} m",
+            g.rest.pos.x
+        );
+        assert!((units::meters_to_feet(g.rest.pos.x) - surface.stimp_feet()).abs() < 1e-4);
+    }
 }
 
 #[test]
@@ -1277,12 +1135,12 @@ fn stimpmeter_fairway_shorter() {
 #[test]
 fn preset_stimp_readings() {
     for (surface, feet) in [
-        (Surface::GREEN, 11.4),
-        (Surface::FIRM_GREEN, 11.4),
-        (Surface::FAIRWAY, 4.8),
+        (Surface::GREEN, 10.5),
+        (Surface::FIRM_GREEN, 10.5),
+        (Surface::FAIRWAY, 5.0 + 8.0 / 12.0),
     ] {
         let stimp = surface.stimp_feet();
-        assert!((stimp - feet).abs() < 0.05, "stimp {stimp:.3} ft");
+        assert!((stimp - feet).abs() < 0.01, "stimp {stimp:.3} ft");
     }
 }
 
@@ -1441,10 +1299,9 @@ fn heavy_plowing_and_sliding_friction_end_the_slide_at_zero_slip() {
     }
 }
 
-/// The laws `with_stimp` is checked under: `GREEN`'s quadratic, constant,
-/// and exponential rising and falling with speed.
-const LAWS: [RollLaw; 5] = [
-    RollLaw::Quadratic { v_ref: 2.5 },
+/// The laws `with_stimp` is checked under: constant, and exponential rising
+/// and falling with speed.
+const LAWS: [RollLaw; 4] = [
     RollLaw::Constant,
     RollLaw::Exponential { v_ref: 1.6 },
     RollLaw::Exponential { v_ref: 7.0 },
@@ -1479,20 +1336,17 @@ fn with_stimp_round_trips_under_every_law() {
     }
     // Faster greens have less rolling resistance.
     assert!(Surface::GREEN.with_stimp(13.0).mu_roll < Surface::GREEN.with_stimp(9.0).mu_roll);
-    // Constant rolling resistance: d = (1+k)·v₀²/(2·μ·g).
+    // Constant rolling resistance and no plowing: d = (1+k)·v₀²/(2·μ·g).
     let with_law = |roll_law| Surface {
         roll_law,
-        ..Surface::GREEN
+        ..TEST_TURF
     };
     let constant = with_law(RollLaw::Constant).with_stimp(10.0);
     let expected =
         1.4 * STIMPMETER_SPEED * STIMPMETER_SPEED / (2.0 * G * units::feet_to_meters(10.0));
     assert!((constant.mu_roll - expected).abs() < 1e-15);
-    // Both speed laws with an infinite scale are the constant law.
+    // The exponential law with an infinite scale is the constant law.
     for law in [
-        RollLaw::Quadratic {
-            v_ref: f64::INFINITY,
-        },
         RollLaw::Exponential {
             v_ref: f64::INFINITY,
         },
@@ -1523,27 +1377,31 @@ fn with_stimp_round_trips_under_every_law() {
 fn with_stimp_rolls_the_requested_distance() {
     // A ball leaving the stimpmeter, stepped with `GroundPhysics::step`
     // on level ground until it stops, and the same roll through `settle`.
+    // Without plowing the constant law is integrated exactly; with
+    // `GREEN`'s plowing the RK4 steps carry a small error.
     let v0 = STIMPMETER_SPEED;
-    for feet in [6.0, 8.0, 10.0, 12.0, 14.0] {
-        let surface = Surface::GREEN.with_stimp(feet);
-        let physics = GroundPhysics::new(surface);
-        let mut s = state(Vec3::new(v0, 0.0, 0.0), rolling(v0));
-        while s.vel != Vec3::ZERO {
-            assert!(s.time < 30.0, "{feet} ft: still rolling");
-            s = physics.step(&s, &BALL).0;
+    for (base, tolerance) in [(TEST_TURF, 1e-9), (Surface::GREEN, 1e-7)] {
+        for feet in [6.0, 8.0, 10.0, 12.0, 14.0] {
+            let surface = base.with_stimp(feet);
+            let physics = GroundPhysics::new(surface);
+            let mut s = state(Vec3::new(v0, 0.0, 0.0), rolling(v0));
+            while s.vel != Vec3::ZERO {
+                assert!(s.time < 30.0, "{feet} ft: still rolling");
+                s = physics.step(&s, &BALL).0;
+            }
+            let stepped = units::meters_to_feet(s.pos.x);
+            assert!(
+                (stepped - feet).abs() < tolerance * feet,
+                "{feet} ft: stepped roll {stepped:.9} ft"
+            );
+            let settled = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
+            assert_eq!(settled.termination, Termination::Rest);
+            let settled = units::meters_to_feet(settled.rest.pos.x);
+            assert!(
+                (settled - feet).abs() < tolerance * feet,
+                "{feet} ft: settled roll {settled:.9} ft"
+            );
         }
-        let stepped = units::meters_to_feet(s.pos.x);
-        assert!(
-            (stepped - feet).abs() < 1e-9 * feet,
-            "{feet} ft: stepped roll {stepped:.9} ft"
-        );
-        let settled = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
-        assert_eq!(settled.termination, Termination::Rest);
-        let settled = units::meters_to_feet(settled.rest.pos.x);
-        assert!(
-            (settled - feet).abs() < 1e-9 * feet,
-            "{feet} ft: settled roll {settled:.9} ft"
-        );
     }
 }
 
@@ -1554,7 +1412,7 @@ fn with_stimp_ignores_invalid_readings() {
     }
     let frictionless = Surface {
         mu_roll: 0.0,
-        ..Surface::GREEN
+        ..TEST_TURF
     };
     assert_eq!(frictionless.stimp_feet(), f64::INFINITY);
 }
@@ -1562,15 +1420,14 @@ fn with_stimp_ignores_invalid_readings() {
 #[test]
 fn invalid_v_ref_leaves_with_stimp_unchanged() {
     for v_ref in [0.0, -0.0, f64::NAN] {
-        for roll_law in [RollLaw::Quadratic { v_ref }, RollLaw::Exponential { v_ref }] {
-            let surface = Surface {
-                roll_law,
-                ..Surface::GREEN
-            };
-            let tuned = surface.with_stimp(10.0);
-            assert_eq!(tuned.mu_roll, surface.mu_roll, "{roll_law:?}");
-            assert!(surface.stimp_feet().is_nan(), "{roll_law:?}");
-        }
+        let roll_law = RollLaw::Exponential { v_ref };
+        let surface = Surface {
+            roll_law,
+            ..Surface::GREEN
+        };
+        let tuned = surface.with_stimp(10.0);
+        assert_eq!(tuned.mu_roll, surface.mu_roll, "{roll_law:?}");
+        assert!(surface.stimp_feet().is_nan(), "{roll_law:?}");
     }
 }
 
@@ -1585,17 +1442,16 @@ fn invalid_v_ref_rolls_as_the_constant_law() {
     };
     let expected = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &constant);
     for v_ref in [0.0, f64::NAN] {
-        for roll_law in [RollLaw::Quadratic { v_ref }, RollLaw::Exponential { v_ref }] {
-            assert_eq!(roll_law.speed_factor(0.0), 1.0, "{roll_law:?}");
-            assert_eq!(roll_law.speed_factor(v0), 1.0, "{roll_law:?}");
-            let surface = Surface {
-                roll_law,
-                ..Surface::GREEN
-            };
-            let g = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
-            assert_eq!(g.termination, Termination::Rest, "{roll_law:?}");
-            assert_eq!(g.rest.pos, expected.rest.pos, "{roll_law:?}");
-        }
+        let roll_law = RollLaw::Exponential { v_ref };
+        assert_eq!(roll_law.speed_factor(0.0), 1.0, "{roll_law:?}");
+        assert_eq!(roll_law.speed_factor(v0), 1.0, "{roll_law:?}");
+        let surface = Surface {
+            roll_law,
+            ..Surface::GREEN
+        };
+        let g = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
+        assert_eq!(g.termination, Termination::Rest, "{roll_law:?}");
+        assert_eq!(g.rest.pos, expected.rest.pos, "{roll_law:?}");
     }
 }
 
@@ -1612,7 +1468,6 @@ fn roll_laws_agree_at_zero_speed() {
     // Away from zero each law has its own shape.
     let v = 2.0;
     assert_eq!(RollLaw::Constant.speed_factor(v), 1.0);
-    assert!((RollLaw::Quadratic { v_ref: 2.5 }.speed_factor(v) - 1.64).abs() < 1e-12);
     let e = RollLaw::Exponential { v_ref: 4.0 }.speed_factor(v);
     assert!((e - 0.5_f64.exp()).abs() < 1e-12);
     assert!(RollLaw::Exponential { v_ref: -4.0 }.speed_factor(v) < 1.0);
@@ -1626,7 +1481,7 @@ fn exponential_rollout_matches_closed_form() {
     for v_ref in [1.6, 3.8, 7.0, -4.7] {
         let surface = Surface {
             roll_law: RollLaw::Exponential { v_ref },
-            ..Surface::GREEN
+            ..TEST_TURF
         };
         let g = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
         assert_eq!(g.termination, Termination::Rest);
@@ -1649,8 +1504,7 @@ fn constant_law_reads_penner_stimp() {
     // green.
     let penner = Surface {
         mu_roll: 0.131,
-        roll_law: RollLaw::Constant,
-        ..Surface::GREEN
+        ..TEST_TURF
     };
     let stimp = penner.stimp_feet();
     assert!((stimp - 6.0).abs() < 0.05, "stimp {stimp:.3} ft");
@@ -1749,9 +1603,10 @@ fn green_rolls_farther_than_fairway() {
 
 #[test]
 fn fairway_rolls_less_than_green_from_the_same_landing() {
-    // Both presets bounce alike, so the same landing makes the same hops on
-    // each; the fairway's higher rolling resistance then stops it sooner.
-    // Landings from a lob wedge, a pitch, a low chip, a 7-iron and a drive.
+    // The presets bounce a little differently, so compare the roll from each
+    // one's last impact: the fairway's higher rolling resistance stops the
+    // ball in 0.51–0.61 of the green's roll. Landings from a lob wedge, a
+    // pitch, a low chip, a 7-iron and a drive.
     for (speed, descent, rpm) in [
         (19.8, 44.7, 5651.0),
         (17.6, 39.1, 3599.0),
@@ -1764,23 +1619,11 @@ fn fairway_rolls_less_than_green_from_the_same_landing() {
             Vec3::new(speed * a.cos(), -speed * a.sin(), 0.0),
             backspin(rpm_to_rads(rpm)),
         );
-        let fairway = Surface::FAIRWAY.settle(&landing, air());
-        let green = Surface::GREEN.settle(&landing, air());
-        assert_eq!(
-            fairway.contacts,
-            green
-                .contacts
-                .iter()
-                .map(|c| Contact {
-                    surface: Surface::FAIRWAY,
-                    ..*c
-                })
-                .collect::<Vec<_>>()
-        );
-        let (f, g) = (fairway.rest.pos.x, green.rest.pos.x);
-        let landed = fairway.contacts.last().unwrap().pos.x;
+        let roll_out = |g: &GroundResult| g.rest.pos.x - g.contacts.last().unwrap().pos.x;
+        let f = roll_out(&Surface::FAIRWAY.settle(&landing, air()));
+        let g = roll_out(&Surface::GREEN.settle(&landing, air()));
         assert!(
-            f - landed < 0.8 * (g - landed),
+            f > 0.0 && f < 0.7 * g,
             "{speed} m/s at {descent}°: fairway {f:.2} m, green {g:.2} m"
         );
     }
@@ -1910,21 +1753,15 @@ fn hollow_ball_follows_generalized_formulas() {
     let vel = Vec3::new(3.0, 0.0, 0.5);
     let spin = Vec3::new(-20.0, 30.0, 300.0);
     let expected = slip(vel, spin, Vec3::Y, R).length() / ((1.0 + k) / k * 0.40 * G);
-    let g = Surface::GREEN.settle(&state(vel, spin), &hollow);
+    let g = TEST_TURF.settle(&state(vel, spin), &hollow);
     let roll_start = g.points.iter().find(|p| p.phase == Phase::Roll).unwrap();
     assert!((roll_start.time - expected).abs() < 1e-12);
 
-    // Stimpmeter, quadratic law (GREEN):
-    // (1+k)·v_ref²/(2·μ_roll·g)·ln(1 + v₀²/v_ref²).
+    // Stimpmeter, constant law without plowing: (1+k)·v₀²/(2·μ_roll·g).
     let v0 = STIMPMETER_SPEED;
     let start = state(Vec3::new(v0, 0.0, 0.0), rolling(v0));
-    let green = Surface::GREEN;
-    let RollLaw::Quadratic { v_ref: vr } = green.roll_law else {
-        panic!("GREEN uses the quadratic law");
-    };
-    let expected =
-        (1.0 + k) * vr * vr / (2.0 * green.mu_roll * G) * (1.0 + v0 * v0 / (vr * vr)).ln();
-    let g = green.settle(&start, &hollow);
+    let expected = (1.0 + k) * v0 * v0 / (2.0 * TEST_TURF.mu_roll * G);
+    let g = TEST_TURF.settle(&start, &hollow);
     assert!(
         (g.rest.pos.x - expected).abs() < 1e-5,
         "roll {:.6} m, closed form {expected:.6} m",
@@ -2064,7 +1901,7 @@ fn long_roll_reports_max_time() {
         max_time: 2.0,
         ..GroundPhysics::new(Surface {
             mu_roll: 0.0,
-            ..Surface::GREEN
+            ..TEST_TURF
         })
     };
     let g = physics.settle(&state(Vec3::new(3.0, 0.0, 0.0), rolling(3.0)), air());

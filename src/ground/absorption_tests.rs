@@ -12,6 +12,7 @@ const SAND: Surface = Surface {
     restitution: Restitution::Constant(0.0),
     compliance: 0.0,
     absorption: 0.9,
+    mu_slide: 0.40,
     mu_roll: 0.3,
     ..Surface::FAIRWAY
 };
@@ -151,8 +152,8 @@ fn steeper_landings_keep_less() {
 
 #[test]
 fn sand_skips() {
-    // The wedge hops 0.297 m and spins back to −0.23 m on FAIRWAY. On sand
-    // it does not hop, keeps 3% of its spin and stops 0.22 m past its mark.
+    // The wedge hops 0.65 m on FAIRWAY and stops 3.3 m past its mark. On
+    // sand it does not hop, keeps 3% of its spin and stops 0.21 m past it.
     let turf = Surface::FAIRWAY.settle(&wedge(), &AIR);
     assert!(hops(&turf));
     let g = SAND.settle(&wedge(), &AIR);
@@ -161,7 +162,7 @@ fn sand_skips() {
     assert!(c.spin_out.length() < 0.05 * c.spin_in.length());
     assert!(g.rest.pos.x > 0.0 && g.rest.pos.x < 0.5, "{}", g.rest.pos.x);
 
-    // The 7-iron (0.66 m) and the driver landing (1.46 m) leave a track.
+    // The 7-iron (0.68 m) and the driver landing (2.03 m) leave a track.
     for l in [seven_iron(), driver()] {
         let x = SAND.settle(&l, &AIR).rest.pos.x;
         assert!((0.3..3.0).contains(&x), "{x}");

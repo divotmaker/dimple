@@ -18,51 +18,26 @@ pub const STIMPMETER_SPEED: f64 = 1.83;
 /// assume: a uniform solid sphere, as in [`Tour`](crate::Tour).
 const STIMP_INERTIA_FACTOR: f64 = 0.4;
 
-/// Penner (2002) eq. 8 reference contact angle θc (rad): 15.4°, his fit to
-/// Haake's green impact.
-pub(super) const PENNER_THETA_C: f64 = 15.4 * std::f64::consts::PI / 180.0;
-/// Impact speed (m/s) of Haake's measured green impact.
-pub(super) const PENNER_REF_SPEED: f64 = 18.6;
-/// Incidence angle from the normal (rad) of Haake's measured green impact:
-/// 44.4°.
-pub(super) const PENNER_REF_ANGLE: f64 = 44.4 * std::f64::consts::PI / 180.0;
-
 /// Tangential speed (m/s) below which an impact has no tilt direction, so
-/// Penner's contact angle is zero.
+/// the contact angle is zero.
 const MIN_TILT_SPEED: f64 = 0.01;
 
-/// Normal impact speed (m/s) at and above which Penner's contact angle
-/// applies in full. Below it the angle fades in linearly with the normal
-/// speed, `θc · v_n / 2 m/s`: the tilt stands for the crater the ball
-/// presses into the turf, and a contact this soft (the fall from a bounce
-/// under about 20 cm) barely presses one. Lofted landings, from about 4 m/s
-/// for a low chip to 10–20 m/s for full shots, get the full angle; the fade
-/// acts on the low hops that follow them and on landings launched under
-/// about 12°.
-const TILT_ONSET_SPEED: f64 = 2.0;
+/// Tangential impact speed scale V0 (m/s) of the contact angle: on a steep
+/// landing `tan β = v_t / V0`. Fitted to 693 measured bounces on natural tee
+/// turf (Biber et al. 2023; 95% interval 49.2–50.9 m/s).
+const TILT_SPEED_SCALE: f64 = 50.0;
 
-/// Landing angle from the surface (rad) of the shallowest landing Penner
-/// (2002) applies eq. 8 to: his low drive, 68.0° from the vertical (22.0°).
-const SHALLOW_LANDING: f64 = 22.0 * (std::f64::consts::PI / 180.0);
+/// Landing angle scale θ0 (rad) of the contact angle, 20° from the surface:
+/// the tilt falls off for landings flatter than about this. Fitted to the
+/// same bounces (19.8–21.8°) and checked against the USGA's 2019 roll-out
+/// line at 20–36°.
+const TILT_LANDING_SCALE: f64 = 20.0 * (std::f64::consts::PI / 180.0);
 
-/// Eq. 8 at that landing (26.8 m/s): 34.0°.
-const SHALLOW_TILT: f64 = 34.0 * (std::f64::consts::PI / 180.0);
-
-/// Power of the shallow-landing cap `SHALLOW_TILT · (θ / SHALLOW_LANDING)^p`
-/// on the contact angle. Fitted to a simulator's fairway rollouts for
-/// landings under 12°, not measured.
-const SHALLOW_POWER: f64 = 3.5;
-
-/// Normal impact speed (m/s) below which a landing presses no crater into
-/// the turf. Fitted to a simulator's fairway rollouts of fast landings
-/// (beta), not measured.
-const CRATER_ONSET_SPEED: f64 = 8.0;
-
-/// Normal speed scale (m/s) of the crater: its depth over the ball radius
-/// is `x / (1 + x)` with `x = (v_n − CRATER_ONSET_SPEED) / CRATER_SPEED_SCALE`,
-/// so it tends to the ball radius and never passes it. Fitted with
-/// [`CRATER_ONSET_SPEED`] (beta).
-const CRATER_SPEED_SCALE: f64 = 1.0;
+/// Power p of the landing-angle factor `1 − exp(−(θ / θ0)^p)`. The bounces
+/// allow about 2–4 and the 2019 roll-out line about 2–3.5; 3 is the lowest
+/// round value in that band at which no grazing landing leaves faster along
+/// the normal than it arrived.
+const TILT_LANDING_POWER: f64 = 3.0;
 
 /// Normal coefficient of restitution between ball and turf.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -101,27 +76,19 @@ impl Restitution {
 /// `μ_eff(v)` = [`mu_roll`](Surface::mu_roll) · f(v), with f(0) = 1 for every
 /// law, so `mu_roll` is always the zero-speed value.
 ///
-/// No law is validated above 3 m/s: the only published speed-dependent fits
-/// (Burritt & Henrikson 2024) cover putts, 0–3 m/s. On slopes the published
-/// checks favor [`Constant`](Self::Constant): Brede's (1991) slope
-/// correction of stimpmeter readings is exact under it and Cross's (2024)
-/// speed-independent break angle holds under it alone; at the same stimp
-/// the quadratic law also holds a ball on a gentler grade. See
-/// `docs/AERO.md`.
+/// Every preset uses [`Constant`](Self::Constant) and gets its rise with
+/// speed from [`Surface::plow`], whose size is fitted to measured roll-outs.
+/// The published speed-dependent fits of the resistance itself (Burritt &
+/// Henrikson 2024) cover putts, 0–3 m/s. On slopes the published checks
+/// favor `Constant`: Brede's (1991) slope correction of stimpmeter readings
+/// is exact under it and Cross's (2024) speed-independent break angle holds
+/// under it alone. See `docs/AERO.md`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum RollLaw {
     /// f = 1: constant rolling resistance, Penner's (2002) run model (his
     /// `ρ_g` = 0.131 reads about 6.0 ft on the stimpmeter).
     Constant,
-    /// f = 1 + (v / `v_ref`)²: dimple's own empirical law, not a fit to
-    /// published data. [`Surface::GREEN`] and [`Surface::FIRM_GREEN`] use
-    /// `v_ref` = 2.5 m/s. `v_ref` (m/s) must be nonzero; ±∞ is
-    /// [`Constant`](Self::Constant).
-    Quadratic {
-        /// Speed scale (m/s).
-        v_ref: f64,
-    },
     /// f = exp(v / `v_ref`): an exponential law of the kind Burritt &
     /// Henrikson (2024, "Modeling golf ball roll with a variable coefficient
     /// of friction", *Sports Eng.* 27:39) fit to camera-tracked putts,
@@ -151,10 +118,6 @@ impl RollLaw {
     pub fn speed_factor(&self, speed: f64) -> f64 {
         match *self {
             Self::Constant => 1.0,
-            Self::Quadratic { v_ref } => {
-                let s = speed / v_ref;
-                if s.is_finite() { 1.0 + s * s } else { 1.0 }
-            }
             Self::Exponential { v_ref } => {
                 let s = speed / v_ref;
                 if s.is_finite() { s.exp() } else { 1.0 }
@@ -166,23 +129,14 @@ impl RollLaw {
     /// ground travels (1+k)·I/(2·`mu_roll`·g). With s₀ = v₀/`v_ref`:
     ///
     /// - `Constant`: I = v₀²
-    /// - `Quadratic`: I = `v_ref`²·ln(1 + s₀²)
     /// - `Exponential`: I = 2·`v_ref`²·(1 − e^(−s₀)·(1 + s₀))
     ///
-    /// Both parameterized forms tend to v₀² as `v_ref` → ±∞, which s₀ = 0
+    /// The exponential form tends to v₀² as `v_ref` → ±∞, which s₀ = 0
     /// gives exactly. NaN when `v_ref` is zero or NaN.
     fn stimp_integral(&self, v0: f64) -> f64 {
         let v0_sq = v0 * v0;
         match *self {
             Self::Constant => v0_sq,
-            Self::Quadratic { v_ref } => {
-                let x = v0_sq / (v_ref * v_ref);
-                if x == 0.0 {
-                    v0_sq
-                } else {
-                    v0_sq * x.ln_1p() / x
-                }
-            }
             Self::Exponential { v_ref } => {
                 if v_ref == 0.0 || v_ref.is_nan() {
                     return f64::NAN;
@@ -223,19 +177,23 @@ pub struct Surface {
     /// of a slowly rolling ball, and what holds a ball at rest on a slope.
     pub mu_roll: f64,
     /// How the rolling resistance grows (or falls) with speed:
-    /// `μ_eff` = `mu_roll` · f(v). [`GREEN`](Self::GREEN) and
-    /// [`FIRM_GREEN`](Self::FIRM_GREEN) use
-    /// `RollLaw::Quadratic { v_ref: 2.5 }`; [`FAIRWAY`](Self::FAIRWAY) uses
-    /// `RollLaw::Constant` with [`plow`](Self::plow).
+    /// `μ_eff` = `mu_roll` · f(v). Every preset uses `RollLaw::Constant`
+    /// and gets its rise with speed from [`plow`](Self::plow).
     pub roll_law: RollLaw,
-    /// Turf compliance: dimensionless multiplier on Penner's (2002) eq. 8
-    /// effective contact angle, θc = 15.4° · (v / 18.6 m/s) · (φ / 44.4°),
-    /// with v the impact speed and φ the incidence angle from the normal,
-    /// faded in below 2 m/s of normal impact speed and capped for shallow
-    /// landings: below 22° the cap falls to zero at grazing, and above 22°
-    /// it grows quickly and binds only on landings faster than Penner's
-    /// (see [`impact`](super::impact)). `1.0` is Penner's green; `0.0` is a
-    /// rigid flat surface.
+    /// Turf compliance: dimensionless multiplier on the effective contact
+    /// angle β of [`impact`](super::impact),
+    /// `tan β = (v_t / 50 m/s) · (1 − exp(−(θ / 20°)³))`, with `v_t` the
+    /// tangential impact speed and θ the landing angle from the surface.
+    /// `1.0` is firm, short-mown turf (the natural tee turf the law is fitted
+    /// on, and the firm green of [`FIRM_GREEN`](Self::FIRM_GREEN)); higher
+    /// is softer turf that the ball presses deeper into; `0.0` is a rigid
+    /// flat surface. Measured single sites range 0.86–1.55.
+    ///
+    /// Compliance is how firmness enters the model. On greens it follows
+    /// the penetration depth read by the USGA firmness meter: compliance ≈
+    /// 0.090 × depth (mm) + 0.25 over six greens at 8.8–14.3 mm (R&A 2008;
+    /// r = 0.96). On fairways a similar relation is indicative only (0.074 ×
+    /// depth + 0.23 over five fairways at 8.9–15.4 mm, r = 0.70).
     pub compliance: f64,
     /// Torsional friction lever (m): the friction moment about the surface
     /// normal is `pivot` × normal force. It opposes spin about the normal,
@@ -243,7 +201,7 @@ pub struct Surface {
     ///
     /// It never changes the velocity of the impact it acts in, nor a slide
     /// or roll on level ground. The path depends on it only through spin
-    /// about the normal carried into a later impact, where Penner's tilted
+    /// about the normal carried into a later impact, where the tilted
     /// contact plane turns part of that spin into slip, and through the
     /// Magnus force that spin gives the hops in between. With the presets'
     /// 1 mm a full-shot landing removes all of it at once: a driver landing
@@ -277,62 +235,79 @@ pub struct Surface {
     /// rolling, the turf resists it with a force per unit mass of `plow`
     /// times its velocity, on top of the sliding friction and the rolling
     /// resistance. A ball slowed by it alone travels `v / plow`. `0.0` is
-    /// no plowing ([`GREEN`](Self::GREEN), [`FIRM_GREEN`](Self::FIRM_GREEN)).
-    /// [`FAIRWAY`](Self::FAIRWAY)'s 0.36 is fitted to a simulator's fairway
-    /// rollouts for landings at 2–50°, not measured: published work finds
-    /// that rolling resistance changes with speed (Burritt & Henrikson 2024)
-    /// and gives no law above 3 m/s. It does not act during an impact or a
-    /// hop.
+    /// no plowing. A Stimpmeter reading fixes the resistance at 1.8 m/s, and
+    /// measured fairway roll-outs that start at 2–6 m/s need about twice
+    /// that, so the resistance has to rise with speed; `plow` gives it that
+    /// rise. The form (resistance proportional to speed) is assumed and only
+    /// its size is fitted: [`FAIRWAY`](Self::FAIRWAY)'s 0.36 to roll-outs on
+    /// five fairways (R&A 2008) and the USGA's 2019 roll-out line (0.2–0.6
+    /// fit about as well), [`GREEN`](Self::GREEN)'s 0.2 to the
+    /// bounce-and-roll totals of 57 landings on one firm green (USGA and R&A
+    /// 2007; 0.1–0.3 fit about as well). It does not act during an impact or
+    /// a hop.
     ///
     /// Friction can hold a plowing ball rolling only below
-    /// `(1+k)/k · mu_slide · g / plow` (about 38 m/s on `FAIRWAY`, which no
-    /// shot reaches); a ball keeps rolling from its first zero slip even
-    /// above that speed.
+    /// `(1+k)/k · mu_slide · g / plow` (about 17 m/s on `FAIRWAY` and 38 m/s
+    /// on `GREEN`); a ball keeps rolling from its first zero slip even above
+    /// that speed.
     pub plow: f64,
 }
 
 impl Surface {
-    /// Standard fairway: Penner's (2002) green impact model (restitution,
-    /// friction and compliance 1.0) with a constant rolling resistance and
-    /// a plowing rate of 0.36 /s ([`plow`](Self::plow)), stimp 4.8 ft. It
-    /// bounces like [`GREEN`](Self::GREEN), and a full shot, which reaches
-    /// the ground at 2–4 m/s, rolls shorter on it; a roll faster than about
-    /// 11 m/s, such as a thin shot's, runs farther, since `GREEN` keeps its
-    /// quadratic law with no plowing fit of its own. The
-    /// compliance is chosen, not measured; the run is sensitive to it (see
-    /// `docs/AERO.md`).
+    /// Standard fairway. `compliance` 1.05 and `mu_slide` 0.18 are the
+    /// medians of eight fairways (R&A 2008: a 64 mph, 36° drive landing on
+    /// five; USGA 2005: 252 landings at 23–48° on three at Pinehurst No. 2);
+    /// single fairways range 0.86–1.55 and 0.12–0.33. Rolling resistance: a
+    /// Stimpmeter reading of 5 ft 8 in on a creeping bentgrass fairway
+    /// (USGA/R&A 2018 tests), with the constant law. Plowing 0.36 /s:
+    /// fitted to the R&A roll-outs and the USGA 2019 roll-out line; 0.2–0.6
+    /// fit about as well. See `docs/AERO.md`.
     pub const FAIRWAY: Self = Self {
         restitution: Restitution::Penner2002,
-        mu_slide: 0.40,
-        mu_roll: 0.12,
+        mu_slide: 0.18,
+        mu_roll: 0.0955,
         roll_law: RollLaw::Constant,
-        compliance: 1.0,
+        compliance: 1.05,
         pivot: 0.001,
         absorption: 0.0,
         plow: 0.36,
     };
 
-    /// Standard green: Penner's (2002) green impact model with a rolling
-    /// resistance of stimp 11.4 ft ([`stimp_feet`](Self::stimp_feet)).
+    /// Standard green. `compliance` 1.10 and `mu_slide` 0.22 are the medians
+    /// of nine greens (R&A 2008: 5-iron and sand wedge landings on six; USGA
+    /// 2005: 4-iron to pitching wedge on three); single greens range
+    /// 1.05–1.52 and 0.17–0.26. Fitted to Cross's (2025) printed fits to 184
+    /// bounces on four greens at 17–27 m/s and 35–55°, the two constants
+    /// alone come out at 1.12 and 0.23.
+    ///
+    /// The friction is fitted to landings at 17–27 m/s. One green measured
+    /// at 9–10 m/s (Cross 2025, Table 1) slides at 0.29; a chip with
+    /// 3,300 rpm of backspin leaves that green 1.3 m/s slower than this
+    /// preset gives.
+    ///
+    /// Rolling resistance: stimp 10.5 ft ([`stimp_feet`](Self::stimp_feet)),
+    /// the reading of the one green with both a Stimpmeter reading and
+    /// measured roll-outs (USGA and R&A 2007); use
+    /// [`with_stimp`](Self::with_stimp) for another speed. Plowing 0.2 /s, fitted to that green's
+    /// roll-outs.
     pub const GREEN: Self = Self {
         restitution: Restitution::Penner2002,
-        mu_slide: 0.40,
-        mu_roll: 0.055,
-        roll_law: RollLaw::Quadratic { v_ref: 2.5 },
-        compliance: 1.0,
+        mu_slide: 0.22,
+        mu_roll: 0.0509,
+        roll_law: RollLaw::Constant,
+        compliance: 1.10,
         pivot: 0.001,
         absorption: 0.0,
-        plow: 0.0,
+        plow: 0.2,
     };
 
-    /// Firm green: [`GREEN`](Self::GREEN) with Penner's (2002, Fig. 8)
-    /// sliding friction μ = 0.25, his model of a firm tournament green.
-    /// Penner changes only μ; restitution, the contact-angle law and the
-    /// rolling resistance stay those of his green, so this has `GREEN`'s
-    /// stimp. Penner's high-backspin 9-iron landing here bounces forward
-    /// still carrying backspin, then runs back.
+    /// Firm green: 57 impacts at 20–26 m/s and 36–59° on one green dried to
+    /// championship firmness, Stimpmeter 10–11 ft (USGA and R&A 2007), fit
+    /// at `compliance` 1.0 and `mu_slide` 0.17. Rolling resistance and
+    /// plowing are [`GREEN`](Self::GREEN)'s, set on the same green.
     pub const FIRM_GREEN: Self = Self {
-        mu_slide: 0.25,
+        mu_slide: 0.17,
+        compliance: 1.0,
         ..Self::GREEN
     };
 
@@ -349,7 +324,6 @@ impl Surface {
     ///
     /// ```text
     /// Constant:     I = v₀²
-    /// Quadratic:    I = v_ref²·ln(1 + s₀²)
     /// Exponential:  I = 2·v_ref²·(1 − e^(−s₀)·(1 + s₀))
     /// ```
     ///
@@ -396,9 +370,9 @@ impl Surface {
     /// Stimpmeter reading (feet) of this surface: how far a ball leaving the
     /// ramp rolling at [`STIMPMETER_SPEED`] rolls on level ground before it
     /// stops, by the closed form in [`with_stimp`](Self::with_stimp)
-    /// (k = 2/5), including [`plow`](Self::plow). 11.4 ft for
-    /// [`GREEN`](Self::GREEN) and [`FIRM_GREEN`](Self::FIRM_GREEN), 4.8 ft
-    /// for [`FAIRWAY`](Self::FAIRWAY).
+    /// (k = 2/5), including [`plow`](Self::plow). 10.5 ft for
+    /// [`GREEN`](Self::GREEN) and [`FIRM_GREEN`](Self::FIRM_GREEN), 5 ft
+    /// 8 in for [`FAIRWAY`](Self::FAIRWAY).
     ///
     /// Infinite when `mu_roll` and `plow` are both zero (the ball never
     /// stops); NaN when the law's `v_ref` is zero or NaN.
@@ -474,46 +448,39 @@ impl Surface {
     }
 
     /// Effective rolling-resistance coefficient at `speed` (m/s):
-    /// `mu_roll · f(speed)` with f from [`roll_law`](Self::roll_law). Under
-    /// the greens' quadratic law a fast-rolling ball decelerates much
-    /// harder than a stimpmeter roll. [`plow`](Self::plow) is separate and
-    /// not included.
+    /// `mu_roll · f(speed)` with f from [`roll_law`](Self::roll_law).
+    /// [`plow`](Self::plow) is separate and not included.
     #[must_use]
     pub fn rolling_friction(&self, speed: f64) -> f64 {
         self.mu_roll * self.roll_law.speed_factor(speed)
     }
 
     /// Effective contact angle β (rad) for an impact with tangential speed
-    /// `v_t` and normal approach speed `v_n` (both ≥ 0).
+    /// `v_t` and normal approach speed `v_n` (both ≥ 0):
     ///
-    /// `compliance` times the smaller of Penner's eq. 8 θc times the fade
-    /// `min(1, v_n / TILT_ONSET_SPEED)` and the larger of the
-    /// shallow-landing cap `SHALLOW_TILT · (θ / SHALLOW_LANDING)^SHALLOW_POWER`
-    /// and the crater wall `atan(x / (1 + x))`, with θ the landing angle
-    /// from the surface and `x = max(0, (v_n − CRATER_ONSET_SPEED) /
-    /// CRATER_SPEED_SCALE)`; the result is capped at the incidence angle
-    /// from the normal, where the ball strikes the effective plane head-on.
-    /// At 22° the cap equals eq. 8 at Penner's shallowest published landing
-    /// and above it the cap grows out of the way; below it the cap falls to
-    /// zero at grazing. A landing fast along the normal digs a crater
-    /// `x / (1 + x)` of a ball radius deep and meets its far wall, which
-    /// rises by the depth over a run of one radius, so the wall tends to 45°
-    /// as the depth tends to the radius. A slow shallow landing thus meets
-    /// nearly flat ground, and a fast one the wall of its crater. Zero when
-    /// there is (almost) no tangential motion, since the tilt direction is
-    /// undefined.
+    /// ```text
+    /// tan β₀ = (v_t / V0) · (1 − exp(−(θ / θ0)^p)),   θ = atan(v_n / v_t)
+    /// β = min(compliance · β₀, incidence)
+    /// ```
+    ///
+    /// with V0 = 50 m/s, θ0 = 20° and p = 3, fitted to 693 measured bounces
+    /// on natural tee turf at 2–39 m/s and landing angles of 16–90° (Biber
+    /// et al. 2023). On steep landings the factor in θ is 1 and the tilt
+    /// follows the tangential speed alone; it falls off below about 20°
+    /// and vanishes as `v_n` goes to zero, so the low hops after a landing
+    /// meet nearly flat ground. The result never passes the incidence angle
+    /// from the normal, where the ball would strike the effective plane
+    /// head-on. Zero when there is (almost) no tangential motion, since the
+    /// tilt direction is undefined.
     pub(super) fn contact_angle(&self, v_t: f64, v_n: f64) -> f64 {
         if v_t <= MIN_TILT_SPEED {
             return 0.0;
         }
-        let speed = v_t.hypot(v_n);
         let incidence = v_t.atan2(v_n);
-        let theta_c = PENNER_THETA_C * (speed / PENNER_REF_SPEED) * (incidence / PENNER_REF_ANGLE);
-        let fade = (v_n / TILT_ONSET_SPEED).min(1.0);
-        let shallow = SHALLOW_TILT * (v_n.atan2(v_t) / SHALLOW_LANDING).powf(SHALLOW_POWER);
-        let x = ((v_n - CRATER_ONSET_SPEED) / CRATER_SPEED_SCALE).max(0.0);
-        let crater = (x / (1.0 + x)).atan();
-        (self.compliance * (theta_c * fade).min(shallow.max(crater))).min(incidence)
+        let landing = v_n.atan2(v_t) / TILT_LANDING_SCALE;
+        let factor = -(-landing.powf(TILT_LANDING_POWER)).exp_m1();
+        let tilt = (v_t / TILT_SPEED_SCALE * factor).atan();
+        (self.compliance * tilt).min(incidence)
     }
 }
 

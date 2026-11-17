@@ -12,8 +12,6 @@ mod surface;
 pub use surface::{Restitution, RollLaw, STIMPMETER_SPEED, Surface};
 
 use contact::{contact_step, lock_rolling, onto_surface, slip, tangential_gravity};
-#[cfg(test)]
-use surface::{PENNER_REF_ANGLE, PENNER_REF_SPEED, PENNER_THETA_C};
 
 /// Spacing (s) of the sampled [`GroundPoint`]s.
 const SAMPLE_INTERVAL: f64 = 0.01;
@@ -943,26 +941,17 @@ fn hops_die_out(
 /// direction of the incoming tangential velocity, `R` the radius and `k` the
 /// inertia factor:
 ///
-/// 1. Tilt: β = `compliance` · min(θc (Penner eq. 8) · min(1, `v_n` / 2 m/s),
-///    max(34.0° · (θ / 22.0°)^3.5, atan(x / (1 + x)))), capped at the
-///    incidence angle, with `v_n = −v·n` the normal impact speed, θ the
-///    landing angle from the surface and `x = max(0, (v_n − 8 m/s) / 1 m/s)`;
-///    effective normal `n' = n cos β − t̂ sin β`, leaning back
-///    toward the incoming ball. The tilt models the crater a landing
-///    presses into the turf, so it fades in linearly below 2 m/s of normal
-///    speed, where the contact barely dents the turf. Below Penner's
-///    shallowest published landing (22°, where eq. 8 gives 34°) it is
-///    capped and falls to zero at grazing, so a slow shallow landing meets
-///    nearly flat ground; the power 3.5 is fitted, not measured. Above 22°
-///    the cap grows quickly (53° at 25°) and binds only on landings faster
-///    than Penner's, so his published landings get his full angle. A
-///    landing faster than 8 m/s of normal speed digs in: its crater is
-///    `x / (1 + x)` of a ball radius deep and its far wall rises at
-///    atan(x / (1 + x)), which tends to 45°, so a fast low landing meets a
-///    wall that a slow one at the same angle does not; the onset and scale
-///    are fitted (beta). The low, near-grazing hops after a landing get
-///    little tilt, so they die out in a few impacts and the ball goes on
-///    to slide and roll.
+/// 1. Tilt: `tan β₀ = (v_t / 50 m/s) · (1 − exp(−(θ / 20°)³))` and
+///    β = min(`compliance` · β₀, incidence angle), with `v_n = −v·n` the
+///    normal impact speed, `v_t` the tangential speed and
+///    θ = atan(`v_n` / `v_t`) the landing angle from the surface; effective
+///    normal `n' = n cos β − t̂ sin β`, leaning back toward the incoming
+///    ball. The law is fitted to 693 measured bounces on natural tee turf
+///    at 2–39 m/s and 16–90° (Biber et al. 2023). The tilt follows the
+///    tangential speed on steep landings, falls off for landings flatter
+///    than about 20° and vanishes as `v_n` goes to zero, so the low,
+///    near-grazing hops after a landing die out in a few impacts and the
+///    ball goes on to slide and roll. No impact is measured below 16°.
 /// 2. Normal impulse (per unit mass) `j_n = (1 + e)·|v·n'|`, with `e` from
 ///    [`Surface::restitution`] at the normal speed `|v·n'|`.
 /// 3. Contact-point slip `u = (v − (v·n')n') + ω × (−R n')`. Friction
@@ -1039,6 +1028,23 @@ pub fn impact(state: &BallState, at: &GroundSample, model: &dyn AeroModel) -> Ba
         ..*state
     }
 }
+
+/// Test fixture for the contact, slide and roll mechanics: every field
+/// spelled out, so a change to a preset never moves the tests built on it.
+/// Sliding friction 0.40, a constant rolling resistance of 0.055 (stimp
+/// 14.3 ft) and no plowing, so the closed forms of a slide and a roll hold
+/// exactly.
+#[cfg(test)]
+pub(crate) const TEST_TURF: Surface = Surface {
+    restitution: Restitution::Penner2002,
+    mu_slide: 0.40,
+    mu_roll: 0.055,
+    roll_law: RollLaw::Constant,
+    compliance: 1.0,
+    pivot: 0.001,
+    absorption: 0.0,
+    plow: 0.0,
+};
 
 #[cfg(test)]
 #[allow(clippy::float_cmp, reason = "the tests assert exact results")]

@@ -4,9 +4,12 @@
 //! backspin, sidespin) into a full shot: an RK4-integrated flight with drag,
 //! Magnus lift and spin decay, followed by the ground phase (impacts, hops,
 //! slide and roll) with the full spin vector carried through every contact.
-//! Impacts are checked against a published fit to bounce measurements; the
-//! run and total distances of full shots are beta, compared with measured
-//! data only for drives on a fairway, and may change between releases.
+//! The contact angle is fitted to 693 measured bounces on natural tee turf
+//! at 2–39 m/s and landing angles of 16–90°, the presets' turf constants are
+//! the medians of measured greens and fairways, and roll-out is within 3 yd
+//! of the USGA's 2019 range test at 20–36° (rms 2 yd) and about 11 yd long
+//! at 12–18°; landings flatter than 16° are not measured. See
+//! `docs/AERO.md`.
 //! Pure math: no I/O, no allocation beyond the returned trajectories, no
 //! async runtime.
 //!

@@ -217,32 +217,33 @@ fn ball_rolling_uphill_stops_once_then_rolls_back_or_holds() {
 
 #[test]
 fn long_downhill_reports_max_time() {
-    // tan 5° > mu_roll on GREEN: the ball rolls on at its terminal speed
-    // (where μ_eff = tan θ, ≈ 1.92 m/s) and never stops.
+    // tan 5° > mu_roll: with plowing c the ball rolls on toward its terminal
+    // speed, where μ·g·cos θ + c·v = g·sin θ (≈ 1.59 m/s), and never stops.
+    let surface = Surface {
+        plow: 0.2,
+        ..TEST_TURF
+    };
     let n = tilt(5.0, 0.0);
     let ground = GroundPhysics {
-        max_time: 8.0,
-        ..plane(n, Surface::GREEN)
+        max_time: 40.0,
+        ..plane(n, surface)
     };
     let down = fall_line(n);
     let v0 = 1.9 * down;
     let g = ground.settle(&at_origin(v0, n.cross(v0) / R), air());
     assert_eq!(g.termination, Termination::MaxTime);
-    assert!((g.rest.time - 8.0).abs() < 1e-9);
-    let mu = 5.0_f64.to_radians().tan() / Surface::GREEN.mu_roll;
-    let RollLaw::Quadratic { v_ref } = Surface::GREEN.roll_law else {
-        panic!("GREEN uses the quadratic law");
-    };
-    let terminal = v_ref * (mu - 1.0).sqrt();
+    assert!((g.rest.time - 40.0).abs() < 1e-9);
+    let theta = 5.0_f64.to_radians();
+    let terminal = G * (theta.sin() - surface.mu_roll * theta.cos()) / surface.plow;
     assert!((g.rest.vel.length() - terminal).abs() < 0.01);
 }
 
 #[test]
 fn near_critical_green_rests_within_default_max_time() {
-    // Just inside GREEN's hold angle (atan 0.055 ≈ 3.15°) a slow roll barely
-    // decelerates: on 3.1° a drive takes about 82 s to stop, within the
-    // default limit.
-    let n = tilt(3.1, 0.0);
+    // Just inside GREEN's hold angle (atan 0.0509 ≈ 2.91°) a slow roll
+    // barely decelerates: on 2.9° a drive takes about 43 s to stop, within
+    // the default limit.
+    let n = tilt(2.9, 0.0);
     let ground = plane(n, Surface::GREEN);
     assert!(ground.terrain.sample(0.0, 0.0).holds_at_rest());
     for input in [
@@ -253,7 +254,7 @@ fn near_critical_green_rests_within_default_max_time() {
         let s = shot(&input, &ground);
         assert_eq!(s.ground.termination, Termination::Rest);
         let rolled = s.ground.rest.time - s.ground.contacts[0].time;
-        assert!(rolled > 30.0 && rolled < ground.max_time, "{rolled:.1} s");
+        assert!(rolled > 25.0 && rolled < ground.max_time, "{rolled:.1} s");
     }
 }
 
@@ -271,7 +272,7 @@ fn slide_to_roll_on_a_plane_matches_closed_form() {
     let theta = units::deg_to_rad(4.0);
     let n = tilt(4.0, 0.0);
     let down = fall_line(n);
-    let mu = Surface::GREEN.mu_slide;
+    let mu = TEST_TURF.mu_slide;
     let c = (1.0 + k) / k * mu * G * theta.cos();
     for (sign, v0, w) in [(1.0, 3.0, 300.0), (-1.0, 2.5, 250.0)] {
         // Moving along sign·down with backspin w about the across-slope axis.
@@ -284,7 +285,7 @@ fn slide_to_roll_on_a_plane_matches_closed_form() {
         let t_roll = u0.length() / rate;
         let accel = -mu * G * theta.cos() + sign * G * theta.sin();
 
-        let g = plane(n, Surface::GREEN).settle(&start, air());
+        let g = plane(n, TEST_TURF).settle(&start, air());
         let roll = g.points.iter().find(|p| p.phase == Phase::Roll).unwrap();
         assert!(
             (roll.time - t_roll).abs() < 1e-12,
@@ -832,12 +833,12 @@ fn hops_die_out_only_where_the_hop_hands_back_less_than_the_impact_takes() {
 
 #[test]
 fn fairway_downslopes_end_at_rest() {
-    // Up to 6° downhill (below FAIRWAY's 6.8° hold angle) every preset
+    // Up to 5° downhill (below FAIRWAY's 5.45° hold angle) every preset
     // comes to rest, with hops through air and with ballistic hops, and
     // the driver's run grows with the slope either way, shorter through
     // air.
     let mut last_driver = (0.0, 0.0);
-    for step in 0..=12 {
+    for step in 0..=10 {
         let deg = 0.5 * f64::from(step);
         let n = tilt(deg, 0.0);
         for (name, input) in [
@@ -869,8 +870,8 @@ fn fairway_downslopes_end_at_rest() {
         }
     }
     assert!(
-        last_driver.1 < 120.0,
-        "driver on 6°, ballistic: {:.1} yd",
+        last_driver.1 < 60.0,
+        "driver on 5°, ballistic: {:.1} yd",
         last_driver.1
     );
 }

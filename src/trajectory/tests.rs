@@ -433,7 +433,7 @@ fn landing_spin_projections_are_exact() {
 //  UNIFIED SHOT SIMULATION — flight + ground
 // ══════════════════════════════════════════════════════════════════
 
-use crate::ground::{GroundPhysics, Termination};
+use crate::ground::{GroundPhysics, TEST_TURF, Termination};
 
 fn shot_on_fairway(input: &ShotInput) -> ShotResult {
     simulate_shot(input, &BALL, &Surface::FAIRWAY)
@@ -467,11 +467,11 @@ fn shot_total_greater_than_carry_driver() {
 
 #[test]
 fn shot_driver_total_distance() {
-    // Fairway drives landing near 40° run about 17–21 yd: 16.7 yd at 39°
-    // on the USGA/R&A proposed bounce model's fairway line, a 21 yd
-    // ShotLink median. The preset launches slower than the PGA Tour
-    // average (Trackman: 282 yd carry), carries about 283 yd, lands at
-    // about 40° and runs about 17 yd on FAIRWAY.
+    // Fairway drives landing near 40° run about 21 yd: the mean PGA TOUR
+    // roll-out line of 2016–18 gives 21.7 yd at 39° (events 10–60 yd;
+    // USGA/R&A 2021). The preset launches slower than the PGA Tour average
+    // (Trackman: 282 yd carry), carries about 283 yd, lands at about 40°
+    // and runs about 21 yd on FAIRWAY.
     let r = shot_on_fairway(&ShotInput::driver());
     let run = r.total_yards() - r.flight.carry_yards();
     assert!(
@@ -711,26 +711,27 @@ fn shot_hop_train_dies_out() {
 fn shot_roll_by_club_on_fairway() {
     // FAIRWAY roll and total for three launches in Trackman's air.
     // A lob wedge (65 mph, 32°, 6500 rpm) lands at about 44° and rolls
-    // about 6 yd; a 50-yard pitch (52 mph, 32°, 4000 rpm) lands at
-    // about 39° and rolls about 11.7 yd. The PGA Tour average drive
+    // about 9.3 yd; a 50-yard pitch (52 mph, 32°, 4000 rpm) lands at
+    // about 39° and rolls about 14.8 yd. The PGA Tour average drive
     // (Trackman: 171 mph, 10.4°, 2545 rpm) lands at about 39° and rolls
-    // about 18 yd, between the USGA/R&A proposed bounce model's 16.7 yd
-    // at 39° and the 21 yd ShotLink median there. No published run data
-    // exists for wedges or pitches on a fairway, so their windows guard
-    // against drift rather than validate.
+    // about 23 yd, against 21.7 yd at 39° on the mean PGA TOUR roll-out
+    // line of 2016–18 (USGA/R&A 2021). Wedge and pitch landings at 39–44°
+    // and 17–19 m/s are inside the measured impacts, but no published
+    // roll-out covers them on a fairway, so their windows guard against
+    // drift rather than validate.
     for (name, input, roll, total) in [
         (
             "lob wedge",
             launch(65.0, 32.0, 6500.0),
-            4.5..6.5,
-            71.0..81.0,
+            8.0..10.5,
+            76.0..87.0,
         ),
-        ("pitch", launch(52.0, 32.0, 4000.0), 9.5..12.5, 54.5..65.0),
+        ("pitch", launch(52.0, 32.0, 4000.0), 13.0..16.5, 60.0..71.0),
         (
             "drive",
             launch(171.0, 10.4, 2545.0),
-            15.5..21.5,
-            292.0..318.0,
+            19.5..25.5,
+            305.0..330.0,
         ),
     ] {
         let r = simulate_shot(&input, &trackman_air(), &Surface::FAIRWAY);
@@ -843,7 +844,9 @@ fn pivot_does_not_steer_on_level_ground() {
     // and on compliant turf.
     let rigid = Surface {
         compliance: 0.0,
-        ..Surface::FAIRWAY
+        mu_roll: 0.12,
+        plow: 0.36,
+        ..TEST_TURF
     };
     for side in [600.0, -600.0] {
         let input = driver_with_sidespin(side);
@@ -1024,26 +1027,26 @@ fn full_shot_outputs_are_pinned() {
         [
             259.2803652763695,
             34.69155184333128,
-            275.1898808866047,
-            275.1898808866047,
+            278.1377613735037,
+            278.1377613735037,
             0.0,
             0.0,
         ],
         [
             151.63377813048913,
             28.141717089577387,
-            160.14592001401195,
-            159.29737857771525,
+            159.26766027887996,
+            158.44059205247387,
             0.0,
-            16.463926488003366,
+            16.210070967465583,
         ],
         [
             123.56988682054241,
             27.660157785411993,
-            130.1088706226585,
-            129.56382397134033,
-            -4.124850620279335,
-            -11.896795056956273,
+            128.42230212531018,
+            127.96555720954358,
+            -4.055395782001129,
+            -10.821453285741082,
         ],
     ];
     for (got, want) in pinned_shots()
@@ -1205,8 +1208,8 @@ fn straight(speed_mph: f64, launch_deg: f64, backspin_rpm: f64) -> ShotInput {
 
 #[test]
 fn topped_shot_skims_forward_on_fairway() {
-    // 130 mph at 2° with 1500 rpm lands at about 46 m/s and 3°. The
-    // shallow-landing cap keeps the contact plane nearly flat, so the ball
+    // 130 mph at 2° with 1500 rpm lands at about 46 m/s and 3°. At so flat a
+    // landing the contact angle is nearly zero, so the ball
     // skims on and rests ahead of its landing, never hopping above 0.5 m.
     let r = shot_on_fairway(&straight(130.0, 2.0, 1500.0));
     let landing = r.ground.contacts[0].pos;
@@ -1223,24 +1226,4 @@ fn topped_shot_skims_forward_on_fairway() {
         .map(|p| p.pos.y)
         .fold(f64::NEG_INFINITY, f64::max);
     assert!(top < 0.5, "ground phase reaches {top:.2} m");
-}
-
-#[test]
-fn thin_shots_run_out_on_fairway() {
-    // Low, fast landings (about 26, 38, 44 and 53 m/s at 2–3°) on FAIRWAY:
-    // the run past carry within 5% of 60, 94, 111 and 136 yd, the
-    // rollouts FAIRWAY's plowing rate is fitted to.
-    for (input, yards) in [
-        (straight(60.0, 3.0, 700.0), 60.0),
-        (straight(90.0, 3.0, 600.0), 94.0),
-        (straight(110.0, 3.0, 800.0), 111.0),
-        (straight(130.0, 2.0, 500.0), 136.0),
-    ] {
-        let r = shot_on_fairway(&input);
-        let run = units::meters_to_yards(r.total_m - r.flight.carry_m);
-        assert!(
-            (run / yards - 1.0).abs() < 0.05,
-            "{input:?}: runs {run:.1} yd against {yards} yd"
-        );
-    }
 }
