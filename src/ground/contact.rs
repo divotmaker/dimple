@@ -115,6 +115,8 @@ struct Patch {
     k: f64,
     /// Pivot-friction angular acceleration about `n` for this step.
     pivot_accel: Vec3,
+    /// Plowing rate (1/s): a resistance of `plow` times the velocity.
+    plow: f64,
 }
 
 impl Patch {
@@ -122,7 +124,7 @@ impl Patch {
     fn slide_rate(&self, s: &Motion, u_hat: Vec3) -> Motion {
         Motion {
             pos: s.vel,
-            vel: -self.friction * u_hat + self.g_t,
+            vel: -self.friction * u_hat + self.g_t - self.plow * s.vel,
             spin: self.friction * self.n.cross(u_hat) / (self.k * self.radius) + self.pivot_accel,
         }
     }
@@ -135,7 +137,7 @@ impl Patch {
             self.friction * self.n.cross(u_hat) / (self.k * self.radius) + self.pivot_accel;
         rk4::step_state(s, t, h, |s, _| Motion {
             pos: s.vel,
-            vel: accel,
+            vel: accel - self.plow * s.vel,
             spin: spin_accel,
         })
     }
@@ -195,9 +197,7 @@ pub(super) fn contact_step(
     let w_n = spin.dot(n);
     let pivot_accel = pivot_friction(w_n, surface.pivot * g_n / inertia, n);
 
-    let slip_speed = slip(vel, spin, n, radius).length();
-
-    if slip_speed > SLIP_EPS {
+    if slip(vel, spin, n, radius).length() > SLIP_EPS {
         let patch = Patch {
             n,
             g_t,
@@ -205,6 +205,7 @@ pub(super) fn contact_step(
             radius,
             k,
             pivot_accel,
+            plow: surface.plow,
         };
         let start = Motion {
             pos: state.pos,
@@ -229,7 +230,7 @@ pub(super) fn contact_step(
     // Rolling: lock the tangential spin to the velocity.
     let (vel, spin) = lock_rolling(vel, spin, n, radius, k);
     let speed = vel.length();
-    let decel = |v: f64| surface.rolling_friction(v) * g_n / (1.0 + k);
+    let decel = |v: f64| (surface.rolling_friction(v) * g_n + surface.plow * v) / (1.0 + k);
     let slope = g_t / (1.0 + k);
     // Direction of motion; from rest (or a rounding-level speed), the way
     // the slope pulls.
@@ -307,12 +308,16 @@ fn slide(
     dt: f64,
     roll_threshold: f64,
 ) -> (Motion, f64, bool) {
-    // d|u|/dt = −c + g_t·û: the slip shrinks at `c` less the slope's pull
-    // along it. The switch to finishing along a fixed slip direction is kept
-    // above zero slip, where û would flip within the RK4 stages.
+    // d|u|/dt = −c + g_t·û − plow·v·û: the slip shrinks at `c` less the
+    // slope's pull along it, and plowing slows the ball along it. The switch
+    // to finishing along a fixed slip direction is kept above zero slip,
+    // where û would flip within the RK4 stages.
     let roll_threshold = roll_threshold.max(MIN_SWITCH_SLIP);
     let c = (1.0 + patch.k) / patch.k * patch.friction;
     let finish = |s: Motion, t: f64, left: f64| -> (Motion, f64, bool) {
+        if patch.plow > 0.0 {
+            return finish_plowing(patch, s, t, left, c);
+        }
         // Slide to zero slip along the current slip direction: exact when
         // that direction cannot turn (level ground, or slip along the fall
         // line of a plane).
@@ -332,7 +337,7 @@ fn slide(
         (patch.slide_fixed(s, t, h, u_hat), h, to_roll <= left)
     };
 
-    if patch.g_t == Vec3::ZERO {
+    if patch.g_t == Vec3::ZERO && patch.plow == 0.0 {
         // Level ground: the slip direction is fixed and |u| falls linearly.
         return finish(start, t, dt);
     }
@@ -344,11 +349,21 @@ fn slide(
         return finish(start, t, dt);
     }
     // The slip cannot reach the threshold within the step: one RK4 step
-    // with the slip direction tracked through the stages.
-    let fastest = c + patch.g_t.length();
+    // with the slip direction tracked through the stages. Plowing changes
+    // the slip by at most `plow` times the fastest speed within the step.
+    let g_t_len = patch.g_t.length();
+    let top_speed = start.vel.length() + (patch.friction + g_t_len) * dt;
+    let fastest = c + g_t_len + patch.plow * top_speed;
     if s0 - roll_threshold > fastest * dt {
         return (patch.slide_turning(start, t, dt, u_hat0), dt, false);
     }
+    // With plowing, within `s0 / fastest` no RK4 stage sees the slip pass
+    // zero and flip.
+    let dt = if patch.plow > 0.0 {
+        dt.min(s0 / fastest)
+    } else {
+        dt
+    };
     let full = patch.slide_turning(start, t, dt, u_hat0);
     let s_full = patch.slip_speed(&full);
     if s_full > roll_threshold {
@@ -373,4 +388,35 @@ fn slide(
     let mid = patch.slide_turning(start, t, tau, u_hat0);
     let (end, h, rolls) = finish(mid, t + tau, dt - tau);
     (end, tau + h, rolls)
+}
+
+/// Slide along the fixed slip direction of `s` for at most `left` with
+/// plowing: the state reached, the time taken, and whether the slip reached
+/// zero. Plowing makes the slip fall at `c − g_t·û + plow·v·û`, which
+/// changes with the velocity, so the zero-slip time is solved for.
+fn finish_plowing(patch: &Patch, s: Motion, t: f64, left: f64, c: f64) -> (Motion, f64, bool) {
+    let u = slip(s.vel, s.spin, patch.n, patch.radius);
+    let len = u.length();
+    if len <= SLIP_EPS {
+        return (s, 0.0, true);
+    }
+    let u_hat = u / len;
+    let along = |m: &Motion| slip(m.vel, m.spin, patch.n, patch.radius).dot(u_hat);
+    let end = patch.slide_fixed(s, t, left, u_hat);
+    let at_end = along(&end);
+    if at_end > SLIP_EPS {
+        return (end, left, false);
+    }
+    if at_end >= 0.0 {
+        return (end, left, true);
+    }
+    let rate = c - patch.g_t.dot(u_hat) + patch.plow * s.vel.dot(u_hat);
+    let guess = if rate > 0.0 { len / rate } else { left };
+    let tau = find_root(
+        |tau| along(&patch.slide_fixed(s, t, tau, u_hat)),
+        (0.0, len),
+        (left, at_end),
+        guess,
+    );
+    (patch.slide_fixed(s, t, tau, u_hat), tau, true)
 }

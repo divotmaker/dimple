@@ -41,6 +41,18 @@ const MIN_TILT_SPEED: f64 = 0.01;
 /// about 12°.
 const TILT_ONSET_SPEED: f64 = 2.0;
 
+/// Landing angle from the surface (rad) of the shallowest landing Penner
+/// (2002) applies eq. 8 to: his low drive, 68.0° from the vertical (22.0°).
+const SHALLOW_LANDING: f64 = 22.0 * (std::f64::consts::PI / 180.0);
+
+/// Eq. 8 at that landing (26.8 m/s): 34.0°.
+const SHALLOW_TILT: f64 = 34.0 * (std::f64::consts::PI / 180.0);
+
+/// Power of the shallow-landing cap `SHALLOW_TILT · (θ / SHALLOW_LANDING)^p`
+/// on the contact angle. Fitted to a simulator's fairway rollouts for
+/// landings under 12°, not measured.
+const SHALLOW_POWER: f64 = 3.5;
+
 /// Normal coefficient of restitution between ball and turf.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
@@ -92,8 +104,8 @@ pub enum RollLaw {
     /// `ρ_g` = 0.131 reads about 6.0 ft on the stimpmeter).
     Constant,
     /// f = 1 + (v / `v_ref`)²: dimple's own empirical law, not a fit to
-    /// published data. The presets use `v_ref` = 2.5 m/s, which keeps
-    /// full-shot rollouts plausible. `v_ref` (m/s) must be nonzero; ±∞ is
+    /// published data. [`Surface::GREEN`] and [`Surface::FIRM_GREEN`] use
+    /// `v_ref` = 2.5 m/s. `v_ref` (m/s) must be nonzero; ±∞ is
     /// [`Constant`](Self::Constant).
     Quadratic {
         /// Speed scale (m/s).
@@ -200,14 +212,19 @@ pub struct Surface {
     /// of a slowly rolling ball, and what holds a ball at rest on a slope.
     pub mu_roll: f64,
     /// How the rolling resistance grows (or falls) with speed:
-    /// `μ_eff` = `mu_roll` · f(v). The presets use
-    /// `RollLaw::Quadratic { v_ref: 2.5 }`.
+    /// `μ_eff` = `mu_roll` · f(v). [`GREEN`](Self::GREEN) and
+    /// [`FIRM_GREEN`](Self::FIRM_GREEN) use
+    /// `RollLaw::Quadratic { v_ref: 2.5 }`; [`FAIRWAY`](Self::FAIRWAY) uses
+    /// `RollLaw::Constant` with [`plow`](Self::plow).
     pub roll_law: RollLaw,
     /// Turf compliance: dimensionless multiplier on Penner's (2002) eq. 8
     /// effective contact angle, θc = 15.4° · (v / 18.6 m/s) · (φ / 44.4°),
     /// with v the impact speed and φ the incidence angle from the normal,
-    /// faded in below 2 m/s of normal impact speed (see [`impact`](super::impact)).
-    /// `1.0` is Penner's green; `0.0` is a rigid flat surface.
+    /// faded in below 2 m/s of normal impact speed and capped for shallow
+    /// landings: below 22° the cap falls to zero at grazing, and above 22°
+    /// it grows quickly and binds only on landings faster than Penner's
+    /// (see [`impact`](super::impact)). `1.0` is Penner's green; `0.0` is a
+    /// rigid flat surface.
     pub compliance: f64,
     /// Torsional friction lever (m): the friction moment about the surface
     /// normal is `pivot` × normal force. It opposes spin about the normal,
@@ -242,25 +259,46 @@ pub struct Surface {
     /// the normal part of its velocity takes it (Wright et al. 2020), which
     /// is the `sin θ`. That the spin loses the same fraction is a modeling
     /// choice; no published measurement covers it. It acts at impacts only;
-    /// a ball rolling on the surface is slowed by `mu_roll`. See
+    /// a ball rolling on the surface is slowed by `mu_roll` and `plow`. See
     /// `docs/AERO.md` for sand.
     pub absorption: f64,
+    /// Plowing rate (1/s, ≥ 0): while the ball is on the ground, sliding or
+    /// rolling, the turf resists it with a force per unit mass of `plow`
+    /// times its velocity, on top of the sliding friction and the rolling
+    /// resistance. A ball slowed by it alone travels `v / plow`. `0.0` is
+    /// no plowing ([`GREEN`](Self::GREEN), [`FIRM_GREEN`](Self::FIRM_GREEN)).
+    /// [`FAIRWAY`](Self::FAIRWAY)'s 0.36 is fitted to a simulator's fairway
+    /// rollouts for landings at 2–50°, not measured: published work finds
+    /// that rolling resistance changes with speed (Burritt & Henrikson 2024)
+    /// and gives no law above 3 m/s. It does not act during an impact or a
+    /// hop.
+    ///
+    /// Friction can hold a plowing ball rolling only below
+    /// `(1+k)/k · mu_slide · g / plow` (about 38 m/s on `FAIRWAY`, which no
+    /// shot reaches); a ball keeps rolling from its first zero slip even
+    /// above that speed.
+    pub plow: f64,
 }
 
 impl Surface {
     /// Standard fairway: Penner's (2002) green impact model (restitution,
-    /// friction and compliance 1.0) with a rolling resistance of stimp
-    /// 5.2 ft. It bounces like [`GREEN`](Self::GREEN) and rolls shorter.
-    /// The compliance is chosen, not measured; the run is sensitive to it
-    /// (see `docs/AERO.md`).
+    /// friction and compliance 1.0) with a constant rolling resistance and
+    /// a plowing rate of 0.36 /s ([`plow`](Self::plow)), stimp 4.8 ft. It
+    /// bounces like [`GREEN`](Self::GREEN), and a full shot, which reaches
+    /// the ground at 2–4 m/s, rolls shorter on it; a roll faster than about
+    /// 11 m/s, such as a thin shot's, runs farther, since `GREEN` keeps its
+    /// quadratic law with no plowing fit of its own. The
+    /// compliance is chosen, not measured; the run is sensitive to it (see
+    /// `docs/AERO.md`).
     pub const FAIRWAY: Self = Self {
         restitution: Restitution::Penner2002,
         mu_slide: 0.40,
         mu_roll: 0.12,
-        roll_law: RollLaw::Quadratic { v_ref: 2.5 },
+        roll_law: RollLaw::Constant,
         compliance: 1.0,
         pivot: 0.001,
         absorption: 0.0,
+        plow: 0.36,
     };
 
     /// Standard green: Penner's (2002) green impact model with a rolling
@@ -273,6 +311,7 @@ impl Surface {
         compliance: 1.0,
         pivot: 0.001,
         absorption: 0.0,
+        plow: 0.0,
     };
 
     /// Firm green: [`GREEN`](Self::GREEN) with Penner's (2002, Fig. 8)
@@ -307,8 +346,18 @@ impl Surface {
     /// [`Tour`](crate::Tour)). A ball with another inertia factor rolls
     /// `(1+k)/1.4` times this distance.
     ///
+    /// With [`plow`](Self::plow) `c` > 0 the deceleration is
+    /// `(mu_roll·f(v)·g + c·v)/(1+k)`, so `d = (1+k)·∫₀^v₀ v/(mu_roll·f(v)·g + c·v) dv`:
+    /// for `Constant`, `d = (1+k)·[v₀/c − (μg/c²)·ln(1 + c·v₀/(μg))]`; for
+    /// the other laws the integral is taken numerically. `d` falls as
+    /// `mu_roll` grows, and `mu_roll` is found by bisection. Plowing alone
+    /// stops the ball within `(1+k)·v₀/c`, so a reading at or beyond that
+    /// (about 23 ft for [`FAIRWAY`](Self::FAIRWAY)'s 0.36 /s) has no
+    /// `mu_roll`.
+    ///
     /// Returns the surface unchanged if `feet` is not finite and positive,
-    /// or if the law's `v_ref` is zero or NaN.
+    /// if the law's `v_ref` is zero or NaN, or if no `mu_roll` ≥ 0 reads
+    /// `feet`.
     ///
     /// ```
     /// use dimple::ground::Surface;
@@ -320,6 +369,9 @@ impl Surface {
     #[must_use]
     pub fn with_stimp(self, feet: f64) -> Self {
         let distance = units::feet_to_meters(feet);
+        if self.plow != 0.0 {
+            return self.with_stimp_plowing(distance);
+        }
         let integral = self.stimp_integral();
         if !(distance.is_finite() && distance > 0.0 && integral.is_finite()) {
             return self;
@@ -333,28 +385,88 @@ impl Surface {
     /// Stimpmeter reading (feet) of this surface: how far a ball leaving the
     /// ramp rolling at [`STIMPMETER_SPEED`] rolls on level ground before it
     /// stops, by the closed form in [`with_stimp`](Self::with_stimp)
-    /// (k = 2/5). 11.4 ft for [`GREEN`](Self::GREEN) and
-    /// [`FIRM_GREEN`](Self::FIRM_GREEN), 5.2 ft for
-    /// [`FAIRWAY`](Self::FAIRWAY).
+    /// (k = 2/5), including [`plow`](Self::plow). 11.4 ft for
+    /// [`GREEN`](Self::GREEN) and [`FIRM_GREEN`](Self::FIRM_GREEN), 4.8 ft
+    /// for [`FAIRWAY`](Self::FAIRWAY).
     ///
-    /// Infinite when `mu_roll` is zero (the ball never stops); NaN when the
-    /// law's `v_ref` is zero or NaN.
+    /// Infinite when `mu_roll` and `plow` are both zero (the ball never
+    /// stops); NaN when the law's `v_ref` is zero or NaN.
     #[must_use]
     pub fn stimp_feet(&self) -> f64 {
+        if self.plow != 0.0 {
+            return units::meters_to_feet(self.stimp_distance_plowing(self.mu_roll));
+        }
         let distance =
             (1.0 + STIMP_INERTIA_FACTOR) * self.stimp_integral() / (2.0 * G * self.mu_roll);
         units::meters_to_feet(distance)
     }
 
-    /// The stimp distance times `2·mu_roll·g/(1+k)` (m²/s²).
+    /// The stimp distance times `2·mu_roll·g/(1+k)` (m²/s²), without
+    /// plowing.
     fn stimp_integral(&self) -> f64 {
         self.roll_law.stimp_integral(STIMPMETER_SPEED)
     }
 
+    /// Level-ground roll (m) from [`STIMPMETER_SPEED`] with rolling
+    /// resistance `mu_roll` and this surface's law and plowing (k = 2/5):
+    /// `(1+k)·∫₀^v₀ v/(mu_roll·f(v)·g + plow·v) dv`. NaN when the law's
+    /// `v_ref` is zero or NaN.
+    fn stimp_distance_plowing(&self, mu_roll: f64) -> f64 {
+        let v0 = STIMPMETER_SPEED;
+        if self.stimp_integral().is_nan() {
+            return f64::NAN;
+        }
+        let friction = mu_roll * G;
+        let plow = self.plow;
+        let integral = if friction == 0.0 {
+            v0 / plow
+        } else if let RollLaw::Constant = self.roll_law {
+            let x = plow * v0 / friction;
+            friction / (plow * plow) * x_minus_ln_1p(x)
+        } else {
+            let law = self.roll_law;
+            simpson(|v| v / (friction * law.speed_factor(v) + plow * v), v0)
+        };
+        (1.0 + STIMP_INERTIA_FACTOR) * integral
+    }
+
+    /// [`with_stimp`](Self::with_stimp) for a surface with plowing:
+    /// bisection on `mu_roll` for a stimp roll of `distance` (m).
+    fn with_stimp_plowing(self, distance: f64) -> Self {
+        // Plowing alone (mu_roll 0) gives the longest roll.
+        if !(distance.is_finite() && distance > 0.0 && distance < self.stimp_distance_plowing(0.0))
+        {
+            return self;
+        }
+        // The mu_roll that reads `distance` without plowing rolls shorter
+        // with it, so it bounds the answer from above.
+        let mut lo = 0.0;
+        let mut hi = (1.0 + STIMP_INERTIA_FACTOR) * self.stimp_integral() / (2.0 * G * distance);
+        if !hi.is_finite() {
+            return self;
+        }
+        for _ in 0..STIMP_BISECTIONS {
+            let mid = 0.5 * (lo + hi);
+            if !(lo < mid && mid < hi) {
+                break;
+            }
+            if self.stimp_distance_plowing(mid) > distance {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        Self {
+            mu_roll: hi,
+            ..self
+        }
+    }
+
     /// Effective rolling-resistance coefficient at `speed` (m/s):
     /// `mu_roll · f(speed)` with f from [`roll_law`](Self::roll_law). Under
-    /// the presets' quadratic law a fast-rolling ball decelerates much
-    /// harder than a stimpmeter roll.
+    /// the greens' quadratic law a fast-rolling ball decelerates much
+    /// harder than a stimpmeter roll. [`plow`](Self::plow) is separate and
+    /// not included.
     #[must_use]
     pub fn rolling_friction(&self, speed: f64) -> f64 {
         self.mu_roll * self.roll_law.speed_factor(speed)
@@ -363,12 +475,17 @@ impl Surface {
     /// Effective contact angle β (rad) for an impact with tangential speed
     /// `v_t` and normal approach speed `v_n` (both ≥ 0).
     ///
-    /// `compliance` times Penner's eq. 8 θc, times the fade
-    /// `min(1, v_n / TILT_ONSET_SPEED)`, capped at the incidence angle from
-    /// the normal: at the cap the ball strikes the effective plane head-on,
-    /// and a larger tilt would turn its tangential velocity backward. Zero
-    /// when there is (almost) no tangential motion, since the tilt direction
-    /// is undefined.
+    /// `compliance` times the smaller of Penner's eq. 8 θc times the fade
+    /// `min(1, v_n / TILT_ONSET_SPEED)` and the shallow-landing cap
+    /// `SHALLOW_TILT · (θ / SHALLOW_LANDING)^SHALLOW_POWER`, with θ the
+    /// landing angle from the surface; the result is capped at the
+    /// incidence angle from the normal, where the ball strikes the
+    /// effective plane head-on. At 22° the cap equals eq. 8 at Penner's
+    /// shallowest published landing and above it the cap grows out of the
+    /// way; below it the tilt falls to zero at grazing, so a fast shallow
+    /// landing meets nearly flat ground instead of a steep wall. Zero when
+    /// there is (almost) no tangential motion, since the tilt direction is
+    /// undefined.
     pub(super) fn contact_angle(&self, v_t: f64, v_n: f64) -> f64 {
         if v_t <= MIN_TILT_SPEED {
             return 0.0;
@@ -377,6 +494,44 @@ impl Surface {
         let incidence = v_t.atan2(v_n);
         let theta_c = PENNER_THETA_C * (speed / PENNER_REF_SPEED) * (incidence / PENNER_REF_ANGLE);
         let fade = (v_n / TILT_ONSET_SPEED).min(1.0);
-        (self.compliance * theta_c * fade).min(incidence)
+        let shallow = SHALLOW_TILT * (v_n.atan2(v_t) / SHALLOW_LANDING).powf(SHALLOW_POWER);
+        (self.compliance * (theta_c * fade).min(shallow)).min(incidence)
     }
+}
+
+/// Bisection steps [`Surface::with_stimp`] allows when solving for
+/// `mu_roll` with plowing; it stops earlier, once the bracket cannot shrink.
+const STIMP_BISECTIONS: usize = 200;
+
+/// Intervals of the composite Simpson rule for the stimp integral with
+/// plowing (even).
+const SIMPSON_INTERVALS: u32 = 256;
+
+/// `x − ln(1 + x)` for x ≥ 0, by its series near zero, where the direct
+/// form loses to cancellation.
+fn x_minus_ln_1p(x: f64) -> f64 {
+    if x < 0.01 {
+        // x²/2 − x³/3 + … − x⁹/9
+        let mut term = x;
+        let mut sum = 0.0;
+        for n in 2..10_i32 {
+            term *= -x;
+            sum -= term / f64::from(n);
+        }
+        sum
+    } else {
+        x - x.ln_1p()
+    }
+}
+
+/// ∫₀^`upper` `f` by the composite Simpson rule.
+fn simpson(f: impl Fn(f64) -> f64, upper: f64) -> f64 {
+    let n = SIMPSON_INTERVALS;
+    let h = upper / f64::from(n);
+    let mut sum = f(0.0) + f(upper);
+    for i in 1..n {
+        let weight = if i % 2 == 1 { 4.0 } else { 2.0 };
+        sum += weight * f(h * f64::from(i));
+    }
+    sum * h / 3.0
 }

@@ -109,20 +109,17 @@ fn lower_gravity_flies_and_rolls_farther() {
         last.pos.y
     );
 
-    // The same ball rolling away at 5 m/s: rolling resistance scales with
-    // gravity, so it rolls about 9.81 / 1.62 times as far.
+    // The same ball rolling away at 5 m/s on GREEN: rolling resistance
+    // scales with gravity, so it rolls about 9.81 / 1.62 times as far.
+    // (FAIRWAY's plowing is a drag that does not scale with gravity.)
     let rolling = BallState {
         time: 0.0,
         pos: Vec3::ZERO,
         vel: Vec3::new(5.0, 0.0, 0.0),
         spin: Vec3::new(0.0, 0.0, -5.0 / Tour::SEA_LEVEL.radius_m()),
     };
-    let on_earth = Surface::FAIRWAY
-        .settle(&rolling, &Tour::SEA_LEVEL)
-        .rest
-        .pos
-        .x;
-    let on_moon = Surface::FAIRWAY
+    let on_earth = Surface::GREEN.settle(&rolling, &Tour::SEA_LEVEL).rest.pos.x;
+    let on_moon = Surface::GREEN
         .settle(&rolling, &with_gravity(1.62))
         .rest
         .pos

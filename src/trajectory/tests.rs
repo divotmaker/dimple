@@ -1024,8 +1024,8 @@ fn full_shot_outputs_are_pinned() {
         [
             259.2803652763695,
             34.69155184333128,
-            274.9293607191314,
-            274.9293607191314,
+            275.1898808866047,
+            275.1898808866047,
             0.0,
             0.0,
         ],
@@ -1189,5 +1189,58 @@ fn strong_wind_does_not_keep_the_ball_bouncing() {
             "{wind:?} {input:?}"
         );
         assert!(hops < 60, "{wind:?} {input:?}: {hops} impacts");
+    }
+}
+
+/// A straight shot (mph, degrees, rpm).
+fn straight(speed_mph: f64, launch_deg: f64, backspin_rpm: f64) -> ShotInput {
+    ShotInput {
+        ball_speed_mph: speed_mph,
+        launch_angle_deg: launch_deg,
+        launch_azimuth_deg: 0.0,
+        backspin_rpm,
+        sidespin_rpm: 0.0,
+    }
+}
+
+#[test]
+fn topped_shot_skims_forward_on_fairway() {
+    // 130 mph at 2° with 1500 rpm lands at about 46 m/s and 3°. The
+    // shallow-landing cap keeps the contact plane nearly flat, so the ball
+    // skims on and rests ahead of its landing, never hopping above 0.5 m.
+    let r = shot_on_fairway(&straight(130.0, 2.0, 1500.0));
+    let landing = r.ground.contacts[0].pos;
+    assert!(
+        r.ground.rest.pos.x > landing.x,
+        "rests at {:.1} m, landed at {:.1} m",
+        r.ground.rest.pos.x,
+        landing.x
+    );
+    let top = r
+        .ground
+        .points
+        .iter()
+        .map(|p| p.pos.y)
+        .fold(f64::NEG_INFINITY, f64::max);
+    assert!(top < 0.5, "ground phase reaches {top:.2} m");
+}
+
+#[test]
+fn thin_shots_run_out_on_fairway() {
+    // Low, fast landings (about 26, 38, 44 and 53 m/s at 2–3°) on FAIRWAY:
+    // the run past carry within 5% of 60, 94, 111 and 136 yd, the
+    // rollouts FAIRWAY's plowing rate is fitted to.
+    for (input, yards) in [
+        (straight(60.0, 3.0, 700.0), 60.0),
+        (straight(90.0, 3.0, 600.0), 94.0),
+        (straight(110.0, 3.0, 800.0), 111.0),
+        (straight(130.0, 2.0, 500.0), 136.0),
+    ] {
+        let r = shot_on_fairway(&input);
+        let run = units::meters_to_yards(r.total_m - r.flight.carry_m);
+        assert!(
+            (run / yards - 1.0).abs() < 0.05,
+            "{input:?}: runs {run:.1} yd against {yards} yd"
+        );
     }
 }

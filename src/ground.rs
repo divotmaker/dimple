@@ -421,18 +421,21 @@ impl<T: Terrain> GroundPhysics<T> {
     /// smooth phase:
     ///
     /// - **Slide** (the contact point slips): friction `−μ_slide·g·n_y·û`,
-    ///   its torque `(−R n) × F`, and `g_t`. Where `g_t` is zero the slip
-    ///   direction is fixed and the slip speed falls linearly at
-    ///   `((1+k)/k)·μ_slide·g·n_y`, so a slide that would end within the
-    ///   step stops exactly at the slide-to-roll time (the step is
-    ///   shortened) and the ball leaves rolling. On a slope `g_t` turns the
-    ///   slip direction, so û is re-evaluated at every RK4 stage; the time
-    ///   the slip falls to [`roll_threshold`](Self::roll_threshold) is solved
-    ///   within the step, and from there the slide finishes along that slip
-    ///   direction, ending at zero slip as on level ground.
+    ///   its torque `(−R n) × F`, `g_t`, and plowing `−plow·v`
+    ///   ([`Surface::plow`], through the center, so no torque). Where `g_t`
+    ///   and `plow` are zero the slip direction is fixed and the slip speed
+    ///   falls linearly at `((1+k)/k)·μ_slide·g·n_y`, so a slide that would
+    ///   end within the step stops exactly at the slide-to-roll time (the
+    ///   step is shortened) and the ball leaves rolling. On a slope `g_t`
+    ///   turns the slip direction, and plowing turns it wherever the
+    ///   velocity is not along the slip, so û is re-evaluated at every RK4
+    ///   stage; the time the slip falls to
+    ///   [`roll_threshold`](Self::roll_threshold) is solved within the step,
+    ///   and from there the slide finishes along that slip direction,
+    ///   ending at zero slip (with plowing, at the solved zero-slip time).
     /// - **Roll**: spin tangential to the ground is locked to the velocity;
-    ///   deceleration `μ_eff·g·n_y/(1+k)` against the velocity, with
-    ///   `μ_eff` from [`Surface::rolling_friction`], plus `g_t/(1+k)`. A ball
+    ///   deceleration `(μ_eff·g·n_y + plow·v)/(1+k)` against the velocity,
+    ///   with `μ_eff` from [`Surface::rolling_friction`], plus `g_t/(1+k)`. A ball
     ///   that is slowing and slower than one step's deceleration (or
     ///   [`stop_speed`](Self::stop_speed)) stops: it finishes at constant
     ///   deceleration, the returned velocity is exactly zero, and the time
@@ -940,13 +943,19 @@ fn hops_die_out(
 /// direction of the incoming tangential velocity, `R` the radius and `k` the
 /// inertia factor:
 ///
-/// 1. Tilt: β = `compliance` · θc (Penner eq. 8) · min(1, `v_n` / 2 m/s),
-///    with `v_n = −v·n` the normal impact speed, capped at the incidence
-///    angle; effective normal `n' = n cos β − t̂ sin β`, leaning back toward
-///    the incoming ball. The tilt models the crater a landing presses into
-///    the turf, so it fades in linearly below 2 m/s of normal speed, where
-///    the contact barely dents the turf. Landings get Penner's full angle;
-///    the low, near-grazing hops after them get little tilt, so they die
+/// 1. Tilt: β = `compliance` · min(θc (Penner eq. 8) · min(1, `v_n` / 2 m/s),
+///    34.0° · (θ / 22.0°)^3.5), capped at the incidence angle, with
+///    `v_n = −v·n` the normal impact speed and θ the landing angle from the
+///    surface; effective normal `n' = n cos β − t̂ sin β`, leaning back
+///    toward the incoming ball. The tilt models the crater a landing
+///    presses into the turf, so it fades in linearly below 2 m/s of normal
+///    speed, where the contact barely dents the turf. Below Penner's
+///    shallowest published landing (22°, where eq. 8 gives 34°) it is
+///    capped and falls to zero at grazing, so a fast shallow landing meets
+///    nearly flat ground; the power 3.5 is fitted, not measured. Above 22°
+///    the cap grows quickly (53° at 25°) and binds only on landings faster
+///    than Penner's, so his published landings get his full angle. The
+///    low, near-grazing hops after a landing get little tilt, so they die
 ///    out in a few impacts and the ball goes on to slide and roll.
 /// 2. Normal impulse (per unit mass) `j_n = (1 + e)·|v·n'|`, with `e` from
 ///    [`Surface::restitution`] at the normal speed `|v·n'|`.

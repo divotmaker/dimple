@@ -438,15 +438,15 @@ data (see
 Rolling on slopes is checked against Brede's (1991) stimpmeter slope
 correction and Cross's (2024) break-angle invariance (see
 [Stimpmeter](#stimpmeter) and [Terrain and slopes](#terrain-and-slopes)).
-A tour-average drive runs about 18 yd on `FAIRWAY`, between the USGA/R&A
+A tour-average drive runs about 19 yd on `FAIRWAY`, between the USGA/R&A
 proposed bounce model and the ShotLink median for its landing angle (see
 [Run-out on a fairway](#run-out-on-a-fairway)).
 
 **Beta:** landing shots on slopes, which agree with Whitlark & Pringle's
 (2012) study of a 1.5% green only at the level of its published means; and
 the run and total distances of full shots, the onset speed of the tilt
-fade, `FAIRWAY`'s compliance, rolling resistance above 3 m/s, the pivot
-lever, the lateral ground effects, and `absorption` with the sand example
+fade, the shallow-landing cap, `FAIRWAY`'s compliance and plowing, rolling
+resistance above 3 m/s, the pivot lever, the lateral ground effects, and `absorption` with the sand example
 (see [Other surfaces](#other-surfaces)). Only the drive's run is compared
 with measured fairway data, and no published measurement of wedge, pitch
 or chip run on a fairway exists to compare against. The presets may be
@@ -492,8 +492,8 @@ slips at `u = v_t + ω × r`; friction acts against `u`.
   sea level, measured as lateral run across the landing heading, the
   heading-mismatch kick alone (the same landing with ω_y removed) adds
   about 0.9 m, the throw takes back about 0.1 m, and the net is about
-  +0.8 m (0.9 yd) on a 17 m run. The fade comes to rest 32.1 m (35.1 yd)
-  right of the target line, 4.3 m right of its landing point.
+  +0.8 m (0.9 yd) on a 17 m run. The fade comes to rest 32.2 m (35.2 yd)
+  right of the target line, 4.4 m right of its landing point.
 
 So dimple does not convert sidespin into a lateral nudge; it carries the
 spin vector through the contact physics, and these effects follow from it.
@@ -505,12 +505,13 @@ Phys.* 80, 931–940, in vector form. The ball deforms the turf and meets the
 rising lip of its own crater, so the impact is treated as one off a rigid
 plane inclined by an effective contact angle β toward the incoming ball.
 With `v_n = −v·n` the approach speed, `v_t` the tangential velocity
-(direction `t̂`), `v = |v|` and `φ = atan(|v_t| / v_n)` the incidence angle
-from the normal:
+(direction `t̂`), `v = |v|`, `φ = atan(|v_t| / v_n)` the incidence angle
+from the normal and `θ = 90° − φ` the landing angle from the surface:
 
 ```
 θc   = 15.4° · (v / 18.6 m/s) · (φ / 44.4°)        (Penner eq. 8)
-β    = min(compliance · θc · min(1, v_n / 2 m/s), φ)
+β    = min(compliance · min(θc · min(1, v_n / 2 m/s),
+                          34° · (θ / 22°)^3.5), φ)
 n'   = n cos β − t̂ sin β                          (effective normal)
 e    = restitution at |v·n'|                       (Penner eq. 5)
 j_n  = (1 + e) · |v·n'|                            (normal impulse / m)
@@ -540,7 +541,8 @@ ball on its mark (see [Other surfaces](#other-surfaces)).
 
 The factor `min(1, v_n / 2 m/s)` fades the tilt in for soft contacts; every
 lofted landing (launch above about 12°) strikes faster than 2 m/s and gets
-Penner's angle in full (see
+Penner's angle in full. The term `34° · (θ / 22°)^3.5` caps the tilt of
+landings shallower than 22°, where eq. 8 has no published support (see
 [Hops and the bounce-to-roll transition](#hops-and-the-bounce-to-roll-transition)).
 
 For a ball with no spin about the vertical traveling in a vertical plane,
@@ -548,8 +550,8 @@ this is exactly Penner's planar solution: the normal component
 `v_n' = v_n cos β + v_t sin β` (eq. 6), Daish's rigid-surface rebound in
 the effective frame (eqs. 2–4: grip `(5/7)·v_t' − (2/7)·R·ω_back`, or slip
 with friction impulse `μ(1+e)·v_n'`), rotated back (eq. 7). The test suite
-checks the vector form against the planar solution, with the fade,
-impact by impact.
+checks the vector form against the planar solution, with the fade and
+the shallow-landing cap, impact by impact.
 
 The coefficient of restitution falls with normal impact speed (Penner eq. 5,
 his fit to his own turf measurements):
@@ -588,7 +590,7 @@ impact: a driver landing on `FAIRWAY` can remove up to about 160 rad/s
 So on level ground the path is the same for every lever from 1 mm up. With
 no pivot friction at all the spin survives to the later impacts, whose
 throws move that drive's rest by about 11 cm; on rigid ground (no tilt) it
-survives only into the hops, which it curves about 6 cm further the way the
+survives only into the hops, which it curves about 12 cm further the way the
 sidespin curved the flight.
 
 ### Hops and the bounce-to-roll transition
@@ -602,38 +604,51 @@ with the model's runs slightly longer.
 **The tilt fade.** Penner's θc is a first-order extrapolation, linear in
 speed and incidence angle, from a single measured green impact at
 18.6 m/s, 44.4° from the vertical. Taken in full at every impact, it also
-tilts the plane for the low, near-grazing hops after the first bounce:
-arriving at 0.3–1 m/s of normal speed and 2–4 m/s along the ground, 75–85°
-from the vertical, the ball gets 3–5° of tilt, which turns forward speed
-into a rebound nearly as high as the one it arrived from. The hops then
-settle at 5–30 mm and skim on for 20–40 impacts, losing 1–2% of their
-forward speed each, until the ball slows to about 2 m/s. On a fairway they
-cover most of the run, the fairway's rolling resistance barely matters, and
-a fairway runs as far as a green. The tilt stands for the lip of the crater
-the ball presses into the turf, and a contact that soft presses almost
-none; Penner also expects his bounce model to break down as bounce heights
-approach the ~2 mm a ball sits into a green (see below). So dimple fades the
-tilt in linearly with the normal impact speed `v_n`:
-`β = min(compliance · θc · min(1, v_n / 2 m/s), φ)`.
+tilts the plane for the low hops after the first bounce: arriving at
+0.3–1 m/s of normal speed and 2–4 m/s along the ground, the ball gets up to
+about 6° of tilt, which turns forward speed into a rebound nearly as high
+as the one it arrived from. Without a fade the hops of a drive shrink
+only slowly, from about 80 mm to 10 mm over some 20 impacts; on a fairway
+they cover much of the run, so the fairway's extra resistance matters less
+(the preset drive runs 21.2 yd on `FAIRWAY` against 24.6 yd on `GREEN`;
+with the fade, 18.0 against 23.2). The tilt stands for the lip of the crater the ball presses
+into the turf, and a contact that soft presses almost none; Penner also
+expects his bounce model to break down as bounce heights approach the
+~2 mm a ball sits into a green (see below). So dimple fades the tilt in
+linearly with the normal impact speed `v_n`, by the factor
+`min(1, v_n / 2 m/s)` on θc.
 
 - Lofted landings (launch above about 12°) strike at 4 m/s (a low chip) to
   20 m/s (full shots) of normal speed and keep Penner's angle in full, so
   his published bounce heights and drive runs still reproduce (see
-  [Surfaces](#surfaces)). A bump-and-run launched under about 12° lands
-  inside the fade and skims 10–16 impacts before it rolls.
+  [Surfaces](#surfaces)). A bump-and-run landing under about 12° meets the
+  shallow-landing cap (below) and makes 2–6 impacts before it rolls.
 - On level ground the rebound of a low hop then leaves 0.5–0.8 times as
   fast as it arrived while the ball moves along the ground at 2–4 m/s, so
   the hops die out geometrically (see the slope analysis below): a full
-  shot from the bag makes 4–10 impacts (a drive about 9, an iron, pitch or
+  shot from the bag makes 4–9 impacts (a drive 9, an iron, pitch or
   wedge 4–8), then slides and rolls, from about 2–4 m/s after a drive,
   iron, pitch or chip and about 1 m/s after a tour wedge.
 - The 2 m/s onset is chosen, not measured. Runs barely depend on it between
   1.5 and 3 m/s (in 25 °C air the tour drive of
-  [Run-out on a fairway](#run-out-on-a-fairway) runs 19.3 to 17.5 yd, its
-  amateur lob wedge 6.2 to 6.0 yd), nor on the shape of the ramp: a
+  [Run-out on a fairway](#run-out-on-a-fairway) runs 19.2 to 18.1 yd, its
+  amateur lob wedge 6.1 to 5.9 yd), nor on the shape of the ramp: a
   quadratic or smoothstep fade moves them by about a yard or less. A fade
-  weaker than linear, such as `√(v_n / 2 m/s)`, leaves most of the hop
-  train in place.
+  weaker than linear, such as `√(v_n / 2 m/s)`, keeps part of the hop
+  train (the preset drive makes 11 impacts against 9).
+
+**The shallow-landing cap.** Penner applies eq. 8 to landings between 46°
+and 68° from the vertical. His shallowest, 22° above the turf at 26.8 m/s,
+has θc = 34°. Extended to a fast, shallow landing the linear law runs away:
+at 46 m/s and 3° it gives 75°, a wall. So below 22° dimple caps the tilt at
+34° · (θ / 22°)^3.5, θ the landing angle from the surface, and `compliance`
+scales the capped tilt. At 22° the cap is Penner's own angle, so the first
+impact of every landing he publishes is unchanged; above 22° the cap grows
+quickly (53° at 25°) and binds only on landings faster than his. At
+grazing it is gone and the ball meets flat ground. A thin shot landing at
+35 m/s and 10° gets 2.2° of tilt, leaves at 30.5 m/s and rises 0.36 m. The
+power 3.5 is fitted to a simulator's fairway rollouts of thin shots, not
+measured.
 
 The ball keeps bouncing while its rebound would rise at least 5 mm above the
 ground, measured along the normal: `(v·n)² / (2·g·n_y) ≥ 5 mm` (on level
@@ -658,9 +673,9 @@ Cd ≈ 0.43 and Cl ≈ 0.36. At sea level drag then decelerates the ball by
 about 0.52 m/s² at 8 m/s, 0.13 m/s² at 4 m/s and 0.03 m/s² at 2 m/s, and the
 forward topspin it leaves with pushes it down with about 0.44 m/s² (4.5% of
 g) at 8 m/s. Small as these are, a drive spends nearly 3 s in its hops:
-through sea-level air a `FAIRWAY` drive makes 9 impacts and runs 17.4 yd
-past the landing point, against 11 impacts and 19.5 yd with ballistic hops
-(`GREEN`: 23.2 yd; ballistic 25.5 yd). Irons and wedges, which hop little,
+through sea-level air a `FAIRWAY` drive makes 9 impacts and runs 18.0 yd
+past the landing point, against 9 impacts and 19.6 yd with ballistic hops
+(`GREEN`: 23.2 yd; ballistic 24.9 yd). Irons and wedges, which hop little,
 barely change. A model with no air (`Tour::new(0.0, Wind::None)`) gives
 ballistic hops under gravity alone, the model Penner uses; in dimple they
 lengthen a drive's run by about 2 yd.
@@ -686,27 +701,31 @@ the 5 mm height alone need not end them. At grazing incidence (φ ≈ 90°)
 eq. 8 makes Penner's tilt proportional to the speed, `C·v` with
 C = compliance · 15.4° · (90°/44.4°) / (18.6 m/s) (0.029 s/m for the
 presets), and below 2 m/s of normal speed the fade scales it by w / 2 m/s,
-w the normal speed: `β ≈ C·v·w / (2 m/s)`. Take a ball moving along the
-ground at speed v and hopping with normal speed w. Against the tilted plane
-the impact rebounds at `w' = e·w + (1 + e)·vβ` (normal restitution; the
-grip friction loss is of higher order), so each impact scales a low hop's
-normal speed by
+w the normal speed: `β ≈ C·v·w / (2 m/s)`. The shallow-landing cap bounds
+it by `34° · (atan(w/v) / 22°)^3.5`, atan(w/v) being the hop's angle to the
+ground. Take a ball moving along the ground at speed v and hopping with normal
+speed w. Against the tilted plane the impact rebounds at
+`w' = e·w + (1 + e)·vβ` (normal restitution; the grip friction loss is of
+higher order), so each impact scales a low hop's normal speed by
 
 ```
-q = w' / w ≈ e + (1 + e) · C·v² / (2 m/s)
+q = w' / w ≈ e + (1 + e) · min(C·v² / (2 m/s), K·(w/v)^2.5)
 ```
 
-With e ≈ 0.5 at these slow impacts, q < 1 below v_c ≈ 5 m/s (q ≈ 0.6 at
-2 m/s and 0.8 at 4 m/s, as the full impact model gives). On level ground,
-where every impact also slows the ball, the hops therefore shrink through
-the 5 mm transition within a few impacts; a ball skimming faster than v_c
-first hops higher, until its impacts have slowed it. Down a slope θ, each hop of time
-`T = 2w/(g cos θ)` speeds the ball up by about `2w·tan θ`, and a slope that
-keeps it moving at v_c or faster keeps its hops from shrinking at any
-height: they hold or grow, and the ball never rolls. Drag at these speeds is
-too weak to prevent it. Under the 5 mm rule alone, a drive landing on a 5°
-downhill `FAIRWAY` is still hopping after 200 impacts (with ballistic hops,
-already on 3.75°).
+with K = 34° / (22°)^3.5 ≈ 16.9 (angles in radians). With e ≈ 0.5 at these
+slow impacts, the first term keeps q < 1 below v_c ≈ 5 m/s (q ≈ 0.6 at
+2 m/s and 0.8 at 4 m/s, as the full impact model gives), and the second
+keeps it below 1 at any speed for hops flatter than about 12° (w/v under
+about 0.21): at 6 m/s a hop arriving at 0.3 m/s leaves at 0.51 of it. On
+level ground, where every impact also slows the ball, the hops therefore
+shrink through the 5 mm transition within a few impacts; only a ball
+skimming faster than v_c with hops steeper than about 12° first hops
+higher, until its impacts have slowed it. Down a slope θ, each hop of time
+`T = 2w/(g cos θ)` speeds the ball up by about `2w·tan θ`, and a steep
+enough slope keeps its hops from shrinking: they hold or grow, and the ball
+never rolls. Drag at these speeds is too weak to prevent it. Under the
+5 mm rule alone, a drive landing on a 9.25° downhill `FAIRWAY` is still
+hopping after 200 impacts (with ballistic hops, already on 7.5°).
 
 So on a slope, or in wind, the ball keeps hopping only while the train dies out. Each
 hop is flown first and then judged. With `E = |v|²/2 + k·R²·|ω|²/2` per
@@ -758,19 +777,23 @@ sampled under the ball every step. With `n` the normal and g the model's
 tangential gravity `g_t = g − (g·n)n` (zero on level ground):
 
 - **Slide** (the contact point slips): friction `−μ·m·g·n_y·û`, its torque
-  `(−R n) × F`, and `g_t`. On level ground the slip direction is fixed and
-  the slip speed falls linearly at `((1+k)/k)·μ·g` (3.5·μ·g for k = 2/5),
-  so the slide is stepped exactly to the moment the slip reaches zero. On a
-  slope `g_t` turns the slip direction (`du/dt = −((1+k)/k)·μ·g·n_y·û + g_t`),
-  so û is re-evaluated at every RK4 stage. The moment the slip falls to
-  `roll_threshold` (0.01 m/s) is solved within the step (regula falsi with
-  bisection), and from there the slide finishes along that slip direction
-  to zero slip, which is exact when the slip lies along the fall line.
-  Backspin can reverse the ball.
+  `(−R n) × F`, `g_t`, and the plowing force `−plow·m·v` (below), which acts
+  through the center and has no torque. On level ground without plowing the
+  slip direction is fixed and the slip speed falls linearly at
+  `((1+k)/k)·μ·g` (3.5·μ·g for k = 2/5), so the slide is stepped exactly to
+  the moment the slip reaches zero. On a slope `g_t` turns the slip
+  direction (`du/dt = −((1+k)/k)·μ·g·n_y·û + g_t − plow·v`), and plowing,
+  which follows the velocity rather than the slip, makes the slip fall at a
+  rate that changes with the speed, so û is re-evaluated at every RK4 stage.
+  The moment the slip falls to `roll_threshold` (0.01 m/s) is solved within
+  the step (regula falsi with bisection), and from there the slide finishes
+  along that slip direction to zero slip, which is exact when the slip lies
+  along the fall line; with plowing the moment of zero slip is solved for
+  the same way. Backspin can reverse the ball.
 - **Roll**: the spin tangential to the ground is locked to the velocity, and
-  the ball decelerates at `μ_eff·g·n_y/(1+k)` against its velocity, with a
-  speed-dependent rolling resistance, while the slope pulls with
-  `g_t/(1+k)`. `mu_roll` is the resistance at zero speed and
+  the ball decelerates at `(μ_eff·g·n_y + plow·v)/(1+k)` against its
+  velocity, with a speed-dependent rolling resistance and plowing, while the
+  slope pulls with `g_t/(1+k)`. `mu_roll` is the resistance at zero speed and
   `Surface::roll_law` (a `RollLaw`) its speed dependence,
   `μ_eff = mu_roll · f(v)` with f(0) = 1:
 
@@ -784,14 +807,28 @@ tangential gravity `g_t = g − (g·n)n` (zero on level ground):
   rolls as `Constant`, and the stimpmeter helpers reject it (see
   [Stimpmeter](#stimpmeter)).
 
-  The presets use `Quadratic { v_ref: 2.5 }`, dimple's own empirical law,
-  not a fit to published data: 2.5 m/s is chosen so full-shot rollouts are
-  plausible. At driver post-bounce speeds μ_eff is many times the base
-  value; at stimpmeter speeds it is about 1.5×. Integrated, a ball that
-  starts rolling at `v₀` stops after
+  `GREEN` and `FIRM_GREEN` use `Quadratic { v_ref: 2.5 }`, dimple's own
+  empirical law, not a fit to published data: 2.5 m/s is chosen so
+  full-shot rollouts are plausible. At driver post-bounce speeds μ_eff is
+  many times the base value; at stimpmeter speeds it is about 1.5×.
+  Integrated, a ball that starts rolling at `v₀` stops after
   `(1+k)·v_ref² / (2·mu_roll·g) · ln(1 + v₀²/v_ref²)`: 3.48 m (stimp
-  11.4 ft) on `GREEN` and 1.60 m (5.2 ft) on `FAIRWAY` for the
-  stimpmeter's 1.83 m/s (see [Stimpmeter](#stimpmeter)).
+  11.4 ft) on `GREEN` for the stimpmeter's 1.83 m/s (see
+  [Stimpmeter](#stimpmeter)).
+
+  `FAIRWAY` uses `Constant` with plowing, `Surface::plow` = 0.36 /s: while
+  the ball is on the ground, sliding or rolling, the turf resists it with a
+  force per unit mass of `plow` times its velocity, on top of the sliding
+  friction and the rolling resistance. A sliding ball slowed by it alone
+  travels `v / plow`, a rolling one `(1+k)·v / plow`. `0.0` is no plowing
+  (`GREEN`, `FIRM_GREEN`). `FAIRWAY`'s 0.36 is fitted to a simulator's
+  fairway rollouts for landings at 2–50°, not measured: published work finds
+  that rolling resistance changes with speed (Burritt & Henrikson 2024,
+  below) and gives no law above 3 m/s. It does not act during an impact or
+  a hop, and as a drag it does not scale with gravity. With `c = plow` a
+  ball that starts rolling at `v₀` under the constant law stops after
+  `(1+k)·[v₀/c − (μg/c²)·ln(1 + c·v₀/(μg))]`, μ = `mu_roll`: 1.47 m (stimp
+  4.8 ft) on `FAIRWAY` for the stimpmeter's 1.83 m/s.
 
   `Constant` is Penner's run model: his run paper uses a constant rolling
   friction, `a = −(5/7)·ρ_g·g` with ρ_g = 0.131 (eq. 9), which reads a
@@ -800,11 +837,11 @@ tangential gravity `g_t = g − (g·n)n` (zero on level ground):
   On slopes the published checks favor `Constant`: Brede's slope
   correction of stimpmeter readings is exact under it, and Cross's
   speed-independent break angle holds under it alone. Under the quadratic
-  law both are approximate, and at the same stimp it lowers the grade at
-  which a green holds a ball (`GREEN`: 5.5% against 6.9%). See
-  [Stimpmeter](#stimpmeter) and [Terrain and slopes](#terrain-and-slopes).
-  The presets keep the quadratic law, which keeps full-shot rollouts
-  plausible.
+  law, and with plowing, both are approximate, and at the same stimp the
+  quadratic law lowers the grade at which a green holds a ball (`GREEN`:
+  5.5% against 6.9%). See [Stimpmeter](#stimpmeter) and
+  [Terrain and slopes](#terrain-and-slopes). `GREEN` and `FIRM_GREEN` keep
+  the quadratic law, which keeps full-shot rollouts plausible.
 
   `Exponential` follows Burritt & Henrikson (2024), who fit an exponential
   function of speed to measured putts. They track whole ~20 ft putts with
@@ -826,18 +863,19 @@ tangential gravity `g_t = g − (g·n)n` (zero on level ground):
 
   So there is no single published rate: a surface fitted this way is
   `Surface { mu_roll: μ₀, roll_law: RollLaw::Exponential { v_ref }, .. }`.
-  The presets' quadratic law gives μ(3 m/s)/μ(0) = 2.44, within that range
+  `GREEN`'s quadratic law gives μ(3 m/s)/μ(0) = 2.44, within that range
   (0.53–6.5) and next to Mat A's 2.2. Full shots reach the ground at up to
   about 4 m/s (see
   [Hops and the bounce-to-roll transition](#hops-and-the-bounce-to-roll-transition)),
   where the laws part: re-pinned to the same stimp, `Constant` lengthens the
-  preset drive's run from 17.4 to 20.1 yd on `FAIRWAY` and from 23.2 to
-  28.9 yd on `GREEN`; irons and wedges, which reach the ground slower, move
-  by a few tenths of a yard. Re-pinned to the
-  presets' stimp, `Exponential { v_ref: 7.0 }` gives `GREEN` μ₀ = 0.058
-  and `FAIRWAY` μ₀ = 0.126; a roll from 5 m/s on `GREEN` runs 19.46 m
-  (quadratic 13.05 m) and one from 10 m/s on `FAIRWAY` 23.18 m (quadratic
-  10.53 m).
+  preset drive's run on `GREEN` from 23.2 to 29.0 yd; irons and wedges,
+  which reach the ground slower, move by a few tenths of a yard. On
+  `FAIRWAY` (18.0 yd), the constant law without plowing re-pinned to the
+  same stimp runs 19.5 yd, and the quadratic law without plowing 17.0 yd.
+  Re-pinned to the presets' stimp, `Exponential { v_ref: 7.0 }` gives
+  `GREEN` μ₀ = 0.058 and `FAIRWAY` (with its plowing) μ₀ = 0.102; a roll
+  from 5 m/s on `GREEN` runs 19.46 m (quadratic 13.05 m) and one from
+  10 m/s on `FAIRWAY` 15.89 m (constant 21.08 m).
 - **Spin about the normal** decays at `pivot·g·n_y / (k R²)` in both
   phases, saturating at zero.
 - **Rest**: a rolling ball that is slowing and slower than one step's
@@ -885,16 +923,16 @@ downrange through the tee; `Rest` unless marked. `FAIRWAY`:
 
 | Slope | −3° | −2° | −1° | 0° | +1° | +2° | +3° | +4° | +5° | +6° |
 |---|---|---|---|---|---|---|---|---|---|---|
-| driver | 15.5 | 16.1 | 16.7 | 17.4 | 18.6 | 19.9 | 21.0 | 22.2 | 24.6 | 27.6 |
-| driver, ballistic hops | 17.0 | 17.4 | 18.3 | 19.5 | 20.7 | 21.7 | 22.9 | 24.1 | 25.6 | 28.1 |
-| 7-iron (`seven_iron`) | 3.6 | 4.1 | 4.6 | 5.3 | 6.2 | 7.4 | 8.8 | 10.2 | 12.5 | 16.4 |
-| wedge | 0.2 | 0.4 | 0.6 | 0.9 | 1.3 | 1.9 | 2.8 | 4.0 | 5.9 | 9.4 |
+| driver | 15.8 | 16.3 | 16.9 | 18.0 | 19.1 | 20.5 | 22.2 | 23.9 | 26.6 | 29.2 |
+| driver, ballistic hops | 17.1 | 17.8 | 18.6 | 19.6 | 20.9 | 22.5 | 24.5 | 26.1 | 27.9 | 30.2 |
+| 7-iron (`seven_iron`) | 3.6 | 4.0 | 4.5 | 5.2 | 6.0 | 7.3 | 8.6 | 10.1 | 12.3 | 15.5 |
+| wedge | 0.2 | 0.4 | 0.6 | 0.9 | 1.3 | 1.8 | 2.6 | 3.6 | 5.1 | 7.4 |
 
 `GREEN`:
 
 | Slope | −3° | −2° | −1° | 0° | +1° | +2° | +2.5° | +3° | +3.1° |
 |---|---|---|---|---|---|---|---|---|---|
-| driver | 18.2 | 19.5 | 21.0 | 23.2 | 26.7 | 32.2 | 37.4 | 50.2 | 60.1 |
+| driver | 18.2 | 19.3 | 20.8 | 23.2 | 26.4 | 31.9 | 37.0 | 50.2 | 60.2 |
 | 7-iron (`seven_iron`) | 4.4 | 5.2 | 6.3 | 8.0 | 10.6 | 15.6 | 20.3 | 33.1 | 43.0 |
 | wedge | 0.2 | 0.4 | 0.7 | 1.3 | 2.3 | 4.6 | 7.7 | 18.1 | 27.4 |
 
@@ -903,7 +941,7 @@ hops" row is the same driver with `settle` given
 `Tour::new(0.0, Wind::None)`. Downhill, the hops end by the slope rule
 above and the ball rolls the rest of the way; the rule is evaluated on the
 hop actually flown, so drag's loss over a hop
-counts against the slope's return. On `FAIRWAY` the driver makes 8–10
+counts against the slope's return. On `FAIRWAY` the driver makes 7–9
 impacts and the 7-iron 5 or 6 on every slope here; the runs grow with the
 downslope mostly through the roll.
 
@@ -913,9 +951,9 @@ mirror image:
 
 | Plane | driver | 7-iron (`seven_iron`) | wedge |
 |---|---|---|---|
-| `FAIRWAY` 2.5° | +3.7 | +1.9 | +1.0 |
-| `FAIRWAY` 5° | +9.2 | +5.4 | +3.8 |
-| `GREEN` 2.5° | +11.6 | +7.4 | +3.5 |
+| `FAIRWAY` 2.5° | +3.8 | +1.8 | +0.9 |
+| `FAIRWAY` 5° | +9.3 | +4.8 | +3.1 |
+| `GREEN` 2.5° | +11.5 | +7.4 | +3.5 |
 
 `GREEN` holds a ball at rest up to 3.1° (`tan θ ≤ 0.055`, 3.15°). Close to
 that the net deceleration of a slow roll, `(5/7)·g·cos θ·(μ_eff − tan θ)`,
@@ -936,7 +974,7 @@ landings of their Table 1:
 | Landings | uphill (ft) | downhill (ft) | difference | downhill / uphill |
 |---|---|---|---|---|
 | five fairway landings, mean | 22.3 | 35.7 | 13.4 | 1.60 |
-| all ten, mean | 38.3 | 56.0 | 17.7 | 1.46 |
+| all ten, mean | 38.0 | 55.5 | 17.4 | 1.46 |
 | measured (four settings) | 13.5 | 32.5 | 19.0 | 2.41 |
 
 The fairway 7-iron (55 mph, 46°, 5100 rpm) runs 26.3 ft uphill, 33.4 ft
@@ -955,7 +993,7 @@ bounce and roll; in dimple they change it by up to 5% (about 4% for the
 landing (49 mph, 51°, 9100 rpm) finishes 0.3–1.8 ft behind its landing
 point ("in some cases this distance was negative"), and their shallow,
 fast landings ran "over 100 feet on several occasions": dimple's shallow
-rough landings run 83–87 ft downhill. Source: Whitlark, B. and Pringle, M.
+rough landings run 81–85 ft downhill. Source: Whitlark, B. and Pringle, M.
 (2012), "Can't Stop Your Ball on the Green?", *USGA Green Section Record*
 50(25); summary values only.
 
@@ -966,7 +1004,7 @@ that does not depend on its launch speed, at a distance proportional to v₀²
 under `RollLaw::Constant` at `GREEN`'s stimp: launched 10° off straight
 uphill on a 1° or 2° plane, the ball stops 1.125° or 2.035° off its launch
 line at every speed from 0.5 to 3 m/s, at 0.832 or 0.694 m per (m/s)². Under
-the presets' quadratic law, which resists a faster ball more, the angle
+`GREEN`'s quadratic law, which resists a faster ball more, the angle
 drifts with speed: from 1.36° to 1.12° on the 1° plane and from 2.41° to
 2.04° on the 2° plane over 0.5–3 m/s. Source: Cross, R. (2024), "Trajectory
 of a golf ball on a sloping green", *Eur. J. Phys.* 45, 035002,
@@ -974,22 +1012,24 @@ of a golf ball on a sloping green", *Eur. J. Phys.* 45, 035002,
 
 ### Surfaces
 
-| Surface | Restitution | `mu_slide` | `compliance` | `mu_roll` | `roll_law` | `pivot` | `absorption` | Stimp |
-|---|---|---|---|---|---|---|---|---|
-| `Surface::FAIRWAY` | `Penner2002` | 0.40 | 1.0 | 0.12 | `Quadratic { v_ref: 2.5 }` | 1 mm | 0 | 5.2 ft |
-| `Surface::GREEN` | `Penner2002` | 0.40 | 1.0 | 0.055 | `Quadratic { v_ref: 2.5 }` | 1 mm | 0 | 11.4 ft |
-| `Surface::FIRM_GREEN` | `Penner2002` | 0.25 | 1.0 | 0.055 | `Quadratic { v_ref: 2.5 }` | 1 mm | 0 | 11.4 ft |
+| Surface | Restitution | `mu_slide` | `compliance` | `mu_roll` | `roll_law` | `plow` | `pivot` | `absorption` | Stimp |
+|---|---|---|---|---|---|---|---|---|---|
+| `Surface::FAIRWAY` | `Penner2002` | 0.40 | 1.0 | 0.12 | `Constant` | 0.36 /s | 1 mm | 0 | 4.8 ft |
+| `Surface::GREEN` | `Penner2002` | 0.40 | 1.0 | 0.055 | `Quadratic { v_ref: 2.5 }` | 0 | 1 mm | 0 | 11.4 ft |
+| `Surface::FIRM_GREEN` | `Penner2002` | 0.25 | 1.0 | 0.055 | `Quadratic { v_ref: 2.5 }` | 0 | 1 mm | 0 | 11.4 ft |
 
 | Parameter | Source |
 |---|---|
 | eq. 5 restitution | Penner (2002), from Penner (2001), *Am. J. Phys.* 69, 563, measured on relatively soft turf |
 | θc law (eq. 8), `compliance = 1.0` | Penner (2002): θc = 15.4° best fit to Haake's (1990) green impact at 18.6 m/s, 44.4° from vertical, 484 rad/s backspin; linear in v and φ as a first-order approximation |
+| Shallow-landing cap 34° · (θ / 22°)^3.5 | 22° and 34°: Penner (2002), his shallowest landing (26.8 m/s, 68.0° from vertical) and eq. 8 there; the power 3.5 is fitted to a simulator's fairway rollouts of thin shots, not measured (see [Hops and the bounce-to-roll transition](#hops-and-the-bounce-to-roll-transition)) |
 | `mu_slide = 0.40` | Daish (1972), as used by Penner for a ball on a green |
 | `FIRM_GREEN` `mu_slide = 0.25` | Penner (2002), Fig. 8: his firm (tournament) green, everything else unchanged |
 | Stimpmeter exit speed 1.83 m/s | Penner (2002), "The physics of putting", *Can. J. Phys.* 80, 83, from Holmes (1986), *The Physics Teacher* 24, 401 |
 | 5 mm transition height | Penner (2002), set above the ~2 mm equilibrium sinkage of a ball on a green (Hubbard & Alaways) |
 | Tilt fade below 2 m/s of normal speed | Chosen, not measured (see [Hops and the bounce-to-roll transition](#hops-and-the-bounce-to-roll-transition)) |
-| `mu_roll`, `roll_law` | Presets: dimple's empirical quadratic law, not fitted to published data: `GREEN`'s `mu_roll` gives stimp 11.4 ft; `v_ref = 2.5 m/s` is chosen for plausible full-shot rollouts. `RollLaw::Constant`: Penner (2002), eq. 9. `RollLaw::Exponential`: the form of Burritt, A. and Henrikson, E. (2024), "Modeling golf ball roll with a variable coefficient of friction", *Sports Engineering* 27:39, [doi:10.1007/s12283-024-00481-5](https://doi.org/10.1007/s12283-024-00481-5) (abstract only consulted). Open conference version: *Engineering of Sport 15* (ISEA 2024), Loughborough University repository, [doi:10.17028/rd.lboro.27051061.v1](https://doi.org/10.17028/rd.lboro.27051061.v1), CC BY 4.0, from which the surface values quoted here are read off Figure 1. |
+| `mu_roll`, `roll_law` | `GREEN`, `FIRM_GREEN`: dimple's empirical quadratic law, not fitted to published data: `mu_roll` gives stimp 11.4 ft; `v_ref = 2.5 m/s` is chosen for plausible full-shot rollouts. `FAIRWAY`: `RollLaw::Constant` with `mu_roll` 0.12, chosen, not measured. `RollLaw::Constant`: Penner (2002), eq. 9. `RollLaw::Exponential`: the form of Burritt, A. and Henrikson, E. (2024), "Modeling golf ball roll with a variable coefficient of friction", *Sports Engineering* 27:39, [doi:10.1007/s12283-024-00481-5](https://doi.org/10.1007/s12283-024-00481-5) (abstract only consulted). Open conference version: *Engineering of Sport 15* (ISEA 2024), Loughborough University repository, [doi:10.17028/rd.lboro.27051061.v1](https://doi.org/10.17028/rd.lboro.27051061.v1), CC BY 4.0, from which the surface values quoted here are read off Figure 1. |
+| `FAIRWAY` `plow = 0.36 /s` | Fitted to a simulator's fairway rollouts for landings at 2–50°, not measured; published work finds that rolling resistance changes with speed (Burritt & Henrikson 2024) and gives no law above 3 m/s |
 | `pivot` | Hertzian full-slip torsional couple (Johnson 1985) with an assumed 4 mm contact radius; uncalibrated |
 | `absorption = 0` | Turf returns Penner's whole rebound |
 | `FAIRWAY` `compliance = 1.0` | Penner's green value, chosen for the fairway (see below) |
@@ -1002,28 +1042,32 @@ general need adjusting for such greens; `FIRM_GREEN` is that green. He also
 uses his green's rolling resistance for drives, noting that a fairway's
 would be expected to be greater. `FAIRWAY` follows him: it takes his green's
 impact model whole, `compliance` 1.0, since a fairway is no firmer than
-his green, and differs from `GREEN` only in its rolling resistance, stimp
-5.2 ft, which is chosen, not measured. It bounces exactly like `GREEN` and
-rolls shorter. The run is sensitive to the compliance. Fairway run (yards
-past carry, sea level) by `compliance`, other fields as `Surface::FAIRWAY`:
+his green, and differs from `GREEN` only on the ground: a constant rolling
+resistance and plowing, stimp 4.8 ft, neither measured. It bounces exactly
+like `GREEN`, and a full shot, which reaches the ground at 2–4 m/s, rolls
+shorter on it; a roll faster than about 11 m/s, such as a thin shot's, runs
+farther (see [Limitations](#limitations)). The run is sensitive to the
+compliance.
+Fairway run (yards past carry, sea level) by `compliance`, other fields as
+`Surface::FAIRWAY`:
 
 | `compliance` | driver | 7-iron (`seven_iron`) | wedge |
 |---|---|---|---|
-| 1.10 | 12.8 | 3.5 | 0.1 |
-| 1.00 (`FAIRWAY`) | 17.4 | 5.3 | 0.9 |
-| 0.90 | 23.2 | 7.4 | 2.0 |
-| 0.85 | 26.1 | 8.4 | 2.7 |
-| 0.75 | 32.3 | 10.5 | 4.0 |
-| 0.50 | 47.9 | 15.5 | 7.4 |
+| 1.10 | 12.8 | 3.4 | 0.1 |
+| 1.00 (`FAIRWAY`) | 18.0 | 5.2 | 0.9 |
+| 0.90 | 23.2 | 7.4 | 1.9 |
+| 0.85 | 26.2 | 8.5 | 2.6 |
+| 0.75 | 31.8 | 10.8 | 3.9 |
+| 0.50 | 42.6 | 16.7 | 7.5 |
 
 With `GREEN`, the impact reproduces Penner's published drive results: a
 landing at 26.8 m/s, 68.0° from vertical, 224 rad/s backspin rises 2.82 m on
 the first bounce, and 26.2 m/s at 46.2° with 315 rad/s rises 1.18 m (Penner
 reports 2.82 m and 1.17 m). With ballistic hops, as in Penner's model,
-those drives make 16 and 8 impacts before rolling and stop 37.1 m and
+those drives make 12 and 8 impacts before rolling and stop 35.8 m and
 17.9 m past the landing point (Penner's Fig. 4: about 37 m and 19 m);
-through sea-level air they make 13 and 8 impacts and stop 32.0 m and
-17.0 m past it. A 9-iron landing at 23.8 m/s, 34.0° bounces backward
+through sea-level air they make 11 and 7 impacts and stop 31.5 m and
+16.8 m past it. A 9-iron landing at 23.8 m/s, 34.0° bounces backward
 with 809 rad/s backspin, and its backward run grows with backspin at 1000
 and 1200 rad/s (Penner's Fig. 7). On `FIRM_GREEN` (μ = 0.25) the same
 landings first bounce forward still carrying backspin, then run back
@@ -1036,25 +1080,25 @@ sea-level air, with the descent angle at landing:
 
 | Launch (mph / launch° / rpm) | Lands at | `FAIRWAY` | `GREEN` |
 |---|---|---|---|
-| Lob wedge, tour (72 / 32 / 9000) | 46.6° | 1.9 | 2.9 |
-| Lob wedge, amateur (65 / 32 / 6500) | 43.9° | 6.0 | 9.3 |
-| Sand wedge, tour (80 / 30 / 9500) | 47.3° | 1.5 | 2.2 |
-| Sand wedge, amateur (72 / 30 / 7500) | 44.3° | 4.7 | 7.3 |
-| Pitching wedge, tour (102 / 24.2 / 9300) | 48.7° | 1.9 | 2.8 |
-| Pitching wedge, amateur (85 / 26 / 7500) | 44.4° | 5.3 | 8.1 |
+| Lob wedge, tour (72 / 32 / 9000) | 46.6° | 1.8 | 2.9 |
+| Lob wedge, amateur (65 / 32 / 6500) | 43.9° | 5.9 | 9.3 |
+| Sand wedge, tour (80 / 30 / 9500) | 47.3° | 1.4 | 2.2 |
+| Sand wedge, amateur (72 / 30 / 7500) | 44.3° | 4.6 | 7.3 |
+| Pitching wedge, tour (102 / 24.2 / 9300) | 48.7° | 1.8 | 2.8 |
+| Pitching wedge, amateur (85 / 26 / 7500) | 44.4° | 5.2 | 8.1 |
 | 50-yard pitch (52 / 30 / 6000) | 37.4° | 7.7 | 11.7 |
-| 50-yard pitch, less spin (52 / 32 / 4000) | 39.1° | 11.7 | 16.8 |
+| 50-yard pitch, less spin (52 / 32 / 4000) | 39.1° | 11.8 | 16.6 |
 | Lob-wedge chip (28 / 36 / 3000) | 38.2° | 7.2 | 11.2 |
-| Low chip (30 / 18 / 2500) | 19.0° | 15.7 | 21.4 |
-| 7-iron, tour (120 / 16.3 / 7100) | 45.5° | 6.4 | 9.6 |
-| 7-iron, amateur (105 / 17 / 5900) | 40.0° | 10.7 | 15.4 |
-| Driver, tour (171 / 10.4 / 2545) | 38.8° | 18.4 | 24.2 |
+| Low chip (30 / 18 / 2500) | 19.0° | 16.0 | 21.2 |
+| 7-iron, tour (120 / 16.3 / 7100) | 45.5° | 6.3 | 9.6 |
+| 7-iron, amateur (105 / 17 / 5900) | 40.0° | 10.9 | 15.4 |
+| Driver, tour (171 / 10.4 / 2545) | 38.8° | 18.8 | 24.0 |
 
-Every launch in the table makes 4–10 impacts before it slides and rolls. Published measurements of run on a
+Every launch in the table makes 4–9 impacts before it slides and rolls. Published measurements of run on a
 fairway exist for drives:
 
 - The PGA Tour average drive (Trackman's 171 mph, 10.4°, 2545 rpm, landing
-  at 39°) lands at 38.8° in dimple and runs 18.4 yd. The USGA/R&A proposed
+  at 39°) lands at 38.8° in dimple and runs 18.8 yd. The USGA/R&A proposed
   bounce model, a linear fit to launcher tests on real fairways, gives
   `d = 79.1 − 1.6·α` yd for landing angle α: 16.7 yd at 39°. ShotLink drives
   of 2016–18 quoted there have a median run of 21 yd and a mean of 22 yd at
@@ -1063,19 +1107,19 @@ fairway exist for drives:
 - Trackman's tour averages land the 7-iron at 51° and the pitching wedge
   at 52°; dimple lands them at 45.5° and 48.7°. The proposed line reaches
   0 yd at about 49°, while its individual site fits give 0–21 yd at 50°;
-  the tour 7-iron's 6.4 yd and the wedges' 1–2 yd lie in that spread.
+  the tour 7-iron's 6.3 yd and the wedges' 1–2 yd lie in that spread.
 - These fairway tests used driver-like impacts (26–32 m/s, about
   1800 rpm). A slower, higher-spin wedge or pitch should run less than the
   line at the same landing angle, as it does here (the amateur lob wedge:
-  6.0 yd at 43.9°, line 8.9 yd). No published measurement of wedge, pitch
+  5.9 yd at 43.9°, line 8.9 yd). No published measurement of wedge, pitch
   or chip run on a fairway is known to dimple.
 
-`FAIRWAY` runs 65–76% as far as `GREEN` for every launch, through its
-higher rolling resistance alone, since the hops are the same. The rolling
-resistance sets much of the run, so `mu_roll` (or `with_stimp`) is the
-knob for a faster or slower fairway: the tour drive, amateur lob wedge and
-less-spun pitch run 20.9, 7.4 and 13.8 yd at `mu_roll` 0.08 and 15.9, 4.6
-and 9.4 yd at 0.25.
+`FAIRWAY` runs 63–78% as far as `GREEN` for every launch, through its
+rolling resistance and plowing alone, since the hops are the same. These
+set much of the run, so `mu_roll` (or `with_stimp`) and `plow` are the
+knobs for a faster or slower fairway: the tour drive, amateur lob wedge and
+less-spun pitch run 20.1, 6.7 and 13.0 yd at `mu_roll` 0.08 and 16.6, 4.8
+and 9.9 yd at 0.25.
 
 Sources: USGA and The R&A (2021), *Proposed Bounce Model for Use in
 Evaluating Optimum Overall Distance*
@@ -1104,7 +1148,7 @@ landings, 5–30 m/s, 20–80° descent, −2000 to 12,000 rpm; mat: 96 landings
 its scaled units (velocities in ball radii per second, spin in rad/s): δ
 the mean of |p_F − P_F| / |p₀| over the landings, and Δ the same per
 component. Through dimple, the paper's own Penner-model parameters for the
-tee (r 0.222, μ 0.999, k_P 2.973e-4) score 23.5% against the fit, against
+tee (r 0.222, μ 0.999, k_P 2.973e-4) score 23.6% against the fit, against
 the 21.3% the paper reports against the data, so the fit stands in for the
 data to within a few points.
 
@@ -1112,21 +1156,21 @@ Natural tee (Campaign B):
 
 | Against the tee fit | δ | Δẋ | Δẏ | Δω |
 |---|---|---|---|---|
-| `GREEN` and `FAIRWAY` | 12.2% | 7.4% | 3.0% | 7.7% |
+| `GREEN` and `FAIRWAY` | 11.6% | 6.5% | 3.0% | 7.9% |
 | `GREEN` on a rigid plane (`compliance` 0) | 20.6% | 14.8% | 6.7% | 10.1% |
-| `GREEN` with `mu_slide` 1.0 | 22.2% | 11.5% | 3.2% | 17.2% |
+| `GREEN` with `mu_slide` 1.0 | 22.1% | 10.8% | 3.2% | 17.9% |
 
 For comparison, against the data the paper's rigid-bounce fit scores
 35.0%, its Penner-model fit 21.3% and its fixed-angle fit 19.2%.
-`GREEN`'s mean normal rebound ratio |ẏ_F / ẏ₀| is 0.388 against the fit's
-0.408, and of the 80 backspin landings 26 leave with topspin against the
-fit's 23. Most of the remaining error is tangential: dimple keeps about a
-third of the forward speed the fit keeps (mean ẋ_F / ẋ₀ 0.107 against
+`GREEN`'s mean normal rebound ratio |ẏ_F / ẏ₀| is 0.389 against the fit's
+0.408, and of the 80 backspin landings 25 leave with topspin against the
+fit's 23. Most of the remaining error is tangential: dimple keeps about
+40% of the forward speed the fit keeps (mean ẋ_F / ẋ₀ 0.121 against
 0.313). Balls that enter rolling leave the ground slipping with excess
 topspin, contact-point velocity ẋ + ω < 0 (the paper's Fig. 6); dimple's
 tilted contact plane gives that sign in the ground frame for 56 of the 57
-landings on the fit's rolling branch, with about 70% of the fitted mean
-(−41 against −58 radii/s), but not the spread of the measurements, which the authors put down to the natural
+landings on the fit's rolling branch, with about two thirds of the fitted
+mean (−37 against −58 radii/s), but not the spread of the measurements, which the authors put down to the natural
 variability of turf; they suggest that the tangential and spin error left by
 rigid-contact models needs a tangential compliance of the ground, which dimple
 does not model. The fits'
@@ -1140,7 +1184,7 @@ In the paper's units Penner's θc law is β = k_P·s·φ, with s the speed in
 ball radii per second and φ in radians, and `compliance` 1.0 is
 k_P = 3.98e-4. The paper's fitted k_P are 1.543e-4 for the mat and
 2.973e-4 for the tee, i.e. `compliance` 0.39 and 0.75. On the tee
-`compliance` 0.75 or 0.8 scores 11.7% or 11.6% against the presets' 12.2%,
+`compliance` 0.75 or 0.8 scores 11.5% or 11.3% against the presets' 11.6%,
 a difference well inside the fit's own error; `GREEN` and `FAIRWAY` keep
 Penner's 1.0, with which `GREEN` reproduces his published results.
 
@@ -1185,12 +1229,22 @@ Exponential:  I = 2·v_ref² · (1 − e^(−s₀)·(1 + s₀))
 Both parameterized forms tend to `v₀²` as `v_ref` → ±∞. `Exponential` works
 for a negative `v_ref` unchanged.
 
-`Surface::with_stimp(feet)` sets `mu_roll` by this closed form, keeping
-every other field (including `roll_law`), and `Surface::stimp_feet()` is
-the inverse. Both use k = 2/5, the uniform solid sphere of
-`Tour`. `with_stimp` returns the surface unchanged for a
-reading that is not finite and positive, or a law whose `v_ref` is zero or
-NaN, for which `stimp_feet` is NaN.
+With plowing, `c = plow` > 0, the deceleration is
+`(mu_roll·f(v)·g + c·v)/(1+k)` and
+`d = (1+k)·∫₀^v₀ v/(mu_roll·f(v)·g + c·v) dv`: for `Constant`,
+`d = (1+k)·[v₀/c − (μg/c²)·ln(1 + c·v₀/(μg))]` with μ = `mu_roll`; for the
+other laws the integral is taken numerically. `d` falls as `mu_roll`
+grows, and `mu_roll` is found by bisection. Plowing alone stops the ball
+within `(1+k)·v₀/c`, so a reading at or beyond that (23.3 ft for
+`FAIRWAY`'s 0.36 /s) has no `mu_roll`.
+
+`Surface::with_stimp(feet)` sets `mu_roll` by this closed form (by
+bisection with plowing), keeping every other field (including `roll_law`
+and `plow`), and `Surface::stimp_feet()` is the inverse. Both use k = 2/5,
+the uniform solid sphere of `Tour`. `with_stimp` returns the surface
+unchanged for a reading that is not finite and positive, a law whose
+`v_ref` is zero or NaN, for which `stimp_feet` is NaN, or a reading no
+`mu_roll` ≥ 0 gives.
 
 | Stimp (ft) | 6 | 8 | 10 | 12 | 14 |
 |---|---|---|---|---|---|
@@ -1205,15 +1259,15 @@ from 0 to 5.6% (a laboratory carpet runway) and on field greens up to 6%;
 the plain average of the two does not. Constant rolling resistance
 decelerates the ball at g(μ cos θ ± sin θ)/(1+k), so under
 `RollLaw::Constant` the correction is exact apart from the 1/cos θ of
-measuring along the surface (0.005% at 1%, 0.18% at 6%). Under the presets'
-quadratic law the up- and downhill rolls cover different speeds and it is
-approximate:
+measuring along the surface (0.005% at 1%, 0.18% at 6%). Under `GREEN`'s
+quadratic law and `FAIRWAY`'s plowing the up- and downhill rolls cover
+different speeds and it is approximate:
 
 | Grade | 1% | 2% | 3% | 4% | 5% | 6% |
 |---|---|---|---|---|---|---|
 | `GREEN` up / down (ft) | 9.95 / 13.41 | 8.82 / 16.26 | 7.93 / 20.73 | 7.20 / 28.94 | 6.59 / 51.44 | neither rests |
 | `GREEN` 2ab/(a+b) vs level 11.42 ft | +0.04% | +0.17% | +0.43% | +0.95% | +2.3% | – |
-| `FAIRWAY` 2ab/(a+b) vs level 5.23 ft | +0.01% | +0.05% | +0.11% | +0.20% | +0.33% | +0.49% |
+| `FAIRWAY` 2ab/(a+b) vs level 4.81 ft | +0.01% | +0.03% | +0.07% | +0.14% | +0.22% | +0.32% |
 
 On `GREEN` the plain average is already 10% long at 2%. `GREEN` holds a
 ball at rest only to a 5.5% grade (`tan θ ≤ mu_roll`), so a downhill
@@ -1304,17 +1358,18 @@ let sand = Surface {
   20°, 30°, 40° and 50°, between the two experiments from 20° to 40°.
 - `mu_roll` 0.3 is the resistance of a sphere of the ball's density rolling
   on a granular bed (Fukumoto et al. 2026: about 0.25; De Blasio & Saeter
-  2009: 0.45–0.5 for glass). `mu_slide`, `roll_law` and `pivot` are
-  `FAIRWAY`'s; no source gives other values for a ball on sand.
+  2009: 0.45–0.5 for glass). `mu_slide`, `roll_law` (constant), `plow`
+  (0.36 /s) and `pivot` are `FAIRWAY`'s; no source gives other values for a
+  ball on sand.
 
 On this surface no landing hops:
 
 | Landing | Rest past the mark | Speed out | Spin in → out |
 |---|---|---|---|
-| Sand wedge, 49 mph, 51°, 9100 rpm | 0.22 m | 1.17 m/s | 953 → 26 rad/s |
-| 7-iron, 55 mph, 46°, 5100 rpm | 0.66 m | 1.91 m/s | 534 → 56 rad/s |
-| Preset driver, 28.5 m/s, 40° | 1.46 m | 3.22 m/s | 211 → 147 rad/s |
-| Chip, 8 m/s, 30°, 3000 rpm | 0.45 m | 1.68 m/s | 314 → 40 rad/s |
+| Sand wedge, 49 mph, 51°, 9100 rpm | 0.20 m | 1.17 m/s | 953 → 26 rad/s |
+| 7-iron, 55 mph, 46°, 5100 rpm | 0.68 m | 1.91 m/s | 534 → 56 rad/s |
+| Preset driver, 28.5 m/s, 40° | 1.96 m | 3.22 m/s | 211 → 147 rad/s |
+| Chip, 8 m/s, 30°, 3000 rpm | 0.41 m | 1.68 m/s | 314 → 40 rad/s |
 | Lob, 15 m/s, 65°, 6000 rpm | 0.00 m | 0.11 m/s | 628 → 1 rad/s |
 | Thin, 35 m/s, 10°, 2000 rpm | 33 m | 21.5 m/s | 209 → 51 rad/s |
 
@@ -1323,8 +1378,8 @@ they land. A steep landing trickles a short way (the wedge) or stops on its
 mark (the lob); it does not plug, and dimple reports where the ball stops,
 not how deep it sits. A thin shot keeps most of its speed and skips out of a bunker: the
 33 m above is on endless sand. With `absorption` 0.95 the sand is softer
-(wedge 0.08 m, 7-iron 0.27 m, driver 0.77 m); with 0.8 it is firmer
-(0.63, 1.47 and 2.45 m). It is an example, not a preset: no published
+(wedge 0.07 m, 7-iron 0.27 m, driver 0.86 m); with 0.8 it is firmer
+(0.57, 1.71 and 4.32 m). It is an example, not a preset: no published
 measurement gives a golf ball's rebound, spin or run on bunker sand, the
 two oblique experiments used other projectiles, and 0.9 is a choice
 between them.
@@ -1421,9 +1476,9 @@ points of the continued flight are not in the shot's result.
   Penner's green and are checked against a natural tee (Biber et al. 2023).
   An artificial mat on a rigid base needs `Restitution::Constant` (see
   [Other surfaces](#other-surfaces)). `FAIRWAY` differs from `GREEN` only
-  by rolling resistance; neither its compliance (Penner's green value) nor
-  its stimp has a published fairway source, and the run depends strongly
-  on both.
+  on the ground, by rolling resistance and plowing; neither its compliance
+  (Penner's green value) nor its stimp nor its plowing rate has a published
+  fairway source, and the run depends strongly on all three.
 - **One impact measurement.** θc rests on a single Haake impact and is
   extrapolated linearly in speed and incidence angle. Spin and turf
   firmness are not inputs. In Biber et al.'s units Penner's green
@@ -1432,42 +1487,61 @@ points of the continued flight are not in the shot's result.
 - **The tilt fade is a modeling choice.** Fading θc in below 2 m/s of
   normal speed ends the near-grazing hop train that the linear law
   sustains; no measurement of soft, grazing turf contacts sets its onset or
-  shape. Runs change little for onsets of 1.5–3 m/s. A bump-and-run
-  launched under about 12° lands inside the fade and skims 10–16 impacts
-  before it rolls.
+  shape. Runs change little for onsets of 1.5–3 m/s.
+- **The shallow-landing cap is fitted, not measured.** No published turf
+  measurement covers landings shallower than Penner's 22°. The cap's shape
+  is a modeling choice and its power 3.5 is fitted to a simulator's fairway
+  rollouts of thin shots. Where the cap meets eq. 8, near 22°, the run of a
+  fast landing changes steeply with its angle: at 38 m/s with 600 rpm of
+  backspin a landing at 21.5° rests 62 yd past its mark on `FAIRWAY` and
+  one at 24.6° 14 yd. Of 81 landings at 2–20° and 20–46 m/s, six, all at
+  13–16°, hop higher on a later bounce than on the first.
 - **Tangential compliance is not modeled.** Measured bounces leave the ground slipping, with more topspin than rolling,
   and the authors suggest that the tangential and spin error of rigid-contact
   models needs a tangential compliance of the ground (Biber et al. 2023).
   dimple's tilted rigid contact plane gives the sign for balls that grip, with
-  about 70% of the fitted mean on natural turf, but not the spread of the
-  measurements, and keeps about a third of the forward speed the tee fit keeps.
+  about two thirds of the fitted mean on natural turf, but not the spread of
+  the measurements, and keeps about 40% of the forward speed the tee fit keeps.
 - **Lateral ground effects are unvalidated.** The kick of a curving ball,
   the sidespin throw at impact and rifle-spin drift follow from the
   rigid-sphere contact model; no published measurement is compared against.
   The pivot lever is uncalibrated.
 - **No rolling-resistance law is validated above 3 m/s.** Only the
-  low-speed `mu_roll` is tied to a measurement (the stimpmeter). The
-  presets' quadratic form and `v_ref` are empirical, and the only published
+  low-speed `mu_roll` is tied to a measurement (the stimpmeter). `GREEN`'s
+  quadratic form and `v_ref` are empirical, `FAIRWAY`'s plowing rate is
+  fitted to a simulator, not measured, and the only published
   speed-dependent fits (Burritt & Henrikson 2024) cover putts, 0–3 m/s.
   `RollLaw::Exponential` takes such a per-surface fit; extrapolated past
   3 m/s it grows quickly (`v_ref` = 1.6 m/s gives about 150 × `mu_roll` at
   8 m/s, so a fast roll stops almost at once), and with a negative `v_ref`
   a ball has no terminal speed on a slope steeper than its hold angle.
-- **The quadratic law exceeds sliding friction at speed.** On `FAIRWAY`
-  μ_eff passes `mu_slide` (0.40) at 3.8 m/s and reaches 1.35 at 8 m/s,
-  more than the turf could exert on a sliding ball. Drives, pitches and
-  chips reach the ground at up to about 4 m/s, so this touches the start of
-  their roll, and fast rolls started by the caller and long downhill rolls;
-  `RollLaw` offers gentler laws.
+- **The quadratic law exceeds sliding friction at speed.** On `GREEN`
+  μ_eff passes `mu_slide` (0.40) at 6.3 m/s and reaches 0.62 at 8 m/s,
+  more than the turf could exert on a sliding ball (on `FIRM_GREEN`, whose
+  `mu_slide` is 0.25, it passes at 4.7 m/s). Full shots reach the ground at
+  up to about 4 m/s, so this touches fast rolls started by the caller and
+  long downhill rolls; `RollLaw` offers gentler laws.
+- **`FAIRWAY` outruns `GREEN` on fast rolls.** `GREEN` keeps its quadratic
+  law, with no plowing fit like `FAIRWAY`'s, and above about 11 m/s it slows
+  a rolling ball more: a roll from 20 m/s runs 52.8 m on `FAIRWAY` and
+  33.9 m on `GREEN`, and a thin landing at 35 m/s and 10° with 2000 rpm of
+  backspin rests 78.6 m past its mark on `FAIRWAY` against 72.9 m on
+  `GREEN`. Full shots reach the ground at 2–4 m/s and roll shorter on
+  `FAIRWAY`.
+- **A fast plowing roll is held rolling.** Rolling against `plow` needs a
+  friction of k/(1+k) · `plow` · v, which passes `mu_slide` · g above
+  (1+k)/k · `mu_slide` · g / `plow`: about 38 m/s on `FAIRWAY`, which no
+  shot reaches. Faster than that a real ball would slide with overspin;
+  dimple keeps the ball rolling from its first zero slip.
 - **Sand has no stop angle, no skip through the air and an assumed effect
   on spin.** Loose sand stops a projectile that lands steeper than about
   50° (Wright et al. 2020; Suo et al. 2023); dimple's absorption only
   shrinks toward a straight-down landing, so a steep ball with little
   backspin still runs a fraction of a meter. A shallow fast landing skips
-  along the surface, slowed by `mu_slide`, where a real ball may leave the
-  sand for a moment. The absorption does not depend on speed, and it takes
-  the same share of the spin as of the velocity, which no published
-  measurement covers.
+  along the surface, slowed by `mu_slide` and `plow`, where a real ball may
+  leave the sand for a moment. The absorption does not depend on speed,
+  and it takes the same share of the spin as of the velocity, which no
+  published measurement covers.
 - **Spin is not decayed during hops.** The flight's decay rate is
   calibrated at flight speeds and overstates the decay at hop speeds (see
   [Hops and the bounce-to-roll transition](#hops-and-the-bounce-to-roll-transition)).
@@ -1484,10 +1558,11 @@ points of the continued flight are not in the shot's result.
 - **Slopes: rolling checked, landings beta.** Rolling on a slope (normal
   load, downhill pull, hold where `tan θ ≤ mu_roll`) is checked against
   Brede's stimpmeter slope correction and Cross's break-angle invariance:
-  exact under `RollLaw::Constant`, approximate under the presets' quadratic
-  law. The impact model on a slope is checked only against the 1.5%-green
-  means of Whitlark & Pringle (2012), whose shot mix is unpublished; dimple
-  knows of no published bounce-and-spin measurements on steeper slopes.
+  exact under `RollLaw::Constant` without plowing, approximate under
+  `GREEN`'s quadratic law and with `FAIRWAY`'s plowing. The impact model on
+  a slope is checked only against the 1.5%-green means of Whitlark &
+  Pringle (2012), whose shot mix is unpublished; dimple knows of no
+  published bounce-and-spin measurements on steeper slopes.
   Penner's impact model was fitted on level turf, and he attributes its
   slightly long drive runs to its assumption of level ground.
 - **The slope hop rule is a modeling choice.** It ends hop trains that
@@ -1556,15 +1631,15 @@ Unit tests live beside the code in each module. Test categories:
 - **Flights from any state** — `simulate_flight`/`simulate_shot` equal the `_from` calls from the launch state bit for bit (flat ground, a slope, wind); a flight split at any sample and resumed lands within 1e-6 m of the whole one (still air and a time-dependent wind), and a split shot comes to rest at the same point; a start below the ground lands at once on it, flat and on terrain; a start on the ground moving into it lands within the first step
 - **Obstacles** — `impact` with any outward normal: backspin checks a ball off a rigid cart path, sidespin kicks it sideways off a wall and the kick flips with the spin's sign, a spinless bounce returns the normal velocity times the restitution for walls, a trunk, an overhang and a cart path; a custom `GroundModel` with a tree trunk bounces a drive off the bark and continues with `simulate_shot_from`
 - **Launch spin axis** — a pushed shot with no sidespin stays on its start line; exact landing-spin projections
-- **Ground: planar regression** — with ballistic hops, the 3D impact reproduces the planar Penner solution with the tilt fade impact by impact (preset driver, 7-iron and wedge on both presets) to float tolerance
-- **Ground: physics** — Penner (2002) restitution, drive bounce heights and runs (Fig. 4, ballistic hops), 9-iron spin-back (Figs. 7–8), 5 mm bounce-to-roll transition, compliance tilt (2β rotation, cap), the tilt fade below 2 m/s of normal speed and the low skimming hops it shrinks, `FAIRWAY` bouncing like `GREEN` and rolling shorter from the same landings, grip-regime kick formula, no kick from spin about the normal, tilt-throw magnitude (grip and slip), rifle-spin drift, grazing impacts, pivot friction about the true normal and its independence from the level-ground path, general inertia factor (k = 2/3), exact slide-to-roll time, stimpmeter closed form, `with_stimp`/`stimp_feet` round trip under every roll law and simulated stimpmeter rolls (6–14 ft) to 1e-9, preset stimp readings, `FIRM_GREEN` as Penner's Fig. 8 green
+- **Ground: planar regression** — with ballistic hops, the 3D impact reproduces the planar Penner solution with the tilt fade and the shallow-landing cap impact by impact (preset driver, 7-iron and wedge on both presets) to float tolerance, and the rest point with each surface's roll law and plowing
+- **Ground: physics** — Penner (2002) restitution, drive bounce heights and runs (Fig. 4, ballistic hops), 9-iron spin-back (Figs. 7–8), 5 mm bounce-to-roll transition, compliance tilt (2β rotation, cap), the tilt fade below 2 m/s of normal speed and the low skimming hops it shrinks, the shallow-landing cap (eq. 8 unchanged at Penner's and Haake's landings, the cap at 35 m/s and 10°, scaled by `compliance`), shallow landings at 2–10° on all three presets skipping forward with no rebound faster than its arrival and each hop no higher than the last, `FAIRWAY` bouncing like `GREEN` and rolling shorter from the same landings, grip-regime kick formula, no kick from spin about the normal, tilt-throw magnitude (grip and slip), rifle-spin drift, grazing impacts, pivot friction about the true normal and its independence from the level-ground path, general inertia factor (k = 2/3), exact slide-to-roll time, stimpmeter closed form (the quadratic law on `GREEN`, the constant law with plowing on `FAIRWAY`), `stimp_feet` with plowing against its closed form and the longest reading plowing allows, a fast roll and a fast slide on `FAIRWAY` that never speed up or reverse and rest within 1% of the closed form, slides with heavy plowing or sliding friction that end at the exact zero-slip time, `with_stimp`/`stimp_feet` round trip under every roll law and simulated stimpmeter rolls (6–14 ft) to 1e-9, preset stimp readings, `FIRM_GREEN` as Penner's Fig. 8 green
 - **Ground: roll laws** — every law is `mu_roll` at zero speed, exponential roll-outs against the closed form (positive and negative `v_ref`), Penner's ρ_g = 0.131 reads 6.0 ft under the constant law, an infinite `v_ref` is the constant law, a rising exponential stops a fast roll sooner than the constant law at the same stimp, zero or NaN `v_ref` rejected by the stimp helpers and rolled as the constant law
 - **Ground: hops through air** — at zero density hops are bit-for-bit ballistic (on the parabola, `Surface` and `GroundPhysics` identical); through air a hop arrives earlier, nearer and slower with its spin unchanged; the run lost to drag shrinks with altitude; topspin pushes a hop down and backspin holds it up; sidespin curves a hop right (fade spin) or left, mirrored
 - **Ground: invariants** — energy never increases at an impact or along the ground phase, with ballistic hops and through air; mirror (±sidespin, ±azimuth) and rotation about Y give mirrored and rotated results; fades rest right, draws rest left
 - **Ground: terrain** — rest on slopes (hold below atan `mu_roll`, roll downhill above, both presets; one stop and no chatter rolling uphill), long downhill reports `MaxTime`, near-critical (3.1°) `GREEN` comes to rest within the default `max_time`, slide-to-roll on a plane against the closed form, slip turning across a slope, vertical spin kicks on slopes only, uphill landings check up and downhill landings release, elevated green (shorter carry, lands on it), tee on the terrain, landing and hop crossings on curved terrain to 1e-9 m (ballistic hops on the parabola; hops through air on the surface), first crossing of thin walls and ridges in a landing segment and a hop step, ball kept on the surface; slope hop rule, downhill `FAIRWAY` up to 6° (through air and ballistic, the driver run growing with the slope either way, shorter through air) and `GREEN` up to 2.5° end at rest, side slopes rest and mirror exactly, rest judged on the surface where the ball stops, slide-to-roll on curved ground without flicker; mirror and rotation about Y with a sloped plane through air, and energy on slopes at both densities
-- **Ground: validation against published data** — Brede's (1991) slope correction exact under the constant law and within 0.5–1.5% to 4% under the presets' law, `GREEN`'s 5.5% hold grade; Penner's θc in Biber et al.'s (2023) units and their fitted k_P as `compliance`; agreement with their natural-tee fit (δ, Δẏ, normal rebound, spin reversal, lift-off slip sign; a rigid plane and μ = 1 do worse); their mat needs a higher constant restitution; their typical driver landing; Whitlark & Pringle's (2012) 1.5% green (uphill/downhill asymmetry, the sand wedge stopping by its pitch mark, green speed, `compliance` as firmness); Cross's (2024) speed-independent break angle under the constant law
+- **Ground: validation against published data** — Brede's (1991) slope correction exact under the constant law without plowing, within 0.5% to 3% and 1.5% to 4% under `GREEN`'s quadratic law and within 0.4% to 6% with `FAIRWAY`'s plowing, `GREEN`'s 5.5% hold grade; Penner's θc in Biber et al.'s (2023) units and their fitted k_P as `compliance`; agreement with their natural-tee fit (δ, Δẏ, normal rebound, spin reversal, lift-off slip sign; a rigid plane and μ = 1 do worse); their mat needs a higher constant restitution; their typical driver landing; Whitlark & Pringle's (2012) 1.5% green (uphill/downhill asymmetry, the sand wedge stopping by its pitch mark, green speed, `compliance` as firmness); Cross's (2024) speed-independent break angle under the constant law
 - **Ground: absorption** — the presets absorb nothing; `impact` with `absorption` equals the turf rebound times `(1 − absorption)^(sin θ)` bit for bit; full absorption stops the ball on its mark; on the sand example no landing hops, every landing ends at rest after one contact with no energy gained, steeper landings keep less speed and stop sooner, the sand wedge keeps under 5% of its spin, full shots leave a 0.3–3 m track, and a thin shot leaves faster than 15 m/s
-- **Run-out** — the hop train dies out (at most 10 impacts, each hop after the first at most 0.7× the one before, at most two below 1 cm) from wedges to drives on both presets; `FAIRWAY` roll and total for a lob wedge, a pitch and the PGA Tour average drive; the preset drive's carry, run and total; the drive runs shorter on `FAIRWAY` than on `GREEN`
+- **Run-out** — the hop train dies out (at most 10 impacts, each hop after the first at most 0.7× the one before, at most two below 1 cm) from wedges to drives on both presets; `FAIRWAY` roll and total for a lob wedge, a pitch and the PGA Tour average drive; the preset drive's carry, run and total; the drive runs shorter on `FAIRWAY` than on `GREEN`; a topped drive (130 mph, 2°) skims forward on `FAIRWAY` and stays below 0.5 m; thin shots launched at 2–3° run within 5% of the simulator rollouts `FAIRWAY`'s plowing is fitted to
 - **Ground: API** — per-point surfaces (fairway-to-green roll), `MaxTime`/`MaxImpacts` termination, tunables, interpolated landing, `&dyn GroundModel`
 
 Run: `cargo test`

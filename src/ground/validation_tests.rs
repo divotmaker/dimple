@@ -112,8 +112,13 @@ fn same_stimp(surface: Surface, roll_law: RollLaw) -> Surface {
 fn brede_harmonic_mean_exact_under_constant_law() {
     // Constant rolling resistance decelerates at g(μ cos θ ± sin θ)/(1+k) up
     // and down the slope, so 2ab/(a+b) = (1+k)v₀²/(2gμ cos θ): the level
-    // reading over cos θ, the tape measuring along the surface.
-    for preset in [Surface::GREEN, Surface::FAIRWAY] {
+    // reading over cos θ, the tape measuring along the surface. Exact only
+    // without plowing, so FAIRWAY is taken with `plow: 0.0`.
+    let unplowed = Surface {
+        plow: 0.0,
+        ..Surface::FAIRWAY
+    };
+    for preset in [Surface::GREEN, unplowed] {
         let surface = same_stimp(preset, RollLaw::Constant);
         let level = surface.stimp_feet();
         for pct in [1.0, 2.0, 3.0, 4.0, 5.0, 6.0] {
@@ -133,15 +138,15 @@ fn brede_harmonic_mean_exact_under_constant_law() {
 
 #[test]
 fn brede_harmonic_mean_under_preset_law() {
-    // Under the presets' quadratic law the up- and downhill rolls cover
-    // different speeds, so the correction is approximate. GREEN at 1–4%:
-    // up/down 9.95/13.41, 8.82/16.26, 7.93/20.73, 7.20/28.94 ft against a
-    // level 11.42 ft, i.e. +0.04/+0.17/+0.43/+0.95%; FAIRWAY at most +0.5%
-    // to 6%.
+    // Under GREEN's quadratic law and FAIRWAY's plowing the up- and downhill
+    // rolls cover different speeds, so the correction is approximate. GREEN
+    // at 1–4%: up/down 9.95/13.41, 8.82/16.26, 7.93/20.73, 7.20/28.94 ft
+    // against a level 11.42 ft, i.e. +0.04/+0.17/+0.43/+0.95%; FAIRWAY at
+    // most +0.32% to 6%.
     for (preset, max_pct, tolerance) in [
         (Surface::GREEN, 3.0, 0.005),
         (Surface::GREEN, 4.0, 0.015),
-        (Surface::FAIRWAY, 6.0, 0.006),
+        (Surface::FAIRWAY, 6.0, 0.004),
     ] {
         let level = preset.stimp_feet();
         for pct in [1.0, 2.0, 3.0, 4.0, 5.0, 6.0] {
@@ -611,7 +616,7 @@ fn cross_break_angle_independent_of_speed_under_constant_law() {
     // exactly with v₀. On GREEN's stimp: 1.125° and 0.8318 m/(m/s)² on a
     // 1° plane, 2.035° and 0.6941 on a 2° plane.
     //
-    // The presets' quadratic law breaks the invariance: over 0.5–3 m/s the
+    // GREEN's quadratic law breaks the invariance: over 0.5–3 m/s the
     // angle drifts from 1.36° to 1.12° on the 1° plane and from 2.41° to
     // 2.04° on the 2° plane.
     let surface = same_stimp(Surface::GREEN, RollLaw::Constant);

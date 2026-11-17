@@ -4,7 +4,8 @@
 //! with `Tour::SEA_LEVEL`) landing on `Surface::FAIRWAY` or
 //! `Surface::GREEN` with zero sidespin and zero azimuth, solved with the
 //! planar (2D) form of the same impact model: Penner's eq. 8 tilt, faded in
-//! linearly below 2 m/s of normal impact speed, Daish's grip/slip impulse in
+//! linearly below 2 m/s of normal impact speed and capped at
+//! 34° · (θ / 22°)^3.5 for landings shallower than 22°, Daish's grip/slip impulse in
 //! the tilted frame, and the eq. 7 rotation back, in scalar along-track
 //! coordinates, with the hops as exact parabolas.
 //!
@@ -13,7 +14,8 @@
 //! topspin on a ball moving downrange (that is, `−ω_z`, rad/s), and the
 //! impact position (m). The last rebound is the unprojected one; its `y`
 //! is below the 5 mm hop speed. `rest` comes from a first-order (Euler)
-//! integration of the slide and roll in 10 µs steps, finished at constant
+//! integration of the slide and roll (each surface's roll law and plowing)
+//! in 10 µs steps, finished at constant
 //! deceleration below 5 cm/s, so it agrees with the RK4 ground phase to
 //! about 0.01 mm.
 
@@ -76,22 +78,17 @@ pub(super) const REFERENCES: &[Reference] = &[
                 [257.4339903179683, 0.0, 0.0],
             ),
             (
-                [3.9730931926422732, 0.46907596336791124, 0.0],
-                186.82311347753952,
+                [3.9842976804355654, 0.40242807739644104, 0.0],
+                187.08812213382157,
                 [257.9112418488867, 0.0, 0.0],
             ),
             (
-                [3.9589398992276026, 0.3794387439434412, 0.0],
-                185.95301382096224,
-                [258.2913273045498, 0.0, 0.0],
-            ),
-            (
-                [3.9495227007787412, 0.30952085094161486, 0.0],
-                185.38064998431048,
-                [258.5976857822584, 0.0, 0.0],
+                [3.983538829836556, 0.23148996319656817, 0.0],
+                186.77039623447652,
+                [258.23824306853106, 0.0, 0.0],
             ),
         ],
-        rest: [263.25277951267344, 0.0, 0.0],
+        rest: [263.60023869154236, 0.0, 0.0],
     },
     Reference {
         name: "driver",
@@ -136,22 +133,17 @@ pub(super) const REFERENCES: &[Reference] = &[
                 [257.4339903179683, 0.0, 0.0],
             ),
             (
-                [3.9730931926422732, 0.46907596336791124, 0.0],
-                186.82311347753952,
+                [3.9842976804355654, 0.40242807739644104, 0.0],
+                187.08812213382157,
                 [257.9112418488867, 0.0, 0.0],
             ),
             (
-                [3.9589398992276026, 0.3794387439434412, 0.0],
-                185.95301382096224,
-                [258.2913273045498, 0.0, 0.0],
-            ),
-            (
-                [3.9495227007787412, 0.30952085094161486, 0.0],
-                185.38064998431048,
-                [258.5976857822584, 0.0, 0.0],
+                [3.983538829836556, 0.23148996319656817, 0.0],
+                186.77039623447652,
+                [258.23824306853106, 0.0, 0.0],
             ),
         ],
-        rest: [268.7542478220891, 0.0, 0.0],
+        rest: [268.49071306113433, 0.0, 0.0],
     },
     Reference {
         name: "seven_iron",
@@ -186,7 +178,7 @@ pub(super) const REFERENCES: &[Reference] = &[
                 [171.3066844005104, 0.0, 0.0],
             ),
         ],
-        rest: [172.7178952016007, 0.0, 0.0],
+        rest: [172.5927999181929, 0.0, 0.0],
     },
     Reference {
         name: "seven_iron",
@@ -251,7 +243,7 @@ pub(super) const REFERENCES: &[Reference] = &[
                 [116.19234439856146, 0.0, 0.0],
             ),
         ],
-        rest: [116.21792798247397, 0.0, 0.0],
+        rest: [116.21697077210607, 0.0, 0.0],
     },
     Reference {
         name: "wedge",

@@ -364,7 +364,8 @@ fn fairway_bounces_like_green_and_resists_rolling_more() {
     // FAIRWAY takes Penner's green impact model whole (restitution,
     // friction and compliance 1.0): a fairway is no firmer than his green,
     // so the same landing rebounds identically from both. What sets the
-    // fairway apart is its rolling resistance, stimp 5.2 ft against 11.4.
+    // fairway apart is on the ground: its rolling resistance and plowing,
+    // stimp 4.8 ft against 11.4.
     let vel = Vec3::new(15.0, -10.0, 0.0);
     let spin = backspin(rpm_to_rads(3000.0));
     assert_eq!(
@@ -488,8 +489,9 @@ fn tilt_fades_in_below_two_meters_per_second() {
     // Penner's contact angle applies in full from 2 m/s of normal impact
     // speed up and fades in linearly below it: the tilt stands for the
     // crater a landing presses into the turf, which a soft contact barely
-    // makes.
-    let v_t = 3.0;
+    // makes. At 0.5 m/s along the ground every case lands at 11° or
+    // steeper, where the shallow-landing cap does not bind.
+    let v_t = 0.5;
     let penner = |v_n: f64| {
         let speed = f64::hypot(v_t, v_n);
         let phi = v_t.atan2(v_n);
@@ -515,6 +517,84 @@ fn tilt_fades_in_below_two_meters_per_second() {
     assert!(
         (half.contact_angle(v_t, 1.0) - 0.5 * Surface::GREEN.contact_angle(v_t, 1.0)).abs() < 1e-15
     );
+}
+
+#[test]
+fn contact_angle_is_eq8_at_published_landings_and_capped_below_22_degrees() {
+    let eq8 = |speed: f64, from_vertical: f64| {
+        PENNER_THETA_C * (speed / PENNER_REF_SPEED) * (from_vertical / PENNER_REF_ANGLE)
+    };
+    // Haake's impact and Penner's (2002) drives and 9-iron (speed, degrees
+    // from the vertical): the tilt is eq. 8 untouched.
+    for (speed, deg) in [(18.6, 44.4), (26.8, 68.0), (26.2, 46.2), (23.8, 34.0)] {
+        let phi = units::deg_to_rad(deg);
+        let (v_t, v_n) = (speed * phi.sin(), speed * phi.cos());
+        for surface in [Surface::FAIRWAY, Surface::GREEN] {
+            let beta = surface.contact_angle(v_t, v_n);
+            assert!(
+                (beta - eq8(speed, phi)).abs() < 1e-12,
+                "{speed} m/s at {deg}°: β {beta}"
+            );
+        }
+    }
+    // A thin shot landing at 35 m/s and 10°: eq. 8 gives 52°, the cap
+    // 34° · (10/22)^3.5 = 2.16°.
+    let theta = units::deg_to_rad(10.0);
+    let (v_t, v_n) = (35.0 * theta.cos(), 35.0 * theta.sin());
+    let cap = units::deg_to_rad(34.0) * (10.0_f64 / 22.0).powf(3.5);
+    let beta = Surface::FAIRWAY.contact_angle(v_t, v_n);
+    assert!((beta - cap).abs() < 1e-12, "β {beta} vs cap {cap}");
+    assert!(units::rad_to_deg(beta) > 2.1 && units::rad_to_deg(beta) < 2.2);
+    // `compliance` scales the capped tilt.
+    let half = Surface {
+        compliance: 0.5,
+        ..Surface::FAIRWAY
+    };
+    assert!((half.contact_angle(v_t, v_n) - 0.5 * cap).abs() < 1e-12);
+}
+
+#[test]
+fn shallow_landings_skip_forward_and_lower() {
+    // Landings at 2–10° from 20, 35 and 46 m/s with 0, 2000 and 4000 rpm of
+    // backspin on every preset: the first impact keeps at least 80% of the
+    // forward speed, no rebound leaves faster along the normal than the
+    // ball arrived, and each hop is no higher than the one before.
+    for surface in [Surface::FAIRWAY, Surface::GREEN, Surface::FIRM_GREEN] {
+        for deg in [2.0, 4.0, 6.0, 8.0, 10.0] {
+            for speed in [20.0, 35.0, 46.0] {
+                for rpm in [0.0, 2000.0, 4000.0] {
+                    let theta = units::deg_to_rad(deg);
+                    let vel = Vec3::new(speed * theta.cos(), -speed * theta.sin(), 0.0);
+                    let g = surface.settle(&state(vel, backspin(rpm_to_rads(rpm))), air());
+                    let label = format!("{speed} m/s at {deg}°, {rpm} rpm");
+                    let first = &g.contacts[0];
+                    assert!(
+                        first.vel_out.x >= 0.8 * vel.x,
+                        "{label}: keeps {:.2} of {:.2} m/s",
+                        first.vel_out.x,
+                        vel.x
+                    );
+                    let mut last_up = f64::INFINITY;
+                    for c in &g.contacts {
+                        assert!(
+                            c.vel_out.y <= -c.vel_in.y,
+                            "{label}: rebound {:.3} m/s from {:.3} m/s",
+                            c.vel_out.y,
+                            -c.vel_in.y
+                        );
+                        assert!(
+                            c.vel_out.y <= last_up,
+                            "{label}: hop at {:.3} m/s after {last_up:.3} m/s",
+                            c.vel_out.y
+                        );
+                        last_up = c.vel_out.y;
+                    }
+                    assert_eq!(g.termination, Termination::Rest, "{label}");
+                    assert!(g.rest.pos.x > 0.0, "{label}: rests behind the mark");
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -1091,22 +1171,33 @@ fn slide_ends_exactly_at_roll_time() {
 #[test]
 fn stimpmeter_roll_matches_closed_form() {
     // A stimpmeter roll leaves the ramp at 1.83 m/s, already rolling. With
-    // a = μ_roll(1 + (v/v_ref)²)·g/(1+k) the distance is
+    // a = μ_roll(1 + (v/v_ref)²)·g/(1+k) (GREEN) the distance is
     // (1+k)·v_ref²/(2·μ_roll·g) · ln(1 + v₀²/v_ref²).
     let v0 = STIMPMETER_SPEED;
-    for surface in [Surface::GREEN, Surface::FAIRWAY] {
-        let g = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
-        let RollLaw::Quadratic { v_ref: vr } = surface.roll_law else {
-            panic!("presets use the quadratic law");
-        };
-        let expected =
-            1.4 * vr * vr / (2.0 * surface.mu_roll * G) * (1.0 + v0 * v0 / (vr * vr)).ln();
-        assert!(
-            (g.rest.pos.x - expected).abs() < 1e-5,
-            "roll {:.6} m, closed form {expected:.6} m",
-            g.rest.pos.x
-        );
-    }
+    let surface = Surface::GREEN;
+    let g = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &surface);
+    let RollLaw::Quadratic { v_ref: vr } = surface.roll_law else {
+        panic!("GREEN uses the quadratic law");
+    };
+    let expected = 1.4 * vr * vr / (2.0 * surface.mu_roll * G) * (1.0 + v0 * v0 / (vr * vr)).ln();
+    assert!(
+        (g.rest.pos.x - expected).abs() < 1e-5,
+        "roll {:.6} m, closed form {expected:.6} m",
+        g.rest.pos.x
+    );
+    // With a constant law and plowing c (FAIRWAY), a = (μ_roll·g + c·v)/(1+k)
+    // and the distance is (1+k)·[v₀/c − (μ_roll·g/c²)·ln(1 + c·v₀/(μ_roll·g))].
+    let fairway = Surface::FAIRWAY;
+    assert_eq!(fairway.roll_law, RollLaw::Constant);
+    let (mu_g, c) = (fairway.mu_roll * G, fairway.plow);
+    let expected = 1.4 * (v0 / c - mu_g / (c * c) * (c * v0 / mu_g).ln_1p());
+    let g = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &fairway);
+    assert!(
+        (g.rest.pos.x - expected).abs() < 1e-5,
+        "roll {:.6} m, closed form {expected:.6} m",
+        g.rest.pos.x
+    );
+    assert!((units::meters_to_feet(g.rest.pos.x) - fairway.stimp_feet()).abs() < 1e-4);
     // The green preset is a stimp ≈ 11.4 ft green.
     let green = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &Surface::GREEN);
     let feet = units::meters_to_feet(green.rest.pos.x);
@@ -1127,14 +1218,169 @@ fn preset_stimp_readings() {
     for (surface, feet) in [
         (Surface::GREEN, 11.4),
         (Surface::FIRM_GREEN, 11.4),
-        (Surface::FAIRWAY, 5.2),
+        (Surface::FAIRWAY, 4.8),
     ] {
         let stimp = surface.stimp_feet();
         assert!((stimp - feet).abs() < 0.05, "stimp {stimp:.3} ft");
     }
 }
 
-/// The laws `with_stimp` is checked under: the presets' quadratic, constant,
+/// Level-ground roll (m) from `v0` under a constant rolling resistance
+/// `mu_roll` and plowing `c`: (1+k)·[v₀/c − (μg/c²)·ln(1 + c·v₀/(μg))].
+fn plowed_roll(mu_roll: f64, c: f64, v0: f64) -> f64 {
+    let mu_g = mu_roll * G;
+    1.4 * (v0 / c - mu_g / (c * c) * (c * v0 / mu_g).ln_1p())
+}
+
+#[test]
+fn stimp_feet_with_plow_matches_closed_form() {
+    let v0 = STIMPMETER_SPEED;
+    for (mu_roll, plow) in [(0.12, 0.36), (0.055, 0.36), (0.12, 0.05), (0.2, 2.0)] {
+        let surface = Surface {
+            roll_law: RollLaw::Constant,
+            mu_roll,
+            plow,
+            ..Surface::FAIRWAY
+        };
+        let expected = units::meters_to_feet(plowed_roll(mu_roll, plow, v0));
+        assert!(
+            (surface.stimp_feet() - expected).abs() < 1e-12,
+            "μ {mu_roll}, plow {plow}: {} vs {expected}",
+            surface.stimp_feet()
+        );
+    }
+    // Plowing reads shorter than none, and a tiny rate is the unplowed
+    // reading.
+    let unplowed = Surface {
+        plow: 0.0,
+        ..Surface::FAIRWAY
+    };
+    let tiny = Surface {
+        plow: 1e-9,
+        ..Surface::FAIRWAY
+    };
+    assert!(Surface::FAIRWAY.stimp_feet() < unplowed.stimp_feet());
+    assert!((tiny.stimp_feet() / unplowed.stimp_feet() - 1.0).abs() < 1e-8);
+    // With no rolling resistance plowing alone stops the ball within
+    // (1+k)·v₀/plow; a reading at or past that has no mu_roll.
+    let free = Surface {
+        mu_roll: 0.0,
+        ..Surface::FAIRWAY
+    };
+    let longest = units::meters_to_feet(1.4 * v0 / 0.36);
+    assert!((free.stimp_feet() - longest).abs() < 1e-12);
+    assert_eq!(
+        Surface::FAIRWAY.with_stimp(1.001 * longest),
+        Surface::FAIRWAY
+    );
+    assert_eq!(Surface::FAIRWAY.with_stimp(30.0), Surface::FAIRWAY);
+}
+
+/// Ground speeds along a result never rise and never turn backward.
+fn assert_slows_forward(g: &GroundResult, label: &str) {
+    let mut last = f64::INFINITY;
+    for p in &g.points {
+        let speed = p.vel.length();
+        assert!(speed <= last + 1e-12, "{label}: speeds up to {speed} m/s");
+        assert!(p.vel.x >= 0.0, "{label}: moves backward {:?}", p.vel);
+        last = speed;
+    }
+}
+
+/// A straight slide from `v0` with no spin on level ground under constant
+/// rolling resistance: the slide-to-roll time and the rest distance.
+/// v' = −a − c·v with a = `mu_slide` · g; the friction spins the ball up at
+/// a/(kR), so the slip v − Rω reaches zero at the t* where v(t*) = a·t*/k;
+/// it then rolls from v(t*).
+fn slide_then_roll(surface: &Surface, v0: f64) -> (f64, f64) {
+    let (a, c) = (surface.mu_slide * G, surface.plow);
+    let v = |t: f64| (v0 + a / c) * (-c * t).exp() - a / c;
+    let (mut lo, mut hi) = (0.0, v0 / a);
+    for _ in 0..200 {
+        let mid = 0.5 * (lo + hi);
+        if v(mid) - a * mid / 0.4 > 0.0 {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let t_roll = 0.5 * (lo + hi);
+    let slid = (v0 + a / c) * (1.0 - (-c * t_roll).exp()) / c - a * t_roll / c;
+    (t_roll, slid + plowed_roll(surface.mu_roll, c, v(t_roll)))
+}
+
+#[test]
+fn fast_roll_and_slide_on_fairway_slow_to_the_closed_form() {
+    let fairway = Surface::FAIRWAY;
+    let c = fairway.plow;
+    let v0 = 30.0;
+
+    // Rolling from 30 m/s.
+    let rolled = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &fairway);
+    assert_slows_forward(&rolled, "roll");
+    let expected = plowed_roll(fairway.mu_roll, c, v0);
+    assert!(
+        (rolled.rest.pos.x / expected - 1.0).abs() < 0.01,
+        "roll {:.3} m vs {expected:.3} m",
+        rolled.rest.pos.x
+    );
+
+    // Sliding from 30 m/s with no spin.
+    let (t_roll, expected) = slide_then_roll(&fairway, v0);
+    let g = roll(Vec3::new(v0, 0.0, 0.0), Vec3::ZERO, &fairway);
+    assert_slows_forward(&g, "slide");
+    let roll_start = g.points.iter().find(|p| p.phase == Phase::Roll).unwrap();
+    assert!(
+        (roll_start.time - t_roll).abs() < 1e-9,
+        "rolls from {} s vs {t_roll} s",
+        roll_start.time
+    );
+    assert!(
+        (g.rest.pos.x / expected - 1.0).abs() < 0.01,
+        "slide and roll {:.3} m vs {expected:.3} m",
+        g.rest.pos.x
+    );
+}
+
+#[test]
+fn heavy_plowing_and_sliding_friction_end_the_slide_at_zero_slip() {
+    // Off the preset, the slip falls fast enough to pass zero within one
+    // step; the slide still ends at the analytic zero-slip time.
+    let surfaces = [
+        Surface {
+            plow: 6.0,
+            ..Surface::FAIRWAY
+        },
+        Surface {
+            mu_slide: 0.8,
+            ..Surface::FAIRWAY
+        },
+    ];
+    for surface in &surfaces {
+        for i in 0..=76 {
+            let v0 = 2.0 + 0.5 * f64::from(i);
+            let (t_roll, expected) = slide_then_roll(surface, v0);
+            let g = roll(Vec3::new(v0, 0.0, 0.0), Vec3::ZERO, surface);
+            let roll_start = g.points.iter().find(|p| p.phase == Phase::Roll).unwrap();
+            assert!(
+                (roll_start.time - t_roll).abs() < 1e-9,
+                "plow {}, μ {}, {v0} m/s: rolls from {} s vs {t_roll} s",
+                surface.plow,
+                surface.mu_slide,
+                roll_start.time
+            );
+            assert!(
+                (g.rest.pos.x - expected).abs() < 1e-5,
+                "plow {}, μ {}, {v0} m/s: rests at {} m vs {expected} m",
+                surface.plow,
+                surface.mu_slide,
+                g.rest.pos.x
+            );
+        }
+    }
+}
+
+/// The laws `with_stimp` is checked under: `GREEN`'s quadratic, constant,
 /// and exponential rising and falling with speed.
 const LAWS: [RollLaw; 5] = [
     RollLaw::Quadratic { v_ref: 2.5 },
@@ -1607,21 +1853,34 @@ fn hollow_ball_follows_generalized_formulas() {
     let roll_start = g.points.iter().find(|p| p.phase == Phase::Roll).unwrap();
     assert!((roll_start.time - expected).abs() < 1e-12);
 
-    // Stimpmeter: (1+k)·v_ref²/(2·μ_roll·g)·ln(1 + v₀²/v_ref²).
+    // Stimpmeter, quadratic law (GREEN):
+    // (1+k)·v_ref²/(2·μ_roll·g)·ln(1 + v₀²/v_ref²).
     let v0 = STIMPMETER_SPEED;
-    for surface in [Surface::GREEN, Surface::FAIRWAY] {
-        let g = surface.settle(&state(Vec3::new(v0, 0.0, 0.0), rolling(v0)), &hollow);
-        let RollLaw::Quadratic { v_ref: vr } = surface.roll_law else {
-            panic!("presets use the quadratic law");
-        };
-        let expected =
-            (1.0 + k) * vr * vr / (2.0 * surface.mu_roll * G) * (1.0 + v0 * v0 / (vr * vr)).ln();
-        assert!(
-            (g.rest.pos.x - expected).abs() < 1e-5,
-            "roll {:.6} m, closed form {expected:.6} m",
-            g.rest.pos.x
-        );
-    }
+    let start = state(Vec3::new(v0, 0.0, 0.0), rolling(v0));
+    let green = Surface::GREEN;
+    let RollLaw::Quadratic { v_ref: vr } = green.roll_law else {
+        panic!("GREEN uses the quadratic law");
+    };
+    let expected =
+        (1.0 + k) * vr * vr / (2.0 * green.mu_roll * G) * (1.0 + v0 * v0 / (vr * vr)).ln();
+    let g = green.settle(&start, &hollow);
+    assert!(
+        (g.rest.pos.x - expected).abs() < 1e-5,
+        "roll {:.6} m, closed form {expected:.6} m",
+        g.rest.pos.x
+    );
+    // Constant law with plowing c (FAIRWAY):
+    // (1+k)·[v₀/c − (μ_roll·g/c²)·ln(1 + c·v₀/(μ_roll·g))].
+    let fairway = Surface::FAIRWAY;
+    assert_eq!(fairway.roll_law, RollLaw::Constant);
+    let (mu_g, c) = (fairway.mu_roll * G, fairway.plow);
+    let expected = (1.0 + k) * (v0 / c - mu_g / (c * c) * (c * v0 / mu_g).ln_1p());
+    let g = fairway.settle(&start, &hollow);
+    assert!(
+        (g.rest.pos.x - expected).abs() < 1e-5,
+        "roll {:.6} m, closed form {expected:.6} m",
+        g.rest.pos.x
+    );
 }
 
 #[test]
@@ -1691,8 +1950,9 @@ fn ground_point_times_are_monotonic() {
 fn roll_from_fairway_onto_green_ends_between() {
     // Rolling from fairway onto a green that starts 2 m ahead: the ball
     // feels the green mid-roll and stops between the all-fairway and
-    // all-green distances.
-    let v0 = 6.0;
+    // all-green distances. At 3 m/s the presets' green resists less than
+    // their fairway at every speed the ball passes through.
+    let v0 = 3.0;
     let mixed = GroundPhysics::new(FnTerrain(|x: f64, _z: f64| GroundSample {
         height: 0.0,
         normal: Vec3::Y,
