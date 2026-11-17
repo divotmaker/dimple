@@ -134,9 +134,9 @@ pub(crate) const AIR_DYNAMIC_VISCOSITY: f64 = 1.81e-5;
 /// b = 1.458e-6 kg/(m·s·K^½) and S = 110.4 K. That gives 1.72e-5 Pa·s at
 /// 0 °C, 1.81e-5 at about 19 °C and 1.88e-5 at 35 °C.
 ///
-/// Constants from Cambridge University Engineering Department,
-/// *Properties of Fluids*, "Formulas for viscosity":
-/// <https://www-mdp.eng.cam.ac.uk/web/library/enginfo/aerothermal_dvd_only/aero/fprops/propsoffluids/node5.html>
+/// Equation and constants from *U.S. Standard Atmosphere, 1976*
+/// (NOAA, NASA, USAF; NASA TM-X-74335), p. 19:
+/// <https://ntrs.nasa.gov/citations/19770009539>
 ///
 /// For [`Environment::viscosity`], which is **beta**:
 ///

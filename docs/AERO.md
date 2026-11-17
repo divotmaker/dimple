@@ -266,8 +266,9 @@ defaults.
 - `viscosity: Some(μ)` uses a dynamic viscosity (Pa·s) as given.
   `environment::sutherland_viscosity(temperature_c)` gives the viscosity of
   dry air from Sutherland's law, μ = b T^(3/2) / (T + S) with T in kelvin,
-  b = 1.458×10⁻⁶ kg/(m·s·K^½) and S = 110.4 K (Cambridge University
-  Engineering Department, *Properties of Fluids*). That gives
+  b = 1.458×10⁻⁶ kg/(m·s·K^½) and S = 110.4 K (*U.S. Standard
+  Atmosphere, 1976*, NASA TM-X-74335, p. 19,
+  <https://ntrs.nasa.gov/citations/19770009539>). That gives
   1.72×10⁻⁵ Pa·s at 0 °C, 1.81×10⁻⁵ at about 19 °C and 1.88×10⁻⁵ at
   35 °C. `Environment::dynamic_viscosity()` returns the viscosity in use.
 
