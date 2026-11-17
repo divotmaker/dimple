@@ -141,9 +141,39 @@ pub struct FlightResult {
 /// Uses RK4 integration with a fixed 1 ms timestep. Records a trajectory
 /// point every 10 ms, plus the landing point, which is interpolated to the
 /// exact ground crossing. Spin decays exponentially over the flight.
+///
+/// Still air. For wind see [`simulate_flight_with_wind`].
 #[must_use]
 pub fn simulate_flight(input: &ShotInput, ball: &BallModel, env: &Environment) -> FlightResult {
-    fly(input, ball, env, &Surface::FAIRWAY).0
+    simulate_flight_with_wind(input, ball, env, DVec3::ZERO)
+}
+
+/// [`simulate_flight`] through air moving at `wind` (m/s).
+///
+/// `wind` is a horizontal velocity in the public frame: `+x` blows downrange
+/// (a tailwind), `+z` blows to the right. Drag and Magnus lift act on the
+/// ball's velocity relative to the air, `v − wind`, so a headwind makes the
+/// ball fly as if the air were faster and a crosswind curves it downwind.
+/// The vertical component is ignored.
+///
+/// A uniform wind is not a frame shift of the still-air trajectory: the
+/// relative airspeed at launch changes, and with it the drag and the spin
+/// ratio, so the shot must be re-integrated (which this does).
+#[must_use]
+pub fn simulate_flight_with_wind(
+    input: &ShotInput,
+    ball: &BallModel,
+    env: &Environment,
+    wind: DVec3,
+) -> FlightResult {
+    fly(input, ball, env, &Surface::FAIRWAY, horizontal(wind)).0
+}
+
+/// The horizontal part of `wind`: the wind model is two-dimensional, since a
+/// vertical wind component is not a wind a launch monitor reports and the
+/// ball's own vertical motion dominates.
+fn horizontal(wind: DVec3) -> DVec3 {
+    DVec3::new(wind.x, 0.0, wind.z)
 }
 
 /// Launch velocity (m/s): ball speed along the launch direction.
@@ -161,11 +191,15 @@ fn launch_velocity(input: &ShotInput) -> Vec3 {
 /// Flight from the tee at `(0, ground.height(0, 0), 0)` until
 /// `ground.landing` reports a crossing (or 30 s). Returns the flight and the
 /// full landing state.
+///
+/// `wind` is the air's horizontal velocity (m/s) in the public frame; the
+/// aerodynamic forces act on the ball's velocity relative to it.
 fn fly<G: GroundModel + ?Sized>(
     input: &ShotInput,
     ball: &BallModel,
     env: &Environment,
     ground: &G,
+    wind: DVec3,
 ) -> (FlightResult, BallState) {
     const DT: f64 = 0.001; // 1 ms timestep
     const SAMPLE_EVERY: u32 = 10; // record every 10 ms
@@ -195,7 +229,7 @@ fn fly<G: GroundModel + ?Sized>(
             },
             prev.time,
             DT,
-            |_pos, vel, _t| ball.acceleration(vel, &aero, air_density),
+            |_pos, vel, _t| ball.acceleration(vel - wind, &aero, air_density),
         );
         aero.decay_spin(DT);
         let next = BallState {
@@ -289,8 +323,28 @@ pub fn simulate_shot<G: GroundModel + ?Sized>(
     env: &Environment,
     ground: &G,
 ) -> ShotResult {
-    let (flight, landing) = fly(input, ball, env, ground);
-    let settled = ground.settle(&landing, ball, env.air_density());
+    simulate_shot_with_wind(input, ball, env, ground, DVec3::ZERO)
+}
+
+/// [`simulate_shot`] through air moving at `wind` (m/s), flight and hops
+/// alike.
+///
+/// `wind` is a horizontal velocity in the public frame: `+x` blows downrange
+/// (a tailwind), `+z` blows to the right. See
+/// [`simulate_flight_with_wind`] for the flight model. The hops between
+/// impacts fly through the same moving air; the ground contacts themselves
+/// are unchanged, because the turf does not move.
+#[must_use]
+pub fn simulate_shot_with_wind<G: GroundModel + ?Sized>(
+    input: &ShotInput,
+    ball: &BallModel,
+    env: &Environment,
+    ground: &G,
+    wind: DVec3,
+) -> ShotResult {
+    let wind = horizontal(wind);
+    let (flight, landing) = fly(input, ball, env, ground, wind);
+    let settled = ground.settle_with_wind(&landing, ball, env.air_density(), wind);
     let final_pos = settled.rest.pos;
     let total_m = final_pos.x.hypot(final_pos.z);
 

@@ -378,15 +378,16 @@ pub struct GroundPhysics<T: Terrain> {
     /// `(v·n)² / (2·g·n_y)`. Penner's (2002) bounce-to-roll transition,
     /// 5 mm. Penner tested 1–10 mm and found only a minor effect on the run.
     ///
-    /// On a slope the ball also needs the hops to die out: the impact must
-    /// remove at least the energy of a hop this high (`g·min_hop_height` per
-    /// unit mass) more than gravity hands back over the next hop down the
-    /// slope. Otherwise the ball goes to the ground at once, as below the
-    /// height. Without this a steep enough downslope keeps the ball fast
-    /// enough that its hops stop shrinking, and it never rolls (see
-    /// `docs/AERO.md`). The energy the slope hands back is measured on the
-    /// hop actually flown, through whatever air there is. Level ground uses
-    /// the height alone.
+    /// The ball also needs the hops to die out: the impact must remove at
+    /// least the energy of a hop this high (`g·min_hop_height` per unit
+    /// mass) more than the next hop hands back. Otherwise the ball goes to
+    /// the ground at once, as below the height. Two things hand energy back:
+    /// gravity down a slope, and wind pushing a ball slower than the air.
+    /// Without this a steep enough downslope, or a strong enough wind, keeps
+    /// the ball fast enough that its hops stop shrinking, and it never rolls
+    /// (see `docs/AERO.md`). The energy handed back is measured on the hop
+    /// actually flown, through whatever air there is. In still air on level
+    /// ground every hop loses energy, so the height alone decides.
     pub min_hop_height: f64,
     /// Safety bound on impacts. Every hop rises at least
     /// [`min_hop_height`](Self::min_hop_height) and the hops die out, so
@@ -495,12 +496,13 @@ impl<T: Terrain> GroundPhysics<T> {
         points: &mut Vec<GroundPoint>,
         ball: &BallModel,
         air_density: f64,
+        wind: DVec3,
     ) -> Result<BallState, BallState> {
         // `acceleration` never reads `spin_decay`: the hop holds the spin fixed.
         let aero = AeroParams::from_spin_vector(start.spin);
         let accel = |vel: Vec3| {
             if air_density > 0.0 {
-                ball.acceleration(vel, &aero, air_density)
+                ball.acceleration(vel - wind, &aero, air_density)
             } else {
                 GRAVITY
             }
@@ -775,6 +777,23 @@ pub trait GroundModel {
     /// `0.0` makes the hops ballistic, under gravity alone.
     #[must_use]
     fn settle(&self, landing: &BallState, ball: &BallModel, air_density: f64) -> GroundResult;
+
+    /// [`settle`](Self::settle) through air moving at `wind` (m/s), a
+    /// horizontal velocity in the public frame (`+x` downrange, `+z` right).
+    ///
+    /// The default implementation ignores the wind, so a model that does not
+    /// model moving air keeps working unchanged; dimple's own models override
+    /// it and fly their hops through the wind.
+    #[must_use]
+    fn settle_with_wind(
+        &self,
+        landing: &BallState,
+        ball: &BallModel,
+        air_density: f64,
+        _wind: DVec3,
+    ) -> GroundResult {
+        self.settle(landing, ball, air_density)
+    }
 }
 
 /// Flat ground with the default [`GroundPhysics`].
@@ -786,6 +805,16 @@ impl GroundModel for Surface {
     fn settle(&self, landing: &BallState, ball: &BallModel, air_density: f64) -> GroundResult {
         GroundPhysics::new(*self).settle(landing, ball, air_density)
     }
+
+    fn settle_with_wind(
+        &self,
+        landing: &BallState,
+        ball: &BallModel,
+        air_density: f64,
+        wind: DVec3,
+    ) -> GroundResult {
+        GroundPhysics::new(*self).settle_with_wind(landing, ball, air_density, wind)
+    }
 }
 
 impl<T: Terrain> GroundModel for GroundPhysics<T> {
@@ -794,6 +823,16 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
     }
 
     fn settle(&self, landing: &BallState, ball: &BallModel, air_density: f64) -> GroundResult {
+        self.settle_with_wind(landing, ball, air_density, DVec3::ZERO)
+    }
+
+    fn settle_with_wind(
+        &self,
+        landing: &BallState,
+        ball: &BallModel,
+        air_density: f64,
+        wind: DVec3,
+    ) -> GroundResult {
         let t_end = landing.time + self.max_time;
         let radius = ball.radius_m();
         let mut contacts = Vec::new();
@@ -807,9 +846,9 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
             let out = impact(&state, &at, ball);
             let v_n = out.vel.dot(n);
             // A rebound that would clear the transition height flies its
-            // hop. On a slope the flown hop must also show the train dying
-            // out (`hops_die_out`); otherwise it is discarded and the ball
-            // stays on the ground here.
+            // hop. The flown hop must also show the train dying out
+            // (`hops_die_out`); otherwise it is discarded and the ball stays
+            // on the ground here.
             let mut flown = None;
             if v_n > 0.0 && v_n * v_n >= 2.0 * G * n.y * self.min_hop_height {
                 if contacts.len() + 1 >= self.max_impacts {
@@ -819,9 +858,9 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
                 }
                 let mark = points.len();
                 points.push(GroundPoint::new(&out, Phase::Hop));
-                flown = match self.hop(&out, t_end, &mut points, ball, air_density) {
+                flown = match self.hop(&out, t_end, &mut points, ball, air_density, wind) {
                     Ok(arrival)
-                        if !hops_die_out(&state, &out, &arrival, n, ball, self.min_hop_height) =>
+                        if !hops_die_out(&state, &out, &arrival, ball, self.min_hop_height) =>
                     {
                         points.truncate(mark);
                         None
@@ -884,34 +923,34 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
     }
 }
 
-/// Whether the hops that follow a rebound off ground with unit normal `n`
-/// die out, so that the ball may keep bouncing; otherwise it goes to the
+/// Whether the hops that follow a rebound die out, so that the ball may keep bouncing; otherwise it goes to the
 /// ground at once, as below [`GroundPhysics::min_hop_height`].
 ///
-/// Always true on level ground, where every hop loses energy. On a slope
-/// gravity hands energy back over each hop. With `E = |v|²/2 + k·R²·|ω|²/2`
-/// (per unit mass), the impact `arrival → rebound` removed
-/// `ΔE = E(arrival) − E(rebound)` and the hop `rebound → next`, flown
-/// through whatever air there is, returned `ΔU = E(next) − E(rebound)`: the
-/// potential energy released down the slope less what drag took. The train
-/// dies out if the slope returns nothing (`ΔU ≤ 0`) or the impact removes at
-/// least the energy of a `min_hop_height` hop more than the hop returns
-/// (`ΔE − ΔU ≥ g·min_hop_height`). Below that, gravity re-supplies what each
-/// impact takes and the hops need not shrink through the 5 mm transition.
+/// Each hop can hand energy back: gravity down a slope, and wind, whose drag
+/// and lift push a ball moving slower than the air (on level ground in still
+/// air a hop only loses energy). With `E = |v|²/2 + k·R²·|ω|²/2` (per unit
+/// mass), the impact `arrival → rebound` removed `ΔE = E(arrival) −
+/// E(rebound)` and the hop `rebound → next`, flown through whatever air
+/// there is, returned `ΔU = E(next) − E(rebound)`: the potential energy
+/// released down the slope plus the wind's work, less what drag took. The
+/// train dies out if the hop returns nothing (`ΔU ≤ 0`) or the impact
+/// removes at least the energy of a `min_hop_height` hop more than the hop
+/// returns (`ΔE − ΔU ≥ g·min_hop_height`). Below that, the slope or the wind
+/// re-supplies what each impact takes and the hops need not shrink through
+/// the 5 mm transition: in a strong wind the ball would hop on until the
+/// impact limit.
 fn hops_die_out(
     arrival: &BallState,
     rebound: &BallState,
     next: &BallState,
-    n: Vec3,
     ball: &BallModel,
     min_hop_height: f64,
 ) -> bool {
-    if tangential_gravity(n) == Vec3::ZERO {
-        return true;
-    }
-    // The hop keeps its spin, so the slope's net return is all translational.
+    // The hop keeps its spin, so its net return is all translational.
     let returned = 0.5 * (next.vel.length_squared() - rebound.vel.length_squared());
-    if returned <= 0.0 {
+    // A ballistic hop on level ground returns exactly nothing; let its
+    // rounding error count as nothing too.
+    if returned <= 1e-9 * rebound.vel.length_squared() {
         return true;
     }
     let spin_inertia = ball.inertia_factor * ball.radius_m() * ball.radius_m();

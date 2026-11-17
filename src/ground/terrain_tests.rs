@@ -724,7 +724,7 @@ fn run_on_ground(input: &ShotInput, ground: &dyn GroundModel) -> (f64, f64, Term
 }
 
 #[test]
-fn hops_die_out_only_where_the_slope_hands_back_less_than_the_impact_takes() {
+fn hops_die_out_only_where_the_hop_hands_back_less_than_the_impact_takes() {
     let state = |vel: Vec3| at_origin(vel, Vec3::ZERO);
     let h = 0.005;
     // Where a rebound off the plane with unit normal `n` lands again under
@@ -733,14 +733,13 @@ fn hops_die_out_only_where_the_slope_hands_back_less_than_the_impact_takes() {
         let t = 2.0 * rebound.dot(n) / (G * n.y);
         state(rebound + GRAVITY * t)
     };
-    // Level ground: always, even for an elastic rebound.
+    // Level ground in still air: always, even for an elastic rebound.
     let level = Vec3::Y;
     let rebound = Vec3::new(2.0, 0.5, 0.0);
     assert!(hops_die_out(
         &state(Vec3::new(2.0, -0.5, 0.0)),
         &state(rebound),
         &lands(rebound, level),
-        level,
         &BALL,
         h
     ));
@@ -752,7 +751,6 @@ fn hops_die_out_only_where_the_slope_hands_back_less_than_the_impact_takes() {
         &state(2.0 * up - 0.5 * n),
         &state(rebound),
         &lands(rebound, n),
-        n,
         &BALL,
         h
     ));
@@ -771,7 +769,6 @@ fn hops_die_out_only_where_the_slope_hands_back_less_than_the_impact_takes() {
         &arriving(0.0),
         &state(rebound),
         &next,
-        n,
         &BALL,
         h
     ));
@@ -780,7 +777,6 @@ fn hops_die_out_only_where_the_slope_hands_back_less_than_the_impact_takes() {
         &arriving(0.99 * threshold),
         &state(rebound),
         &next,
-        n,
         &BALL,
         h
     ));
@@ -788,7 +784,6 @@ fn hops_die_out_only_where_the_slope_hands_back_less_than_the_impact_takes() {
         &arriving(1.01 * threshold),
         &state(rebound),
         &next,
-        n,
         &BALL,
         h
     ));
@@ -799,7 +794,29 @@ fn hops_die_out_only_where_the_slope_hands_back_less_than_the_impact_takes() {
         &arriving(0.99 * threshold),
         &state(rebound),
         &slowed,
-        n,
+        &BALL,
+        h
+    ));
+    // Level ground in wind: a hop the wind speeds up hands energy back like
+    // a slope, so a lossless impact is sustained and a lossy one dies out.
+    let rebound = DVec3::new(2.0, 0.5, 0.0);
+    let blown = state(DVec3::new(2.5, -0.5, 0.0));
+    let gained = 0.5 * (blown.vel.length_squared() - rebound.length_squared());
+    let arriving = |extra: f64| {
+        let e = 0.5 * rebound.length_squared() + extra;
+        state((2.0 * e).sqrt() * DVec3::new(2.0, -0.5, 0.0).normalize())
+    };
+    assert!(!hops_die_out(
+        &arriving(0.0),
+        &state(rebound),
+        &blown,
+        &BALL,
+        h
+    ));
+    assert!(hops_die_out(
+        &arriving(1.01 * (gained + G * h)),
+        &state(rebound),
+        &blown,
         &BALL,
         h
     ));

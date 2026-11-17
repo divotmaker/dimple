@@ -244,6 +244,34 @@ law, ρ ∝ 1/T at constant pressure).
 
 Dynamic viscosity of air is constant at 1.81×10⁻⁵ Pa·s (adequate for 0–40°C).
 
+## Wind
+
+`simulate_flight_with_wind` and `simulate_shot_with_wind` take a wind: a
+horizontal air velocity in the public frame, `+x` blowing downrange (a
+tailwind) and `+z` blowing to the right. A vertical component is ignored.
+`simulate_flight` and `simulate_shot` are the same calls with zero wind.
+
+Drag and Magnus lift act on the ball's velocity relative to the air,
+`v − wind`, both in flight and in the hops between impacts (see
+[Hops](#hops-and-the-bounce-to-roll-transition)). The impacts themselves are
+unchanged, because the turf does not move. A uniform wind is not a frame
+shift of the still-air trajectory: the airspeed at launch changes, and with
+it the drag and the spin ratio, so the shot is integrated again rather than
+translated.
+
+The wind is the same at every height. For a 150 mph drive at 13° and
+2700 rpm with `TOUR` at sea level (`examples/wind.rs`):
+
+| Wind | Carry | Total | Lateral at rest |
+|---|---:|---:|---:|
+| Still | 221.0 m | 236.9 m | 0.0 m |
+| 5 m/s headwind | 202.5 m | 212.1 m | 0.0 m |
+| 5 m/s tailwind | 235.0 m | 254.2 m | 0.0 m |
+| 5 m/s left to right | 221.5 m | 237.5 m | 20.2 m right |
+
+The headwind costs more than the same tailwind gains, because drag grows
+with the square of the airspeed.
+
 ## Spin Decay
 
 Spin decays exponentially during flight:
@@ -463,7 +491,9 @@ elastic and frictionless); real shots end by these rules well before it.
 
 **Flight between impacts.** Each hop flies through the same air as the
 shot: `GroundModel::settle` takes the air density, and `simulate_shot`
-passes the shot's `Environment::air_density()`. The forces are the flight
+passes the shot's `Environment::air_density()`. With wind,
+`simulate_shot_with_wind` calls `GroundModel::settle_with_wind`, and the
+hops' drag and lift act on the velocity relative to the moving air. The forces are the flight
 model's (`BallModel::acceleration`: gravity, drag and Magnus lift),
 integrated with RK4 at 1 ms. The spin is held fixed over each hop: its axis
 and rate set the lift, and the ball arrives at the next impact with exactly
@@ -524,7 +554,7 @@ too weak to prevent it. Under the 5 mm rule alone, a drive landing on a 5°
 downhill `FAIRWAY` is still hopping after 200 impacts (with ballistic hops,
 already on 3.75°).
 
-So on a slope the ball keeps hopping only while the train dies out. Each
+So on a slope, or in wind, the ball keeps hopping only while the train dies out. Each
 hop is flown first and then judged. With `E = |v|²/2 + k·R²·|ω|²/2` per
 unit mass, the energy the impact removed `ΔE = E_in − E_out` and the
 energy the hop, flown through whatever air there is, handed back
@@ -537,9 +567,20 @@ what drag took; the spin is held over the hop), it keeps hopping if
 
 Each impact must take at least the energy of a 5 mm hop more than the next
 hop gives back. Otherwise the hop is discarded and the ball goes to the
-ground at the impact, exactly as below the 5 mm height. On level ground the
-5 mm height alone decides, so level-ground results do not depend on this
-rule, and a hop that climbs returns nothing.
+ground at the impact, exactly as below the 5 mm height. On level ground in
+still air the 5 mm height alone decides, so those results do not depend on
+this rule, and a hop that climbs returns nothing.
+
+Wind is the other source. Hops are flown through the wind, and a ball
+moving slower than the air is pushed along by it, so on level ground too a
+hop can hand back energy (`ΔU` then also holds the wind's work). Without
+the rule a fast landing in a strong wind settles into a train of hops that
+the wind refills as fast as the Penner impacts drain them (the tilted
+contact plane turns the regained speed back into bounce), and the ball hops
+on to the impact limit: hundreds of metres past the landing, with hops
+metres high. Judged the same way as on a slope, such a train goes to the
+ground once the impacts stop draining it; a wind strong enough at the turf
+may still blow the ball some way along it.
 
 This stays within Penner's transition. He notes that "the transition
 between bouncing and rolling will, of course, take place over several
@@ -1098,6 +1139,8 @@ The ground API has three layers:
 3. **`GroundModel`** — replace the physics: implement `height(x, z)` and
    `settle(landing, ball, air_density)` (`simulate_shot` passes the shot's
    air density; an implementation is free to ignore it), and optionally
+   `settle_with_wind(landing, ball, air_density, wind)` (by default
+   `settle`, ignoring the wind) and
    `landing(a, b)` (by default the
    solved crossing of the straight segment with the heightfield; an engine
    can substitute its own sweep).
@@ -1216,6 +1259,10 @@ flight from the tee on `ground` until it crosses the terrain, then
 the same air, slide and roll to rest (`ShotResult.ground`, with absolute
 times).
 
+With wind: `simulate_flight_with_wind(input, ball, env, wind)` and
+`simulate_shot_with_wind(input, ball, env, ground, wind)`, the latter
+settling through `ground.settle_with_wind`.
+
 ## Test Suite
 
 Unit tests live beside the code in each module. Test categories:
@@ -1227,6 +1274,7 @@ Unit tests live beside the code in each module. Test categories:
 - **Descent angle** — iron DA within expected ranges
 - **Altitude/temperature** — Denver gain, hot-cold delta, directional checks
 - **Spin decay** — exponential decay rate against Trackman measurements
+- **Wind** — a headwind shortens carry and costs more than the same tailwind gains, a crosswind drifts the ball downwind, a vertical component is ignored, the wind carries through the hops, and a ground model that only implements `settle` settles in still air
 - **Era comparison** — TOUR vs PATENT_1997 carry gaps, Cd reduction, Cl sensitivity
 - **Launch spin axis** — a pushed shot with no sidespin stays on its start line; exact landing-spin projections
 - **Ground: planar regression** — with ballistic hops, the 3D impact reproduces the planar Penner solution with the tilt fade impact by impact (preset driver, 7-iron and wedge on both presets) to float tolerance
