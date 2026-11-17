@@ -154,3 +154,26 @@ fn a_gust_that_starts_mid_flight_needs_no_wrapper() {
         "steady {steady}, gusted {gusted}, calm {calm}"
     );
 }
+
+#[test]
+fn an_updraft_raises_the_apex_and_a_downdraft_lowers_it() {
+    let draft = |vy: f64| {
+        Tour::new(
+            1.225,
+            Wind::custom(move |_t: f64, _p: Vec3, _h: f64| Vec3::new(0.0, vy, 0.0)),
+        )
+    };
+    for input in [ShotInput::driver(), ShotInput::seven_iron()] {
+        let still = simulate_flight(&input, &Tour::SEA_LEVEL);
+        let up = simulate_flight(&input, &draft(3.0));
+        let down = simulate_flight(&input, &draft(-3.0));
+        assert!(
+            down.apex_m < still.apex_m && still.apex_m < up.apex_m,
+            "apex {} / {} / {}",
+            down.apex_m,
+            still.apex_m,
+            up.apex_m
+        );
+        assert!(up.flight_time > still.flight_time);
+    }
+}

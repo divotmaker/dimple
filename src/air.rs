@@ -37,9 +37,11 @@ pub fn standard_air_density(altitude_m: f64, temperature_c: f64) -> f64 {
     RHO_0 * pressure_ratio * (T0 / (temperature_c + 273.15))
 }
 
-/// Horizontal wind, in the public frame: `+x` blows downrange (a
-/// tailwind), `+z` blows to the right. **Beta.** The vertical component of
-/// any wind vector is ignored. [`Tour`](crate::Tour) applies drag and
+/// The wind, in the public frame: `+x` blows downrange (a tailwind), `+z`
+/// blows to the right, `+y` blows up. **Beta.** The built-in variants are
+/// horizontal: the vertical component of their vectors is ignored. A
+/// [`Custom`](Self::Custom) field is used with all three components, so an
+/// updraft or a downdraft is yours to model. [`Tour`](crate::Tour) applies drag and
 /// Magnus lift to the ball's velocity relative to the air, in flight and in
 /// the hops between bounces; the ground contacts themselves are unchanged,
 /// because the turf does not move.
@@ -73,7 +75,8 @@ pub enum Wind {
         /// Horizontal wind (m/s) at 10 m.
         at_10m: Vec3,
     },
-    /// A wind field of your own; build one with [`Wind::custom`].
+    /// A wind field of your own, all three components used; build one with
+    /// [`Wind::custom`].
     Custom(Arc<dyn WindField>),
 }
 
@@ -84,7 +87,8 @@ pub enum Wind {
 /// mutability: the integrator evaluates it several times per step and must
 /// get the same value for the same arguments. Closures
 /// `Fn(f64, Vec3, f64) -> Vec3` implement it. Used through
-/// [`Wind::custom`]; the vertical component is ignored.
+/// [`Wind::custom`], with all three components: a vertical component is an
+/// updraft (`+y`) or a downdraft.
 pub trait WindField: Send + Sync {
     /// The wind at time `t`, position `pos`, `height` above the ground.
     #[must_use]
@@ -117,10 +121,11 @@ impl Wind {
         Self::Custom(Arc::new(field))
     }
 
-    /// Horizontal wind velocity (m/s) for a ball at time `t`, position
-    /// `pos`, `height` above the ground beneath it. Heights at or below the
-    /// ground give zero for [`PowerLaw`](Self::PowerLaw) with a positive
-    /// exponent.
+    /// Wind velocity (m/s) for a ball at time `t`, position `pos`, `height`
+    /// above the ground beneath it: horizontal for the built-in variants,
+    /// the field's own vector for [`Custom`](Self::Custom). Heights at or
+    /// below the ground give zero for [`PowerLaw`](Self::PowerLaw) with a
+    /// positive exponent.
     pub(crate) fn at(&self, t: f64, pos: Vec3, height: f64) -> Vec3 {
         let (wind, factor) = match self {
             Self::None => return Vec3::ZERO,
@@ -134,7 +139,7 @@ impl Wind {
                 };
                 (*at_10m, factor)
             }
-            Self::Custom(field) => (field.at(t, pos, height), 1.0),
+            Self::Custom(field) => return field.at(t, pos, height),
         };
         Vec3::new(wind.x * factor, 0.0, wind.z * factor)
     }
@@ -266,11 +271,11 @@ mod tests {
     }
 
     #[test]
-    fn custom_wind_reads_time_position_and_height_and_drops_the_vertical() {
+    fn custom_wind_reads_time_position_and_height_and_keeps_the_vertical() {
         let w = Wind::custom(|t: f64, pos: Vec3, h: f64| Vec3::new(t, 7.0, pos.x + h));
         assert_eq!(
             w.at(2.0, Vec3::new(5.0, 1.0, 0.0), 0.5),
-            Vec3::new(2.0, 0.0, 5.5)
+            Vec3::new(2.0, 7.0, 5.5)
         );
     }
 
