@@ -325,7 +325,8 @@ A `Tour`'s wind is the wind the shot flies through; `Tour::SEA_LEVEL` is
 `Wind::None`, still air. Wind is **beta**: the model below follows the
 physics but has not been compared with measured shots in wind. A wind is a
 horizontal air velocity in the public frame, `+x` blowing downrange (a
-tailwind) and `+z` blowing to the right. A vertical component is ignored.
+tailwind) and `+z` blowing to the right. The built-in winds ignore a
+vertical component; a custom wind (below) keeps it.
 
 ```rust
 use dimple::{ShotInput, Surface, Tour, Vec3, Wind, simulate_shot};
@@ -403,8 +404,9 @@ let gust = Wind::custom(|t: f64, _pos: Vec3, _height: f64| {
 let flight = simulate_flight(&ShotInput::driver(), &Tour::new(1.225, gust));
 ```
 
-A custom wind that returns a constant gives exactly the shot of the same
-`Wind::Uniform`.
+A custom wind that returns a constant horizontal vector gives exactly the
+shot of the same `Wind::Uniform`. A custom wind is used with all three
+components, so it can blow up or down: a 3 m/s updraft raises the apex.
 
 ## Spin Decay
 
@@ -1292,6 +1294,19 @@ The ground API has three layers:
 always lands on the plane y = 0. Both place the landing point exactly on
 the ground at the solved crossing.
 
+**Obstacles.** `ground::impact` takes any outward normal, not only ground
+with `normal.y > 0` (that restriction belongs to `Terrain` and
+`GroundPhysics`, which need a heightfield): a wall, a tree trunk or the
+underside of an overhang. The spin acts on these bounces as on the ground,
+through the friction impulse: backspin checks a ball off a cart path and
+sidespin kicks it sideways off a wall. For a hard surface use
+`compliance: 0.0` (a rigid flat contact) and a `Restitution::Constant`;
+dimple has no published values for cart paths, walls or bark. A
+`GroundModel` whose `landing()` also reports where a flight segment meets
+an obstacle can bounce the ball in `settle()` with `impact` and the
+obstacle's normal, then fly on with `simulate_shot_from(&rebound, model,
+self)`; the crate's `tests/obstacles.rs` does this for a tree trunk.
+
 ### Limitations
 
 - **Natural-turf data only.** The restitution fit and the θc law come from
@@ -1398,6 +1413,15 @@ flight from the tee on `ground` until it crosses the terrain, then
 and wind, slide and roll to rest (`ShotResult.ground`, with absolute
 times).
 
+From any state: `simulate_flight_from(start, model)` and
+`simulate_shot_from(start, model, ground)` fly the same way from a
+`BallState` (time, position, velocity, spin), for a ball that flies on after
+hitting a tree, a wall or a flagstick. Time continues from `start.time`,
+positions stay in the frame above, carry, lateral offset and total are
+measured from the start's horizontal position and apex from its height, and
+a start below the ground lands at once, placed on it. `simulate_flight` and
+`simulate_shot` are these calls from the launch state.
+
 ## Test Suite
 
 Unit tests live beside the code in each module. Test categories:
@@ -1411,8 +1435,10 @@ Unit tests live beside the code in each module. Test categories:
 - **Altitude/temperature** — ISA density at 1,524 m, Denver gain, hot-cold delta, directional checks, the preset driver's 5,000 ft gain
 - **Spin decay** — exponential decay rate against Trackman measurements, about a fixed axis
 - **Wind profile** — the power law and its 0.1 m/s threshold, and the hops sampling the profile
-- **Wind** — a headwind shortens carry and costs more than the same tailwind gains, a crosswind drifts the ball downwind, a vertical component is ignored, the wind carries through the hops, strong wind does not keep the ball bouncing, and a custom ground model receives the shot's model, wind included
-- **Custom models and winds** — a drag-only model flies and lands through `&dyn AeroModel`; a model with the default gravity, or standard gravity given explicitly, flies bit for bit as `Tour`; lower gravity flies and rolls farther; a constant `Wind::custom` equals `Wind::Uniform` bit for bit; a gust that starts mid-flight shortens the carry less than the same wind throughout
+- **Wind** — a headwind shortens carry and costs more than the same tailwind gains, a crosswind drifts the ball downwind, the built-in winds ignore a vertical component, the wind carries through the hops, strong wind does not keep the ball bouncing, and a custom ground model receives the shot's model, wind included
+- **Custom models and winds** — a drag-only model flies and lands through `&dyn AeroModel`; a model with the default gravity, or standard gravity given explicitly, flies bit for bit as `Tour`; lower gravity flies and rolls farther; a constant `Wind::custom` equals `Wind::Uniform` bit for bit; a gust that starts mid-flight shortens the carry less than the same wind throughout; a custom updraft raises the apex and a downdraft lowers it
+- **Flights from any state** — `simulate_flight`/`simulate_shot` equal the `_from` calls from the launch state bit for bit (flat ground, a slope, wind); a flight split at any sample and resumed lands within 1e-6 m of the whole one (still air and a time-dependent wind), and a split shot comes to rest at the same point; a start below the ground lands at once on it, flat and on terrain; a start on the ground moving into it lands within the first step
+- **Obstacles** — `impact` with any outward normal: backspin checks a ball off a rigid cart path, sidespin kicks it sideways off a wall and the kick flips with the spin's sign, a spinless bounce returns the normal velocity times the restitution for walls, a trunk, an overhang and a cart path; a custom `GroundModel` with a tree trunk bounces a drive off the bark and continues with `simulate_shot_from`
 - **Launch spin axis** — a pushed shot with no sidespin stays on its start line; exact landing-spin projections
 - **Ground: planar regression** — with ballistic hops, the 3D impact reproduces the planar Penner solution with the tilt fade impact by impact (preset driver, 7-iron and wedge on both presets) to float tolerance
 - **Ground: physics** — Penner (2002) restitution, drive bounce heights and runs (Fig. 4, ballistic hops), 9-iron spin-back (Figs. 7–8), 5 mm bounce-to-roll transition, compliance tilt (2β rotation, cap), the tilt fade below 2 m/s of normal speed and the low skimming hops it shrinks, `FAIRWAY` bouncing like `GREEN` and rolling shorter from the same landings, grip-regime kick formula, no kick from spin about the normal, tilt-throw magnitude (grip and slip), rifle-spin drift, grazing impacts, pivot friction about the true normal and its independence from the level-ground path, general inertia factor (k = 2/3), exact slide-to-roll time, stimpmeter closed form, `with_stimp`/`stimp_feet` round trip under every roll law and simulated stimpmeter rolls (6–14 ft) to 1e-9, preset stimp readings, `FIRM_GREEN` as Penner's Fig. 8 green

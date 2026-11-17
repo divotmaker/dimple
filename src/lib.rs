@@ -75,6 +75,9 @@
 //! [`trajectory::simulate_shot`] launches from the terrain under the tee and
 //! lands where the flight crosses the surface;
 //! [`trajectory::simulate_flight`] always lands on the plane y = 0.
+//! [`simulate_flight_from`] and [`simulate_shot_from`] fly on from any
+//! [`BallState`], e.g. after [`ground::impact`] bounces the ball off a tree,
+//! a wall or a flagstick.
 //!
 //! **Parameter structs grow.** [`Surface`] and [`ground::GroundPhysics`]
 //! gain fields in minor releases, so build them from a preset (or
