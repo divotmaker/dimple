@@ -1,6 +1,6 @@
 //! Measured air, viscosity and wind profile through the public API.
 
-use dimple::environment::{Viscosity, Wind};
+use dimple::environment::{Wind, sutherland_viscosity};
 use dimple::ground::{BallState, GroundModel};
 use dimple::{BallModel, Environment, ShotInput, Surface, Vec3, simulate_shot};
 
@@ -10,7 +10,7 @@ fn measured(air_density: f64, temperature_c: f64) -> Environment {
     Environment {
         temperature_c,
         measured_air_density: Some(air_density),
-        viscosity: Viscosity::Sutherland,
+        viscosity: Some(sutherland_viscosity(temperature_c)),
         ..Environment::SEA_LEVEL
     }
 }

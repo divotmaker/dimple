@@ -13,8 +13,7 @@ pub struct Environment {
     /// [`measured_air_density`](Self::measured_air_density) is given.
     pub altitude_m: f64,
     /// Ambient temperature (Celsius). Sets the density unless
-    /// [`measured_air_density`](Self::measured_air_density) is given, and the
-    /// viscosity under [`Viscosity::Sutherland`].
+    /// [`measured_air_density`](Self::measured_air_density) is given.
     pub temperature_c: f64,
     /// A measured air density (kg/m³), for callers that know the air better
     /// than an altitude and temperature do (a weather station, or pressure,
@@ -25,10 +24,19 @@ pub struct Environment {
     /// from [`altitude_m`](Self::altitude_m) and
     /// [`temperature_c`](Self::temperature_c).
     pub measured_air_density: Option<f64>,
-    /// The air's dynamic viscosity, which sets the Reynolds number and so
-    /// the drag and lift coefficients. Every preset uses
-    /// [`Viscosity::Calibrated`].
-    pub viscosity: Viscosity,
+    /// The air's dynamic viscosity (Pa·s), which sets the Reynolds number
+    /// and so the drag and lift coefficients. Used as given; it must be
+    /// finite and positive. `None` (every preset): the constant
+    /// 1.81e-5 Pa·s (air at about 19 °C) that the ball models were fitted
+    /// with, whatever the temperature.
+    ///
+    /// To follow the temperature, pass
+    /// `Some(sutherland_viscosity(env.temperature_c))`
+    /// ([`sutherland_viscosity`]). That is **beta, and not calibrated:** the
+    /// ball models were fitted at the constant viscosity, and it moves the
+    /// one temperature benchmark in `docs/AERO.md` away from the data. See
+    /// there before using it.
+    pub viscosity: Option<f64>,
     /// The wind, in flight and in the hops between bounces. Every preset is
     /// [`Wind::None`].
     pub wind: Wind,
@@ -40,7 +48,7 @@ impl Environment {
         altitude_m: 0.0,
         temperature_c: 15.0,
         measured_air_density: None,
-        viscosity: Viscosity::Calibrated,
+        viscosity: None,
         wind: Wind::None,
     };
 
@@ -98,14 +106,11 @@ impl Environment {
         rho_standard * (t_standard / t_actual)
     }
 
-    /// Dynamic viscosity of the air (Pa·s), as chosen by
-    /// [`viscosity`](Self::viscosity).
+    /// Dynamic viscosity of the air (Pa·s): [`viscosity`](Self::viscosity)
+    /// if given, otherwise the calibrated constant 1.81e-5 Pa·s.
     #[must_use]
     pub fn dynamic_viscosity(&self) -> f64 {
-        match self.viscosity {
-            Viscosity::Calibrated => AIR_DYNAMIC_VISCOSITY,
-            Viscosity::Sutherland => sutherland(self.temperature_c),
-        }
+        self.viscosity.unwrap_or(AIR_DYNAMIC_VISCOSITY)
     }
 }
 
@@ -115,36 +120,35 @@ impl Default for Environment {
     }
 }
 
-/// Dynamic viscosity of air (Pa·s) under [`Viscosity::Calibrated`]:
-/// Sutherland's law gives this value at about 19 °C. The `TOUR` and
+/// Dynamic viscosity of air (Pa·s) when [`Environment::viscosity`] is
+/// `None`: Sutherland's law gives this value at about 19 °C. The `TOUR` and
 /// `PATENT_1997` coefficients were fitted with it.
 pub(crate) const AIR_DYNAMIC_VISCOSITY: f64 = 1.81e-5;
 
-/// How [`Environment::dynamic_viscosity`] is found.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[non_exhaustive]
-pub enum Viscosity {
-    /// The constant 1.81e-5 Pa·s (air at about 19 °C) that the ball models
-    /// were fitted with, whatever the temperature.
-    #[default]
-    Calibrated,
-    /// Dry air at [`Environment::temperature_c`] by Sutherland's law:
-    /// μ = b T^(3/2) / (T + S), with T in kelvin,
-    /// b = 1.458e-6 kg/(m·s·K^½) and S = 110.4 K.
-    ///
-    /// Constants from Cambridge University Engineering Department,
-    /// *Properties of Fluids*, "Formulas for viscosity":
-    /// <https://www-mdp.eng.cam.ac.uk/web/library/enginfo/aerothermal_dvd_only/aero/fprops/propsoffluids/node5.html>
-    ///
-    /// **Beta, and not calibrated:** the ball models were fitted at the
-    /// constant viscosity, and this moves the one temperature benchmark in
-    /// `docs/AERO.md` away from the data. See there before using it.
-    Sutherland,
-}
-
-/// Sutherland's law for dry air: dynamic viscosity (Pa·s) at
-/// `temperature_c` (°C).
-fn sutherland(temperature_c: f64) -> f64 {
+/// Dynamic viscosity (Pa·s) of dry air at `temperature_c` (°C) by
+/// Sutherland's law: μ = b T^(3/2) / (T + S), with T in kelvin,
+/// b = 1.458e-6 kg/(m·s·K^½) and S = 110.4 K. That gives 1.72e-5 Pa·s at
+/// 0 °C, 1.81e-5 at about 19 °C and 1.88e-5 at 35 °C.
+///
+/// Constants from Cambridge University Engineering Department,
+/// *Properties of Fluids*, "Formulas for viscosity":
+/// <https://www-mdp.eng.cam.ac.uk/web/library/enginfo/aerothermal_dvd_only/aero/fprops/propsoffluids/node5.html>
+///
+/// For [`Environment::viscosity`], which is **beta**:
+///
+/// ```
+/// use dimple::Environment;
+/// use dimple::environment::sutherland_viscosity;
+///
+/// let cold = Environment { temperature_c: 2.0, ..Environment::SEA_LEVEL };
+/// let env = Environment {
+///     viscosity: Some(sutherland_viscosity(cold.temperature_c)),
+///     ..cold
+/// };
+/// assert!(env.dynamic_viscosity() < 1.81e-5);
+/// ```
+#[must_use]
+pub fn sutherland_viscosity(temperature_c: f64) -> f64 {
     let t = temperature_c + 273.15;
     1.458e-6 * t.powf(1.5) / (t + 110.4)
 }
@@ -282,29 +286,24 @@ mod tests {
     }
 
     #[test]
-    #[allow(
-        clippy::float_cmp,
-        reason = "the calibrated constant is returned as is"
-    )]
-    fn sutherland_reference_values() {
-        let at = |temperature_c| {
-            Environment {
-                temperature_c,
-                viscosity: Viscosity::Sutherland,
-                ..Environment::SEA_LEVEL
-            }
-            .dynamic_viscosity()
-        };
-        assert!((at(15.0) - 1.7894e-5).abs() < 1e-9);
-        assert!((at(0.0) - 1.716e-5).abs() < 1e-9);
-        assert!(at(35.0) > at(0.0));
-        // The calibrated constant ignores the temperature.
+    #[allow(clippy::float_cmp, reason = "the viscosity is returned as is")]
+    fn viscosity_given_or_calibrated_and_sutherland_reference_values() {
+        assert!((sutherland_viscosity(15.0) - 1.7894e-5).abs() < 1e-9);
+        assert!((sutherland_viscosity(0.0) - 1.716e-5).abs() < 1e-9);
+        assert!(sutherland_viscosity(35.0) > sutherland_viscosity(0.0));
+        // `None` is the calibrated constant, whatever the temperature; a
+        // given viscosity is used as is.
         for t in [0.0, 15.0, 35.0] {
             let env = Environment {
                 temperature_c: t,
                 ..Environment::SEA_LEVEL
             };
             assert_eq!(env.dynamic_viscosity(), AIR_DYNAMIC_VISCOSITY);
+            let given = Environment {
+                viscosity: Some(2.0e-5),
+                ..env
+            };
+            assert_eq!(given.dynamic_viscosity(), 2.0e-5);
         }
     }
 

@@ -181,7 +181,7 @@ Per-club results:
 
 Environmental response (density-only): Denver +6.9% driver carry (published
 ~6.1%), 90°F-vs-50°F delta ~9y (published ~8y). With temperature-dependent
-viscosity as well (`Viscosity::Sutherland`, below), the
+viscosity as well (`sutherland_viscosity`, below), the
 same delta is 6.2y, further from the published value: the fit was
 calibrated at a constant viscosity, so the density-only response is the
 validated one.
@@ -193,7 +193,7 @@ validated one.
 2. **Fast low-spin shots (140+ mph, <3k rpm) run a few yards short** with
    slightly high peaks relative to the per-shot validation set.
 3. **Ball COR vs temperature unmodeled** — only air density (and, with
-   `Viscosity::Sutherland`, viscosity) responds to temperature; cold-ball
+   `sutherland_viscosity`, viscosity) responds to temperature; cold-ball
    distance loss is understated.
 4. **Single ball model.** Real balls vary ±5% in drag across dimple designs.
 5. **Spin on the ground: modeled, lightly validated.** The full spin vector
@@ -247,7 +247,7 @@ Where ρ₀=1.225 kg/m³, L=0.0065 K/m, T₀=288.15 K. The temperature correctio
 scales by the ratio of standard to actual temperature at altitude (ideal gas
 law, ρ ∝ 1/T at constant pressure).
 
-By default (`Viscosity::Calibrated`) the dynamic viscosity of air is the
+By default (`viscosity: None`) the dynamic viscosity of air is the
 constant 1.81×10⁻⁵ Pa·s, the value both ball models were fitted with.
 
 ### Measured air (beta)
@@ -261,22 +261,23 @@ defaults.
   no altitude inference and no clamp at sea level, so cold, dense air is
   modeled as dense. `altitude_m` and `temperature_c` then no longer set the
   density. `Some(0.0)` gives ballistic flight.
-- `viscosity: Viscosity::Sutherland` sets the viscosity of dry air at
-  `temperature_c` from Sutherland's law, μ = b T^(3/2) / (T + S) with T in
-  kelvin, b = 1.458×10⁻⁶ kg/(m·s·K^½) and S = 110.4 K (Cambridge
-  University Engineering Department, *Properties of Fluids*). That gives
+- `viscosity: Some(μ)` uses a dynamic viscosity (Pa·s) as given.
+  `environment::sutherland_viscosity(temperature_c)` gives the viscosity of
+  dry air from Sutherland's law, μ = b T^(3/2) / (T + S) with T in kelvin,
+  b = 1.458×10⁻⁶ kg/(m·s·K^½) and S = 110.4 K (Cambridge University
+  Engineering Department, *Properties of Fluids*). That gives
   1.72×10⁻⁵ Pa·s at 0 °C, 1.81×10⁻⁵ at about 19 °C and 1.88×10⁻⁵ at
   35 °C. `Environment::dynamic_viscosity()` returns the viscosity in use.
 
 ```rust
 use dimple::Environment;
-use dimple::environment::Viscosity;
+use dimple::environment::sutherland_viscosity;
 
 // 1.27 kg/m³ from a weather station on a 2 °C morning.
 let env = Environment {
     temperature_c: 2.0,
     measured_air_density: Some(1.27),
-    viscosity: Viscosity::Sutherland,
+    viscosity: Some(sutherland_viscosity(2.0)),
     ..Environment::SEA_LEVEL
 };
 ```
@@ -290,7 +291,7 @@ and the fit was calibrated at a constant viscosity; this response has not
 been checked against temperature-controlled measurements, and on the one
 temperature benchmark it moves the model away from the data (see
 [Calibration](#calibration)). That is why the calibrated constant is the
-default and Sutherland's law is opt-in.
+default (`None` on every preset) and Sutherland's law is opt-in.
 
 ## Wind (beta)
 
@@ -1336,8 +1337,9 @@ The aerodynamic model lives in `src/aero.rs`, the ground model in
   `ShotInput::launch_spin_rads`) or straight-launch backspin/sidespin RPM
   (`AeroParams::from_spin`).
 - **`Environment`** — the air: density from altitude + temperature or
-  measured, viscosity (**`Viscosity`**), and wind (**`Wind`**: none,
-  uniform or height-dependent).
+  measured, viscosity (given, or the calibrated constant;
+  **`sutherland_viscosity`** for dry air at a temperature), and wind
+  (**`Wind`**: none, uniform or height-dependent).
 - **`Surface`**, **`Terrain`**, **`GroundPhysics`**, **`GroundModel`** — the
   ground (above).
 

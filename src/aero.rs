@@ -207,8 +207,8 @@ impl BallModel {
     /// - Re = ρ × V × d / μ (Reynolds number)
     /// - SR = ω × R / V (spin ratio, dimensionless)
     ///
-    /// μ is the calibrated constant viscosity,
-    /// [`Viscosity::Calibrated`](crate::environment::Viscosity::Calibrated).
+    /// μ is the calibrated constant viscosity, 1.81e-5 Pa·s, as an
+    /// [`Environment`](crate::Environment) with `viscosity: None` uses.
     #[must_use]
     pub fn cd_cl(&self, spin_rate: f64, speed: f64, air_density: f64) -> (f64, f64) {
         self.cd_cl_with_viscosity(spin_rate, speed, air_density, AIR_DYNAMIC_VISCOSITY)
