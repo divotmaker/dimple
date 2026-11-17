@@ -1,7 +1,7 @@
 use crate::Vec3;
 
 use crate::aero::{AeroParams, BallModel};
-use crate::environment::{Atmosphere, Environment, WindProfile};
+use crate::environment::Environment;
 use crate::ground::{BallState, GroundModel, GroundResult, Surface};
 use crate::rk4::{self, State};
 use crate::units;
@@ -142,60 +142,16 @@ pub struct FlightResult {
 /// point every 10 ms, plus the landing point, which is interpolated to the
 /// exact ground crossing. Spin decays exponentially over the flight.
 ///
-/// Still air. For wind see [`simulate_flight_with_wind`].
+/// `env` gives the air: its density, viscosity and wind
+/// ([`Environment::wind`]). Drag and Magnus lift act on the ball's velocity
+/// relative to the air, so a headwind makes the ball fly as if the air were
+/// faster and a crosswind curves it downwind. A uniform wind is not a frame
+/// shift of the still-air trajectory: the relative airspeed at launch
+/// changes, and with it the drag and the spin ratio, so the whole flight is
+/// integrated through the moving air.
 #[must_use]
 pub fn simulate_flight(input: &ShotInput, ball: &BallModel, env: &Environment) -> FlightResult {
-    simulate_flight_with_wind(input, ball, env, Vec3::ZERO)
-}
-
-/// [`simulate_flight`] through air moving at `wind` (m/s).
-///
-/// `wind` is a horizontal velocity in the public frame: `+x` blows downrange
-/// (a tailwind), `+z` blows to the right. Drag and Magnus lift act on the
-/// ball's velocity relative to the air, `v − wind`, so a headwind makes the
-/// ball fly as if the air were faster and a crosswind curves it downwind.
-/// The vertical component is ignored.
-///
-/// A uniform wind is not a frame shift of the still-air trajectory: the
-/// relative airspeed at launch changes, and with it the drag and the spin
-/// ratio, so the shot must be re-integrated (which this does).
-#[must_use]
-pub fn simulate_flight_with_wind(
-    input: &ShotInput,
-    ball: &BallModel,
-    env: &Environment,
-    wind: Vec3,
-) -> FlightResult {
-    simulate_flight_with_atmosphere(
-        input,
-        ball,
-        &Atmosphere::legacy(env.air_density()),
-        WindProfile::Uniform(horizontal(wind)),
-    )
-}
-
-/// [`simulate_flight_with_wind`] with the air given directly as an
-/// [`Atmosphere`] (density and viscosity) instead of an [`Environment`], and
-/// the wind as a [`WindProfile`], sampled at the ball's height above the
-/// ground at every integration stage.
-///
-/// With [`Atmosphere::legacy`] and [`WindProfile::Uniform`] the result is
-/// identical to [`simulate_flight_with_wind`].
-#[must_use]
-pub fn simulate_flight_with_atmosphere(
-    input: &ShotInput,
-    ball: &BallModel,
-    atmosphere: &Atmosphere,
-    wind: WindProfile,
-) -> FlightResult {
-    fly(input, ball, atmosphere, &Surface::FAIRWAY, wind).0
-}
-
-/// The horizontal part of `wind`: the wind model is two-dimensional, since a
-/// vertical wind component is not a wind a launch monitor reports and the
-/// ball's own vertical motion dominates.
-fn horizontal(wind: Vec3) -> Vec3 {
-    Vec3::new(wind.x, 0.0, wind.z)
+    fly(input, ball, env, &Surface::FAIRWAY).0
 }
 
 /// Launch velocity (m/s): ball speed along the launch direction.
@@ -214,14 +170,13 @@ fn launch_velocity(input: &ShotInput) -> Vec3 {
 /// `ground.landing` reports a crossing (or 30 s). Returns the flight and the
 /// full landing state.
 ///
-/// `wind` is the air's horizontal velocity (m/s) in the public frame; the
-/// aerodynamic forces act on the ball's velocity relative to it.
+/// The aerodynamic forces act on the ball's velocity relative to the air,
+/// with the wind sampled at the ball's height above `ground`.
 fn fly<G: GroundModel + ?Sized>(
     input: &ShotInput,
     ball: &BallModel,
-    atmosphere: &Atmosphere,
+    env: &Environment,
     ground: &G,
-    wind: WindProfile,
 ) -> (FlightResult, BallState) {
     const DT: f64 = 0.001; // 1 ms timestep
     const SAMPLE_EVERY: u32 = 10; // record every 10 ms
@@ -229,7 +184,9 @@ fn fly<G: GroundModel + ?Sized>(
 
     let spin = input.launch_spin_rads();
     let mut aero = AeroParams::from_spin_vector(spin);
-    let air_density = atmosphere.air_density;
+    let air_density = env.air_density();
+    let viscosity = env.dynamic_viscosity();
+    let wind = env.wind;
 
     let tee = Vec3::new(0.0, ground.height(0.0, 0.0), 0.0);
     let mut prev = BallState {
@@ -253,10 +210,10 @@ fn fly<G: GroundModel + ?Sized>(
             DT,
             |pos, vel, _t| {
                 ball.acceleration_with_viscosity(
-                    vel - wind.sample(|| pos.y - ground.height(pos.x, pos.z)),
+                    wind.airspeed(vel, || pos.y - ground.height(pos.x, pos.z)),
                     &aero,
                     air_density,
-                    atmosphere.dynamic_viscosity,
+                    viscosity,
                 )
             },
         );
@@ -345,6 +302,11 @@ pub struct ShotResult {
 /// [`GroundPhysics`](crate::ground::GroundPhysics) for terrain (slopes,
 /// heights, per-point surfaces) or custom tunables, or your own
 /// [`GroundModel`] (also as `&dyn GroundModel`).
+///
+/// `env` gives the air for the flight (see [`simulate_flight`]) and is
+/// handed to [`GroundModel::settle`], so dimple's ground models fly the hops
+/// between impacts through the same air and wind. The ground contacts
+/// themselves are unchanged by the wind, because the turf does not move.
 #[must_use]
 pub fn simulate_shot<G: GroundModel + ?Sized>(
     input: &ShotInput,
@@ -352,51 +314,8 @@ pub fn simulate_shot<G: GroundModel + ?Sized>(
     env: &Environment,
     ground: &G,
 ) -> ShotResult {
-    simulate_shot_with_wind(input, ball, env, ground, Vec3::ZERO)
-}
-
-/// [`simulate_shot`] through air moving at `wind` (m/s), flight and hops
-/// alike.
-///
-/// `wind` is a horizontal velocity in the public frame: `+x` blows downrange
-/// (a tailwind), `+z` blows to the right. See
-/// [`simulate_flight_with_wind`] for the flight model. The hops between
-/// impacts fly through the same moving air; the ground contacts themselves
-/// are unchanged, because the turf does not move.
-#[must_use]
-pub fn simulate_shot_with_wind<G: GroundModel + ?Sized>(
-    input: &ShotInput,
-    ball: &BallModel,
-    env: &Environment,
-    ground: &G,
-    wind: Vec3,
-) -> ShotResult {
-    simulate_shot_with_atmosphere(
-        input,
-        ball,
-        &Atmosphere::legacy(env.air_density()),
-        ground,
-        WindProfile::Uniform(horizontal(wind)),
-    )
-}
-
-/// [`simulate_shot_with_wind`] with the air given directly as an
-/// [`Atmosphere`] and the wind as a [`WindProfile`]. The flight and the hops
-/// between bounces both use them; the profile is sampled at the ball's
-/// height above the ground beneath it.
-///
-/// With [`Atmosphere::legacy`] and [`WindProfile::Uniform`] the result is
-/// identical to [`simulate_shot_with_wind`].
-#[must_use]
-pub fn simulate_shot_with_atmosphere<G: GroundModel + ?Sized>(
-    input: &ShotInput,
-    ball: &BallModel,
-    atmosphere: &Atmosphere,
-    ground: &G,
-    wind: WindProfile,
-) -> ShotResult {
-    let (flight, landing) = fly(input, ball, atmosphere, ground, wind);
-    let settled = ground.settle_with_atmosphere(&landing, ball, atmosphere, wind);
+    let (flight, landing) = fly(input, ball, env, ground);
+    let settled = ground.settle(&landing, ball, env);
     let final_pos = settled.rest.pos;
     let total_m = final_pos.x.hypot(final_pos.z);
 

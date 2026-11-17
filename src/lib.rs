@@ -120,9 +120,9 @@
 
 /// Ball models, Cd/Cl coefficients, and the drag/Magnus/gravity force model.
 pub mod aero;
-/// Air and wind: density from altitude and temperature ([`environment::Environment`])
-/// or given directly with its viscosity ([`environment::Atmosphere`]), and
-/// uniform or height-dependent wind ([`environment::WindProfile`]).
+/// The air a shot flies through ([`environment::Environment`]): density
+/// from altitude and temperature or measured, viscosity, and uniform or
+/// height-dependent wind ([`environment::Wind`]).
 pub mod environment;
 /// Everything after landing: surfaces, heightfield terrain, 3D impacts,
 /// hops, slide and roll on slopes, with the spin vector carried through

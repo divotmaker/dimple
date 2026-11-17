@@ -3,7 +3,7 @@ use std::fmt;
 use crate::Vec3;
 
 use crate::aero::{AeroParams, BallModel};
-use crate::environment::{Atmosphere, WindProfile};
+use crate::environment::Environment;
 use crate::rk4;
 use crate::units::G;
 
@@ -485,30 +485,32 @@ impl<T: Terrain> GroundPhysics<T> {
     /// `Ok(arrival)`, or `Err(state)` if the time limit `t_end` comes first.
     /// Sampled points are appended to `points`.
     ///
-    /// RK4 in steps of [`dt`](Self::dt) under [`BallModel::acceleration`]
-    /// (gravity, drag and Magnus lift) at `air_density` (kg/m³), with the
-    /// rebound's spin held fixed for the whole hop: its axis and rate set
-    /// the lift, and the arrival carries it unchanged. At zero density the
-    /// hop is ballistic, under gravity alone.
+    /// RK4 in steps of [`dt`](Self::dt) under gravity, drag and Magnus lift
+    /// through the air of `env` (its density, viscosity and wind, the wind
+    /// sampled at the ball's height above the terrain), with the rebound's
+    /// spin held fixed for the whole hop: its axis and rate set the lift,
+    /// and the arrival carries it unchanged. At zero density the hop is
+    /// ballistic, under gravity alone.
     fn hop(
         &self,
         start: &BallState,
         t_end: f64,
         points: &mut Vec<GroundPoint>,
         ball: &BallModel,
-        atmosphere: &Atmosphere,
-        wind: WindProfile,
+        env: &Environment,
     ) -> Result<BallState, BallState> {
         // `acceleration` never reads `spin_decay`: the hop holds the spin fixed.
-        let air_density = atmosphere.air_density;
+        let air_density = env.air_density();
+        let viscosity = env.dynamic_viscosity();
+        let wind = env.wind;
         let aero = AeroParams::from_spin_vector(start.spin);
         let accel = |pos: Vec3, vel: Vec3| {
             if air_density > 0.0 {
                 ball.acceleration_with_viscosity(
-                    vel - wind.sample(|| self.clearance(pos)),
+                    wind.airspeed(vel, || self.clearance(pos)),
                     &aero,
                     air_density,
-                    atmosphere.dynamic_viscosity,
+                    viscosity,
                 )
             } else {
                 GRAVITY
@@ -778,48 +780,17 @@ pub trait GroundModel {
 
     /// Everything from the landing state to rest.
     ///
-    /// `air_density` (kg/m³) is the air the ball hops through between
-    /// impacts ([`simulate_shot`](crate::trajectory::simulate_shot) passes
-    /// the shot's [`Environment::air_density`](crate::environment::Environment::air_density));
-    /// `0.0` makes the hops ballistic, under gravity alone.
+    /// `env` is the air the ball hops through between impacts
+    /// ([`simulate_shot`](crate::trajectory::simulate_shot) passes the
+    /// shot's): its [`air_density`](Environment::air_density),
+    /// [`dynamic_viscosity`](Environment::dynamic_viscosity) and
+    /// [`wind`](Environment::wind), with [`Wind::at_height`](crate::environment::Wind::at_height)
+    /// for the wind at a given height above the ground. A model may use as
+    /// much of it as it models; a measured density of zero
+    /// (`measured_air_density: Some(0.0)`) asks for ballistic hops, under
+    /// gravity alone.
     #[must_use]
-    fn settle(&self, landing: &BallState, ball: &BallModel, air_density: f64) -> GroundResult;
-
-    /// [`settle`](Self::settle) through air moving at `wind` (m/s), a
-    /// horizontal velocity in the public frame (`+x` downrange, `+z` right).
-    ///
-    /// The default implementation ignores the wind, so a model that does not
-    /// model moving air keeps working unchanged; dimple's own models override
-    /// it and fly their hops through the wind.
-    #[must_use]
-    fn settle_with_wind(
-        &self,
-        landing: &BallState,
-        ball: &BallModel,
-        air_density: f64,
-        _wind: Vec3,
-    ) -> GroundResult {
-        self.settle(landing, ball, air_density)
-    }
-    /// [`settle_with_wind`](Self::settle_with_wind) with a resolved
-    /// atmosphere and a wind profile. The default keeps a custom ground
-    /// model working unchanged: it passes the density on, drops the
-    /// viscosity, and hands over the profile's wind at ground level.
-    #[must_use]
-    fn settle_with_atmosphere(
-        &self,
-        landing: &BallState,
-        ball: &BallModel,
-        atmosphere: &Atmosphere,
-        wind: WindProfile,
-    ) -> GroundResult {
-        self.settle_with_wind(
-            landing,
-            ball,
-            atmosphere.air_density,
-            wind.at_height(landing.pos.y - self.height(landing.pos.x, landing.pos.z)),
-        )
-    }
+    fn settle(&self, landing: &BallState, ball: &BallModel, env: &Environment) -> GroundResult;
 }
 
 /// Flat ground with the default [`GroundPhysics`].
@@ -828,27 +799,8 @@ impl GroundModel for Surface {
         0.0
     }
 
-    fn settle(&self, landing: &BallState, ball: &BallModel, air_density: f64) -> GroundResult {
-        GroundPhysics::new(*self).settle(landing, ball, air_density)
-    }
-
-    fn settle_with_wind(
-        &self,
-        landing: &BallState,
-        ball: &BallModel,
-        air_density: f64,
-        wind: Vec3,
-    ) -> GroundResult {
-        GroundPhysics::new(*self).settle_with_wind(landing, ball, air_density, wind)
-    }
-    fn settle_with_atmosphere(
-        &self,
-        landing: &BallState,
-        ball: &BallModel,
-        atmosphere: &Atmosphere,
-        wind: WindProfile,
-    ) -> GroundResult {
-        GroundPhysics::new(*self).settle_with_atmosphere(landing, ball, atmosphere, wind)
+    fn settle(&self, landing: &BallState, ball: &BallModel, env: &Environment) -> GroundResult {
+        GroundPhysics::new(*self).settle(landing, ball, env)
     }
 }
 
@@ -857,32 +809,7 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
         self.terrain.sample(x, z).height
     }
 
-    fn settle(&self, landing: &BallState, ball: &BallModel, air_density: f64) -> GroundResult {
-        self.settle_with_wind(landing, ball, air_density, Vec3::ZERO)
-    }
-
-    fn settle_with_wind(
-        &self,
-        landing: &BallState,
-        ball: &BallModel,
-        air_density: f64,
-        wind: Vec3,
-    ) -> GroundResult {
-        self.settle_with_atmosphere(
-            landing,
-            ball,
-            &Atmosphere::legacy(air_density),
-            WindProfile::Uniform(wind),
-        )
-    }
-
-    fn settle_with_atmosphere(
-        &self,
-        landing: &BallState,
-        ball: &BallModel,
-        atmosphere: &Atmosphere,
-        wind: WindProfile,
-    ) -> GroundResult {
+    fn settle(&self, landing: &BallState, ball: &BallModel, env: &Environment) -> GroundResult {
         let t_end = landing.time + self.max_time;
         let radius = ball.radius_m();
         let mut contacts = Vec::new();
@@ -908,7 +835,7 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
                 }
                 let mark = points.len();
                 points.push(GroundPoint::new(&out, Phase::Hop));
-                flown = match self.hop(&out, t_end, &mut points, ball, atmosphere, wind) {
+                flown = match self.hop(&out, t_end, &mut points, ball, env) {
                     Ok(arrival)
                         if !hops_die_out(&state, &out, &arrival, ball, self.min_hop_height) =>
                     {

@@ -34,11 +34,14 @@ const BALL: BallModel = BallModel::TOUR;
 const R: f64 = 0.04267 / 2.0;
 
 /// No air: ballistic hops, gravity only.
-const VACUUM: f64 = 0.0;
+const VACUUM: &Environment = &Environment {
+    measured_air_density: Some(0.0),
+    ..Environment::SEA_LEVEL
+};
 
-/// Air density (kg/m³) at sea level, as `simulate_shot` passes it.
-fn air() -> f64 {
-    Environment::SEA_LEVEL.air_density()
+/// Still air at sea level.
+fn air() -> &'static Environment {
+    &Environment::SEA_LEVEL
 }
 
 /// A plane rising at `grade` (rise over run) toward +X, made of `surface`.

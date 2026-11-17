@@ -207,17 +207,17 @@ impl BallModel {
     /// - Re = ρ × V × d / μ (Reynolds number)
     /// - SR = ω × R / V (spin ratio, dimensionless)
     ///
-    /// μ is the constant viscosity of air at about 19 °C; see
-    /// [`cd_cl_with_viscosity`](Self::cd_cl_with_viscosity) to supply it.
+    /// μ is the calibrated constant viscosity,
+    /// [`Viscosity::Calibrated`](crate::environment::Viscosity::Calibrated).
     #[must_use]
     pub fn cd_cl(&self, spin_rate: f64, speed: f64, air_density: f64) -> (f64, f64) {
         self.cd_cl_with_viscosity(spin_rate, speed, air_density, AIR_DYNAMIC_VISCOSITY)
     }
 
     /// [`cd_cl`](Self::cd_cl) with the air's dynamic viscosity μ (Pa·s)
-    /// given, e.g. from [`dynamic_viscosity`](crate::environment::dynamic_viscosity).
+    /// given.
     #[must_use]
-    pub fn cd_cl_with_viscosity(
+    pub(crate) fn cd_cl_with_viscosity(
         &self,
         spin_rate: f64,
         speed: f64,
@@ -254,18 +254,17 @@ impl BallModel {
     ///
     /// Coordinate frame: +X downrange, +Y up, +Z right of the target line
     /// (right-handed). `vel` and the returned acceleration are in m/s and m/s².
-    /// Uses the constant viscosity of air at about 19 °C, as
-    /// [`cd_cl`](Self::cd_cl) does.
+    /// Uses the calibrated constant viscosity, as [`cd_cl`](Self::cd_cl)
+    /// does.
     #[must_use]
     pub fn acceleration(&self, vel: Vec3, aero: &AeroParams, air_density: f64) -> Vec3 {
         self.acceleration_with_viscosity(vel, aero, air_density, AIR_DYNAMIC_VISCOSITY)
     }
 
     /// [`acceleration`](Self::acceleration) with the air's dynamic
-    /// viscosity μ (Pa·s) given; see
-    /// [`cd_cl_with_viscosity`](Self::cd_cl_with_viscosity).
+    /// viscosity μ (Pa·s) given.
     #[must_use]
-    pub fn acceleration_with_viscosity(
+    pub(crate) fn acceleration_with_viscosity(
         &self,
         vel: Vec3,
         aero: &AeroParams,

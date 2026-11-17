@@ -3,6 +3,7 @@ use super::*;
 // ── Helper ──
 
 use crate::aero::BallModel;
+use crate::environment::Wind;
 
 const BALL: BallModel = BallModel::TOUR;
 
@@ -318,12 +319,12 @@ fn temperature_hot_vs_cold() {
     // Note: this only captures air density effect, not ball COR change.
     let driver = ShotInput::driver();
     let hot = Environment {
-        altitude_m: 0.0,
         temperature_c: 32.2,
+        ..Environment::SEA_LEVEL
     }; // 90°F
     let cold = Environment {
-        altitude_m: 0.0,
         temperature_c: 10.0,
+        ..Environment::SEA_LEVEL
     }; // 50°F
     let r_hot = flight_at(&driver, &hot);
     let r_cold = flight_at(&driver, &cold);
@@ -342,12 +343,12 @@ fn temperature_direction() {
     // Hot air is less dense → more carry.
     let driver = ShotInput::driver();
     let hot = Environment {
-        altitude_m: 0.0,
         temperature_c: 35.0,
+        ..Environment::SEA_LEVEL
     };
     let cold = Environment {
-        altitude_m: 0.0,
         temperature_c: 5.0,
+        ..Environment::SEA_LEVEL
     };
     assert!(flight_at(&driver, &hot).carry_yards > flight_at(&driver, &cold).carry_yards);
 }
@@ -869,8 +870,8 @@ fn shot_fairway_less_rollout_than_green() {
 /// Trackman's normalization, 25 °C at sea level, which the carry
 /// calibration also uses.
 const TRACKMAN_AIR: Environment = Environment {
-    altitude_m: 0.0,
     temperature_c: 25.0,
+    ..Environment::SEA_LEVEL
 };
 
 fn launch(mph: f64, launch_deg: f64, rpm: f64) -> ShotInput {
@@ -1021,7 +1022,7 @@ fn sidespin_hop_curves_right() {
             vel: Vec3::new(6.0, 2.0, 0.0),
             spin: Vec3::new(0.0, -sidespin, 0.0),
         };
-        let g = Surface::FAIRWAY.settle(&leave, &BALL, Environment::SEA_LEVEL.air_density());
+        let g = Surface::FAIRWAY.settle(&leave, &BALL, &Environment::SEA_LEVEL);
         g.contacts[1].pos
     };
     let (right, left) = (hop(200.0), hop(-200.0));
@@ -1294,6 +1295,14 @@ fn full_shot_outputs_are_pinned() {
 
 // ── Wind ──
 
+/// Sea-level air moving uniformly at `wind` (m/s).
+fn windy(wind: Vec3) -> Environment {
+    Environment {
+        wind: Wind::Uniform(wind),
+        ..Environment::SEA_LEVEL
+    }
+}
+
 fn driver() -> ShotInput {
     ShotInput {
         ball_speed_mph: 150.0,
@@ -1307,43 +1316,47 @@ fn driver() -> ShotInput {
 #[test]
 #[allow(
     clippy::float_cmp,
-    reason = "the flight is the same computation either way"
+    reason = "the flight and the ground phase are the same computation either way"
 )]
-fn ground_model_without_wind_support_settles_in_still_air() {
-    // Implements only `settle`, as every ground model written before
-    // wind existed does: the default `settle_with_wind` must hand it the
-    // landing unchanged and ignore the wind on the hops.
-    struct StillAirFairway;
-    impl GroundModel for StillAirFairway {
+fn ground_model_gets_the_shot_environment() {
+    // A custom model receives the shot's environment, wind included: one
+    // that forwards it settles exactly as the built-in surface does, and
+    // one that ignores it settles as in still air.
+    struct Forwarding;
+    impl GroundModel for Forwarding {
         fn height(&self, x: f64, z: f64) -> f64 {
             Surface::FAIRWAY.height(x, z)
         }
-        fn settle(&self, landing: &BallState, ball: &BallModel, air_density: f64) -> GroundResult {
-            Surface::FAIRWAY.settle(landing, ball, air_density)
+        fn settle(&self, landing: &BallState, ball: &BallModel, env: &Environment) -> GroundResult {
+            Surface::FAIRWAY.settle(landing, ball, env)
+        }
+    }
+    struct StillAir;
+    impl GroundModel for StillAir {
+        fn height(&self, x: f64, z: f64) -> f64 {
+            Surface::FAIRWAY.height(x, z)
+        }
+        fn settle(
+            &self,
+            landing: &BallState,
+            ball: &BallModel,
+            _env: &Environment,
+        ) -> GroundResult {
+            Surface::FAIRWAY.settle(landing, ball, &Environment::SEA_LEVEL)
         }
     }
 
     let input = driver();
-    let env = Environment::SEA_LEVEL;
-    let wind = Vec3::new(-5.0, 0.0, 3.0);
-    let custom = simulate_shot_with_wind(&input, &BALL, &env, &StillAirFairway, wind);
-    let windy = simulate_shot_with_wind(&input, &BALL, &env, &Surface::FAIRWAY, wind);
+    let env = windy(Vec3::new(-5.0, 0.0, 3.0));
+    let windy = simulate_shot(&input, &BALL, &env, &Surface::FAIRWAY);
+    let forwarded = simulate_shot(&input, &BALL, &env, &Forwarding);
+    let still_air = simulate_shot(&input, &BALL, &env, &StillAir);
 
+    assert_eq!(forwarded.final_pos, windy.final_pos);
     // The flight is dimple's own, so the wind acts on it either way.
-    assert_eq!(custom.flight.carry_m, windy.flight.carry_m);
-    assert_eq!(custom.flight.lateral_m, windy.flight.lateral_m);
-
-    // The hops do not: the custom model settles as in still air.
-    let p = custom.flight.points.last().unwrap();
-    let landing = BallState {
-        time: p.time,
-        pos: p.pos,
-        vel: p.vel,
-        spin: custom.flight.landing_spin,
-    };
-    let still = Surface::FAIRWAY.settle(&landing, &BALL, env.air_density());
-    assert_eq!(custom.final_pos, still.rest.pos);
-    assert_ne!(custom.final_pos, windy.final_pos);
+    assert_eq!(still_air.flight.carry_m, windy.flight.carry_m);
+    assert_eq!(still_air.flight.lateral_m, windy.flight.lateral_m);
+    assert_ne!(still_air.final_pos, windy.final_pos);
 }
 
 #[test]
@@ -1351,20 +1364,8 @@ fn headwind_shortens_carry_and_tailwind_lengthens_it() {
     let input = driver();
     let still = simulate_flight(&input, &BALL, &Environment::SEA_LEVEL).carry_m;
     // +x is downrange, so a tailwind blows along +x and a headwind along −x.
-    let head = simulate_flight_with_wind(
-        &input,
-        &BALL,
-        &Environment::SEA_LEVEL,
-        Vec3::new(-5.0, 0.0, 0.0),
-    )
-    .carry_m;
-    let tail = simulate_flight_with_wind(
-        &input,
-        &BALL,
-        &Environment::SEA_LEVEL,
-        Vec3::new(5.0, 0.0, 0.0),
-    )
-    .carry_m;
+    let head = simulate_flight(&input, &BALL, &windy(Vec3::new(-5.0, 0.0, 0.0))).carry_m;
+    let tail = simulate_flight(&input, &BALL, &windy(Vec3::new(5.0, 0.0, 0.0))).carry_m;
     assert!(
         head < still,
         "headwind {head} should fall short of still {still}"
@@ -1385,7 +1386,7 @@ fn crosswind_drifts_the_ball_downwind() {
         (Vec3::new(0.0, 0.0, 5.0), 1.0),
         (Vec3::new(0.0, 0.0, -5.0), -1.0),
     ] {
-        let f = simulate_flight_with_wind(&input, &BALL, &Environment::SEA_LEVEL, wind);
+        let f = simulate_flight(&input, &BALL, &windy(wind));
         assert!(
             f.lateral_m * sign > 1.0,
             "wind {wind:?} should drift the ball with it, lateral {}",
@@ -1401,18 +1402,8 @@ fn crosswind_drifts_the_ball_downwind() {
 )]
 fn vertical_wind_is_ignored() {
     let input = driver();
-    let flat = simulate_flight_with_wind(
-        &input,
-        &BALL,
-        &Environment::SEA_LEVEL,
-        Vec3::new(3.0, 0.0, 0.0),
-    );
-    let up = simulate_flight_with_wind(
-        &input,
-        &BALL,
-        &Environment::SEA_LEVEL,
-        Vec3::new(3.0, 9.0, 0.0),
-    );
+    let flat = simulate_flight(&input, &BALL, &windy(Vec3::new(3.0, 0.0, 0.0)));
+    let up = simulate_flight(&input, &BALL, &windy(Vec3::new(3.0, 9.0, 0.0)));
     assert_eq!(flat.carry_m, up.carry_m);
     assert_eq!(flat.apex_m, up.apex_m);
 }
@@ -1421,31 +1412,29 @@ fn vertical_wind_is_ignored() {
 fn wind_carries_through_the_ground_phase() {
     let input = driver();
     let still = simulate_shot(&input, &BALL, &Environment::SEA_LEVEL, &Surface::FAIRWAY).total_m;
-    let head = simulate_shot_with_wind(
+    let head = simulate_shot(
         &input,
         &BALL,
-        &Environment::SEA_LEVEL,
+        &windy(Vec3::new(-5.0, 0.0, 0.0)),
         &Surface::FAIRWAY,
-        Vec3::new(-5.0, 0.0, 0.0),
     )
     .total_m;
-    let tail = simulate_shot_with_wind(
+    let tail = simulate_shot(
         &input,
         &BALL,
-        &Environment::SEA_LEVEL,
+        &windy(Vec3::new(5.0, 0.0, 0.0)),
         &Surface::FAIRWAY,
-        Vec3::new(5.0, 0.0, 0.0),
     )
     .total_m;
     assert!(head < still, "head {head} still {still}");
     assert!(tail > still, "tail {tail} still {still}");
 }
 
-/// Wind on the bounce hops must not keep the ball bouncing. A fast
-/// landing in a strong wind used to settle into a train of hops that the
-/// wind fed back as fast as the impacts drained it, so the ball hopped on
-/// to the impact limit, hundreds of metres past the landing. (A wind this
-/// strong at the turf may still blow the ball a long way along the
+/// Wind on the bounce hops must not keep the ball bouncing: a fast landing
+/// in a strong wind must not settle into a train of hops that the wind
+/// feeds back as fast as the impacts drain it, which would carry the ball
+/// on to the impact limit, hundreds of meters past the landing. (A wind
+/// this strong at the turf may still blow the ball a long way along the
 /// ground.)
 #[test]
 fn strong_wind_does_not_keep_the_ball_bouncing() {
@@ -1462,13 +1451,7 @@ fn strong_wind_does_not_keep_the_ball_bouncing() {
             backspin_rpm: spin,
             sidespin_rpm: 0.0,
         };
-        let r = simulate_shot_with_wind(
-            &input,
-            &BALL,
-            &Environment::SEA_LEVEL,
-            &Surface::FAIRWAY,
-            wind,
-        );
+        let r = simulate_shot(&input, &BALL, &windy(wind), &Surface::FAIRWAY);
         let hops = r.ground.contacts.len();
         assert_eq!(
             r.ground.termination,

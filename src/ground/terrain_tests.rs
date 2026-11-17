@@ -9,11 +9,14 @@ const BALL: BallModel = BallModel::TOUR;
 const R: f64 = 0.04267 / 2.0;
 
 /// No air: ballistic hops, gravity only.
-const VACUUM: f64 = 0.0;
+const VACUUM: &Environment = &Environment {
+    measured_air_density: Some(0.0),
+    ..Environment::SEA_LEVEL
+};
 
-/// Air density (kg/m³) at sea level, as `simulate_shot` passes it.
-fn air() -> f64 {
-    Environment::SEA_LEVEL.air_density()
+/// Still air at sea level.
+fn air() -> &'static Environment {
+    &Environment::SEA_LEVEL
 }
 
 /// Terrain `y = h(x, z)` with normal from the gradient `(∂h/∂x, ∂h/∂z)`,
@@ -90,7 +93,7 @@ impl<G: GroundModel> GroundModel for Ballistic<G> {
         self.0.landing(a, b)
     }
 
-    fn settle(&self, landing: &BallState, ball: &BallModel, _air_density: f64) -> GroundResult {
+    fn settle(&self, landing: &BallState, ball: &BallModel, _env: &Environment) -> GroundResult {
         self.0.settle(landing, ball, VACUUM)
     }
 }
@@ -656,10 +659,8 @@ fn energy_never_increases_on_slopes() {
                 max_time: 10.0,
                 ..plane(n, surface)
             };
-            for ((vel, spin), air_density) in
-                starts.into_iter().flat_map(|s| [(s, VACUUM), (s, air())])
-            {
-                let g = ground.settle(&at_origin(vel, spin), &BALL, air_density);
+            for ((vel, spin), env) in starts.into_iter().flat_map(|s| [(s, VACUUM), (s, air())]) {
+                let g = ground.settle(&at_origin(vel, spin), &BALL, env);
                 for c in &g.contacts {
                     let before = energy(c.vel_in, c.spin_in, c.pos.y);
                     let after = energy(c.vel_out, c.spin_out, c.pos.y);

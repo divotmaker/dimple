@@ -7,11 +7,14 @@ const BALL: BallModel = BallModel::TOUR;
 const R: f64 = 0.04267 / 2.0;
 
 /// No air: ballistic hops, gravity only.
-const VACUUM: f64 = 0.0;
+const VACUUM: &Environment = &Environment {
+    measured_air_density: Some(0.0),
+    ..Environment::SEA_LEVEL
+};
 
-/// Air density (kg/m³) at sea level, as `simulate_shot` passes it.
-fn air() -> f64 {
-    Environment::SEA_LEVEL.air_density()
+/// Still air at sea level.
+fn air() -> &'static Environment {
+    &Environment::SEA_LEVEL
 }
 
 fn rpm_to_rads(rpm: f64) -> f64 {
@@ -764,10 +767,10 @@ fn soft_drop_ends_by_hop_height() {
 // ══════════════════════════════════════════════════════════════════
 
 /// A single hop on `FAIRWAY`: a ball leaving the ground at `vel` (moving
-/// up, so the first contact applies no impulse) with `spin`, through air of
-/// `air_density`. Returns the arrival contact.
-fn hop_with(vel: Vec3, spin: Vec3, air_density: f64) -> Contact {
-    let g = Surface::FAIRWAY.settle(&state(vel, spin), &BALL, air_density);
+/// up, so the first contact applies no impulse) with `spin`, through the
+/// air of `env`. Returns the arrival contact.
+fn hop_with(vel: Vec3, spin: Vec3, env: &Environment) -> Contact {
+    let g = Surface::FAIRWAY.settle(&state(vel, spin), &BALL, env);
     assert_eq!(g.contacts[0].vel_out, vel, "no impulse leaving the ground");
     g.contacts[1]
 }
@@ -821,15 +824,9 @@ fn hop_drag_scales_with_density() {
     // Thinner air takes less of the run: the loss against ballistic hops
     // shrinks from sea level to Denver to Mexico City.
     let start = state(Vec3::new(21.3, -18.5, 0.0), backspin(212.0));
-    let run = |air_density: f64| {
-        Surface::FAIRWAY
-            .settle(&start, &BALL, air_density)
-            .rest
-            .pos
-            .x
-    };
+    let run = |env: &Environment| Surface::FAIRWAY.settle(&start, &BALL, env).rest.pos.x;
     let ballistic = run(VACUUM);
-    let loss = |env: Environment| ballistic - run(env.air_density());
+    let loss = |env: Environment| ballistic - run(&env);
     let (sea, denver, mexico) = (
         loss(Environment::SEA_LEVEL),
         loss(Environment::DENVER),
