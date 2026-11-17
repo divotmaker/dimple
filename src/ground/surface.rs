@@ -53,6 +53,17 @@ const SHALLOW_TILT: f64 = 34.0 * (std::f64::consts::PI / 180.0);
 /// landings under 12°, not measured.
 const SHALLOW_POWER: f64 = 3.5;
 
+/// Normal impact speed (m/s) below which a landing presses no crater into
+/// the turf. Fitted to a simulator's fairway rollouts of fast landings
+/// (beta), not measured.
+const CRATER_ONSET_SPEED: f64 = 8.0;
+
+/// Normal speed scale (m/s) of the crater: its depth over the ball radius
+/// is `x / (1 + x)` with `x = (v_n − CRATER_ONSET_SPEED) / CRATER_SPEED_SCALE`,
+/// so it tends to the ball radius and never passes it. Fitted with
+/// [`CRATER_ONSET_SPEED`] (beta).
+const CRATER_SPEED_SCALE: f64 = 1.0;
+
 /// Normal coefficient of restitution between ball and turf.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
@@ -476,14 +487,19 @@ impl Surface {
     /// `v_t` and normal approach speed `v_n` (both ≥ 0).
     ///
     /// `compliance` times the smaller of Penner's eq. 8 θc times the fade
-    /// `min(1, v_n / TILT_ONSET_SPEED)` and the shallow-landing cap
-    /// `SHALLOW_TILT · (θ / SHALLOW_LANDING)^SHALLOW_POWER`, with θ the
-    /// landing angle from the surface; the result is capped at the
-    /// incidence angle from the normal, where the ball strikes the
-    /// effective plane head-on. At 22° the cap equals eq. 8 at Penner's
-    /// shallowest published landing and above it the cap grows out of the
-    /// way; below it the tilt falls to zero at grazing, so a fast shallow
-    /// landing meets nearly flat ground instead of a steep wall. Zero when
+    /// `min(1, v_n / TILT_ONSET_SPEED)` and the larger of the
+    /// shallow-landing cap `SHALLOW_TILT · (θ / SHALLOW_LANDING)^SHALLOW_POWER`
+    /// and the crater wall `atan(x / (1 + x))`, with θ the landing angle
+    /// from the surface and `x = max(0, (v_n − CRATER_ONSET_SPEED) /
+    /// CRATER_SPEED_SCALE)`; the result is capped at the incidence angle
+    /// from the normal, where the ball strikes the effective plane head-on.
+    /// At 22° the cap equals eq. 8 at Penner's shallowest published landing
+    /// and above it the cap grows out of the way; below it the cap falls to
+    /// zero at grazing. A landing fast along the normal digs a crater
+    /// `x / (1 + x)` of a ball radius deep and meets its far wall, which
+    /// rises by the depth over a run of one radius, so the wall tends to 45°
+    /// as the depth tends to the radius. A slow shallow landing thus meets
+    /// nearly flat ground, and a fast one the wall of its crater. Zero when
     /// there is (almost) no tangential motion, since the tilt direction is
     /// undefined.
     pub(super) fn contact_angle(&self, v_t: f64, v_n: f64) -> f64 {
@@ -495,7 +511,9 @@ impl Surface {
         let theta_c = PENNER_THETA_C * (speed / PENNER_REF_SPEED) * (incidence / PENNER_REF_ANGLE);
         let fade = (v_n / TILT_ONSET_SPEED).min(1.0);
         let shallow = SHALLOW_TILT * (v_n.atan2(v_t) / SHALLOW_LANDING).powf(SHALLOW_POWER);
-        (self.compliance * (theta_c * fade).min(shallow)).min(incidence)
+        let x = ((v_n - CRATER_ONSET_SPEED) / CRATER_SPEED_SCALE).max(0.0);
+        let crater = (x / (1.0 + x)).atan();
+        (self.compliance * (theta_c * fade).min(shallow.max(crater))).min(incidence)
     }
 }
 

@@ -554,6 +554,67 @@ fn contact_angle_is_eq8_at_published_landings_and_capped_below_22_degrees() {
 }
 
 #[test]
+fn fast_landing_digs_in_at_v_n_9() {
+    // A landing at 9 m/s of normal speed and 14° from the surface presses a
+    // crater of depth x / (1 + x) = 0.5 ball radii (x = (9 − 8) / 1), whose
+    // far wall rises at atan(0.5) = 26.57°: above the shallow-landing cap
+    // (34° · (14/22)^3.5 = 6.8°) and below eq. 8 (about 51°).
+    let theta = units::deg_to_rad(14.0);
+    let (v_t, v_n) = (9.0 / theta.tan(), 9.0);
+    let wall = 0.5_f64.atan();
+    for compliance in [1.0, 0.5] {
+        let surface = Surface {
+            compliance,
+            ..Surface::FAIRWAY
+        };
+        let beta = surface.contact_angle(v_t, v_n);
+        assert!(
+            (beta - compliance * wall).abs() < 1e-12,
+            "compliance {compliance}: β {beta} vs {}",
+            compliance * wall
+        );
+    }
+    assert!((units::rad_to_deg(wall) - 26.57).abs() < 0.005);
+}
+
+#[test]
+fn crater_wall_tends_to_45_degrees() {
+    // At 100 m/s of normal speed (300 m/s along the surface) the crater is
+    // 92/93 of a ball radius deep and its wall rises at atan(92/93) =
+    // 44.69°, just under the 45° it tends to.
+    let beta = Surface::FAIRWAY.contact_angle(300.0, 100.0);
+    let wall = (92.0_f64 / 93.0).atan();
+    assert!((beta - wall).abs() < 1e-12, "β {beta} vs {wall}");
+    assert!(units::rad_to_deg(beta) > 44.68 && units::rad_to_deg(beta) < 45.0);
+}
+
+#[test]
+fn fast_low_landing_hops_forward() {
+    // A landing at 46 m/s and 15° (normal speed 11.9 m/s) meets the crater
+    // wall: it never turns backward and its first hop stays under 10 m
+    // (9.68 m without spin, lower with backspin).
+    for surface in [Surface::FAIRWAY, Surface::GREEN, Surface::FIRM_GREEN] {
+        for rpm in [0.0, 2000.0, 4000.0] {
+            let theta = units::deg_to_rad(15.0);
+            let vel = Vec3::new(46.0 * theta.cos(), -46.0 * theta.sin(), 0.0);
+            let g = surface.settle(&state(vel, backspin(rpm_to_rads(rpm))), air());
+            let label = format!("{rpm} rpm");
+            for p in &g.points {
+                assert!(p.vel.x >= 0.0, "{label}: moves backward {:?}", p.vel);
+            }
+            let end = g.contacts.get(1).map_or(f64::INFINITY, |c| c.time);
+            let hop = g
+                .points
+                .iter()
+                .filter(|p| p.phase == Phase::Hop && p.time <= end)
+                .map(|p| p.pos.y)
+                .fold(0.0, f64::max);
+            assert!(hop < 10.0, "{label}: first hop {hop:.2} m");
+        }
+    }
+}
+
+#[test]
 fn shallow_landings_skip_forward_and_lower() {
     // Landings at 2–10° from 20, 35 and 46 m/s with 0, 2000 and 4000 rpm of
     // backspin on every preset: the first impact keeps at least 80% of the

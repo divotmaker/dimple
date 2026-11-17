@@ -944,19 +944,25 @@ fn hops_die_out(
 /// inertia factor:
 ///
 /// 1. Tilt: β = `compliance` · min(θc (Penner eq. 8) · min(1, `v_n` / 2 m/s),
-///    34.0° · (θ / 22.0°)^3.5), capped at the incidence angle, with
-///    `v_n = −v·n` the normal impact speed and θ the landing angle from the
-///    surface; effective normal `n' = n cos β − t̂ sin β`, leaning back
+///    max(34.0° · (θ / 22.0°)^3.5, atan(x / (1 + x)))), capped at the
+///    incidence angle, with `v_n = −v·n` the normal impact speed, θ the
+///    landing angle from the surface and `x = max(0, (v_n − 8 m/s) / 1 m/s)`;
+///    effective normal `n' = n cos β − t̂ sin β`, leaning back
 ///    toward the incoming ball. The tilt models the crater a landing
 ///    presses into the turf, so it fades in linearly below 2 m/s of normal
 ///    speed, where the contact barely dents the turf. Below Penner's
 ///    shallowest published landing (22°, where eq. 8 gives 34°) it is
-///    capped and falls to zero at grazing, so a fast shallow landing meets
+///    capped and falls to zero at grazing, so a slow shallow landing meets
 ///    nearly flat ground; the power 3.5 is fitted, not measured. Above 22°
 ///    the cap grows quickly (53° at 25°) and binds only on landings faster
-///    than Penner's, so his published landings get his full angle. The
-///    low, near-grazing hops after a landing get little tilt, so they die
-///    out in a few impacts and the ball goes on to slide and roll.
+///    than Penner's, so his published landings get his full angle. A
+///    landing faster than 8 m/s of normal speed digs in: its crater is
+///    `x / (1 + x)` of a ball radius deep and its far wall rises at
+///    atan(x / (1 + x)), which tends to 45°, so a fast low landing meets a
+///    wall that a slow one at the same angle does not; the onset and scale
+///    are fitted (beta). The low, near-grazing hops after a landing get
+///    little tilt, so they die out in a few impacts and the ball goes on
+///    to slide and roll.
 /// 2. Normal impulse (per unit mass) `j_n = (1 + e)·|v·n'|`, with `e` from
 ///    [`Surface::restitution`] at the normal speed `|v·n'|`.
 /// 3. Contact-point slip `u = (v − (v·n')n') + ω × (−R n')`. Friction

@@ -445,7 +445,7 @@ proposed bounce model and the ShotLink median for its landing angle (see
 **Beta:** landing shots on slopes, which agree with Whitlark & Pringle's
 (2012) study of a 1.5% green only at the level of its published means; and
 the run and total distances of full shots, the onset speed of the tilt
-fade, the shallow-landing cap, `FAIRWAY`'s compliance and plowing, rolling
+fade, the shallow-landing cap, the fast-landing crater, `FAIRWAY`'s compliance and plowing, rolling
 resistance above 3 m/s, the pivot lever, the lateral ground effects, and `absorption` with the sand example
 (see [Other surfaces](#other-surfaces)). Only the drive's run is compared
 with measured fairway data, and no published measurement of wedge, pitch
@@ -510,8 +510,9 @@ from the normal and `θ = 90° − φ` the landing angle from the surface:
 
 ```
 θc   = 15.4° · (v / 18.6 m/s) · (φ / 44.4°)        (Penner eq. 8)
+x    = max(0, (v_n − 8 m/s) / (1 m/s))              (crater depth x/(1+x) of R)
 β    = min(compliance · min(θc · min(1, v_n / 2 m/s),
-                          34° · (θ / 22°)^3.5), φ)
+                          max(34° · (θ / 22°)^3.5, atan(x / (1 + x)))), φ)
 n'   = n cos β − t̂ sin β                          (effective normal)
 e    = restitution at |v·n'|                       (Penner eq. 5)
 j_n  = (1 + e) · |v·n'|                            (normal impulse / m)
@@ -542,7 +543,9 @@ ball on its mark (see [Other surfaces](#other-surfaces)).
 The factor `min(1, v_n / 2 m/s)` fades the tilt in for soft contacts; every
 lofted landing (launch above about 12°) strikes faster than 2 m/s and gets
 Penner's angle in full. The term `34° · (θ / 22°)^3.5` caps the tilt of
-landings shallower than 22°, where eq. 8 has no published support (see
+landings shallower than 22°, where eq. 8 has no published support, and
+`atan(x / (1 + x))` is the wall of the crater a landing faster than 8 m/s
+of normal speed digs (see
 [Hops and the bounce-to-roll transition](#hops-and-the-bounce-to-roll-transition)).
 
 For a ball with no spin about the vertical traveling in a vertical plane,
@@ -641,7 +644,8 @@ linearly with the normal impact speed `v_n`, by the factor
 and 68° from the vertical. His shallowest, 22° above the turf at 26.8 m/s,
 has θc = 34°. Extended to a fast, shallow landing the linear law runs away:
 at 46 m/s and 3° it gives 75°, a wall. So below 22° dimple caps the tilt at
-34° · (θ / 22°)^3.5, θ the landing angle from the surface, and `compliance`
+34° · (θ / 22°)^3.5, θ the landing angle from the surface (a landing fast
+enough along the normal meets its crater wall instead, below), and `compliance`
 scales the capped tilt. At 22° the cap is Penner's own angle, so the first
 impact of every landing he publishes is unchanged; above 22° the cap grows
 quickly (53° at 25°) and binds only on landings faster than his. At
@@ -649,6 +653,21 @@ grazing it is gone and the ball meets flat ground. A thin shot landing at
 35 m/s and 10° gets 2.2° of tilt, leaves at 30.5 m/s and rises 0.36 m. The
 power 3.5 is fitted to a simulator's fairway rollouts of thin shots, not
 measured.
+
+**Fast landings dig in.** A landing with a large normal speed presses a
+crater into the turf. Its depth as a fraction of the ball radius is
+`x / (1 + x)` with `x = (v_n − 8 m/s) / (1 m/s)` (no crater below 8 m/s): a
+harder hit sinks deeper, and the depth tends to the ball radius, never past
+it. The wall the ball meets is the far side of the crater, rising by the
+depth over a run of one radius, at `atan(depth / radius)` from the surface,
+so it tends to 45°: 26.6° at 9 m/s, 33.7° at 10 m/s, 40.6° at 14 m/s. The
+contact angle is the smaller of Penner's eq. 8 and the larger of that wall
+and the shallow-landing cap, times `compliance`. A fast low landing
+therefore meets a wall that a slow landing at the same angle does not, and
+a landing that is both fast and steep meets Penner's. The wall matters only
+below 22°; above it the cap already exceeds eq. 8. The onset and the scale
+are fitted to a simulator's fairway rollouts of fast landings at 14–22°
+(beta), and the cap and its power 3.5 as above.
 
 The ball keeps bouncing while its rebound would rise at least 5 mm above the
 ground, measured along the normal: `(v·n)² / (2·g·n_y) ≥ 5 mm` (on level
@@ -1027,6 +1046,7 @@ of a golf ball on a sloping green", *Eur. J. Phys.* 45, 035002,
 | `FIRM_GREEN` `mu_slide = 0.25` | Penner (2002), Fig. 8: his firm (tournament) green, everything else unchanged |
 | Stimpmeter exit speed 1.83 m/s | Penner (2002), "The physics of putting", *Can. J. Phys.* 80, 83, from Holmes (1986), *The Physics Teacher* 24, 401 |
 | 5 mm transition height | Penner (2002), set above the ~2 mm equilibrium sinkage of a ball on a green (Hubbard & Alaways) |
+| Fast-landing crater: onset 8 m/s, scale 1 m/s of normal speed | Fitted to a simulator's fairway rollouts of fast landings at 14–22°, not measured (beta; see [Hops and the bounce-to-roll transition](#hops-and-the-bounce-to-roll-transition)) |
 | Tilt fade below 2 m/s of normal speed | Chosen, not measured (see [Hops and the bounce-to-roll transition](#hops-and-the-bounce-to-roll-transition)) |
 | `mu_roll`, `roll_law` | `GREEN`, `FIRM_GREEN`: dimple's empirical quadratic law, not fitted to published data: `mu_roll` gives stimp 11.4 ft; `v_ref = 2.5 m/s` is chosen for plausible full-shot rollouts. `FAIRWAY`: `RollLaw::Constant` with `mu_roll` 0.12, chosen, not measured. `RollLaw::Constant`: Penner (2002), eq. 9. `RollLaw::Exponential`: the form of Burritt, A. and Henrikson, E. (2024), "Modeling golf ball roll with a variable coefficient of friction", *Sports Engineering* 27:39, [doi:10.1007/s12283-024-00481-5](https://doi.org/10.1007/s12283-024-00481-5) (abstract only consulted). Open conference version: *Engineering of Sport 15* (ISEA 2024), Loughborough University repository, [doi:10.17028/rd.lboro.27051061.v1](https://doi.org/10.17028/rd.lboro.27051061.v1), CC BY 4.0, from which the surface values quoted here are read off Figure 1. |
 | `FAIRWAY` `plow = 0.36 /s` | Fitted to a simulator's fairway rollouts for landings at 2–50°, not measured; published work finds that rolling resistance changes with speed (Burritt & Henrikson 2024) and gives no law above 3 m/s |
@@ -1494,8 +1514,15 @@ points of the continued flight are not in the shot's result.
   rollouts of thin shots. Where the cap meets eq. 8, near 22°, the run of a
   fast landing changes steeply with its angle: at 38 m/s with 600 rpm of
   backspin a landing at 21.5° rests 62 yd past its mark on `FAIRWAY` and
-  one at 24.6° 14 yd. Of 81 landings at 2–20° and 20–46 m/s, six, all at
-  13–16°, hop higher on a later bounce than on the first.
+  one at 24.6° 14 yd. Of 81 landings at 2–20° and 20–46 m/s, three hop higher
+  on a later bounce than on the first.
+- **The fast-landing crater is fitted, not measured (beta).** Its onset
+  (8 m/s of normal speed) and scale (1 m/s) are fitted to a simulator's
+  fairway rollouts. Fast landings at 23–33° still run about 16 yd shorter
+  than those rollouts: their tilt is eq. 8, smaller there than both the
+  cap and the crater wall, so the crater does not change them. The first hop of a very fast drive
+  landing at 12–20° can reach about 9.7 m (46 m/s at 15° with no spin);
+  no measurement of hop heights validates it.
 - **Tangential compliance is not modeled.** Measured bounces leave the ground slipping, with more topspin than rolling,
   and the authors suggest that the tangential and spin error of rigid-contact
   models needs a tangential compliance of the ground (Biber et al. 2023).
@@ -1632,7 +1659,7 @@ Unit tests live beside the code in each module. Test categories:
 - **Obstacles** — `impact` with any outward normal: backspin checks a ball off a rigid cart path, sidespin kicks it sideways off a wall and the kick flips with the spin's sign, a spinless bounce returns the normal velocity times the restitution for walls, a trunk, an overhang and a cart path; a custom `GroundModel` with a tree trunk bounces a drive off the bark and continues with `simulate_shot_from`
 - **Launch spin axis** — a pushed shot with no sidespin stays on its start line; exact landing-spin projections
 - **Ground: planar regression** — with ballistic hops, the 3D impact reproduces the planar Penner solution with the tilt fade and the shallow-landing cap impact by impact (preset driver, 7-iron and wedge on both presets) to float tolerance, and the rest point with each surface's roll law and plowing
-- **Ground: physics** — Penner (2002) restitution, drive bounce heights and runs (Fig. 4, ballistic hops), 9-iron spin-back (Figs. 7–8), 5 mm bounce-to-roll transition, compliance tilt (2β rotation, cap), the tilt fade below 2 m/s of normal speed and the low skimming hops it shrinks, the shallow-landing cap (eq. 8 unchanged at Penner's and Haake's landings, the cap at 35 m/s and 10°, scaled by `compliance`), shallow landings at 2–10° on all three presets skipping forward with no rebound faster than its arrival and each hop no higher than the last, `FAIRWAY` bouncing like `GREEN` and rolling shorter from the same landings, grip-regime kick formula, no kick from spin about the normal, tilt-throw magnitude (grip and slip), rifle-spin drift, grazing impacts, pivot friction about the true normal and its independence from the level-ground path, general inertia factor (k = 2/3), exact slide-to-roll time, stimpmeter closed form (the quadratic law on `GREEN`, the constant law with plowing on `FAIRWAY`), `stimp_feet` with plowing against its closed form and the longest reading plowing allows, a fast roll and a fast slide on `FAIRWAY` that never speed up or reverse and rest within 1% of the closed form, slides with heavy plowing or sliding friction that end at the exact zero-slip time, `with_stimp`/`stimp_feet` round trip under every roll law and simulated stimpmeter rolls (6–14 ft) to 1e-9, preset stimp readings, `FIRM_GREEN` as Penner's Fig. 8 green
+- **Ground: physics** — Penner (2002) restitution, drive bounce heights and runs (Fig. 4, ballistic hops), 9-iron spin-back (Figs. 7–8), 5 mm bounce-to-roll transition, compliance tilt (2β rotation, cap), the tilt fade below 2 m/s of normal speed and the low skimming hops it shrinks, the shallow-landing cap (eq. 8 unchanged at Penner's and Haake's landings, the cap at 35 m/s and 10°, scaled by `compliance`), the fast-landing crater (its wall atan(0.5) at 9 m/s of normal speed and 14°, scaled by `compliance`, and just under 45° at 100 m/s), a 46 m/s landing at 15° on all three presets that never turns backward and whose first hop stays under 10 m, shallow landings at 2–10° on all three presets skipping forward with no rebound faster than its arrival and each hop no higher than the last, `FAIRWAY` bouncing like `GREEN` and rolling shorter from the same landings, grip-regime kick formula, no kick from spin about the normal, tilt-throw magnitude (grip and slip), rifle-spin drift, grazing impacts, pivot friction about the true normal and its independence from the level-ground path, general inertia factor (k = 2/3), exact slide-to-roll time, stimpmeter closed form (the quadratic law on `GREEN`, the constant law with plowing on `FAIRWAY`), `stimp_feet` with plowing against its closed form and the longest reading plowing allows, a fast roll and a fast slide on `FAIRWAY` that never speed up or reverse and rest within 1% of the closed form, slides with heavy plowing or sliding friction that end at the exact zero-slip time, `with_stimp`/`stimp_feet` round trip under every roll law and simulated stimpmeter rolls (6–14 ft) to 1e-9, preset stimp readings, `FIRM_GREEN` as Penner's Fig. 8 green
 - **Ground: roll laws** — every law is `mu_roll` at zero speed, exponential roll-outs against the closed form (positive and negative `v_ref`), Penner's ρ_g = 0.131 reads 6.0 ft under the constant law, an infinite `v_ref` is the constant law, a rising exponential stops a fast roll sooner than the constant law at the same stimp, zero or NaN `v_ref` rejected by the stimp helpers and rolled as the constant law
 - **Ground: hops through air** — at zero density hops are bit-for-bit ballistic (on the parabola, `Surface` and `GroundPhysics` identical); through air a hop arrives earlier, nearer and slower with its spin unchanged; the run lost to drag shrinks with altitude; topspin pushes a hop down and backspin holds it up; sidespin curves a hop right (fade spin) or left, mirrored
 - **Ground: invariants** — energy never increases at an impact or along the ground phase, with ballistic hops and through air; mirror (±sidespin, ±azimuth) and rotation about Y give mirrored and rotated results; fades rest right, draws rest left
