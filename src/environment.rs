@@ -1,3 +1,5 @@
+use crate::Vec3;
+
 /// Atmospheric environment for ball flight simulation.
 #[derive(Debug, Clone, Copy)]
 pub struct Environment {
@@ -139,7 +141,7 @@ pub fn dynamic_viscosity(temperature_c: f64) -> Option<f64> {
 #[derive(Debug, Clone, Copy)]
 pub enum WindProfile {
     /// The same wind at every height. Its vertical component is ignored.
-    Uniform(glam::DVec3),
+    Uniform(Vec3),
     /// A wind measured 10 m above the ground, scaled with height by the
     /// power law `wind(h) = wind10 (h / 10)^α`, where `h` is the ball's
     /// height above the ground directly beneath it. The shear exponent
@@ -155,7 +157,7 @@ pub enum WindProfile {
     /// 3(5), 261–264. <https://doi.org/10.1029/GL003i005p00261>
     PowerLaw {
         /// Horizontal wind (m/s) at 10 m.
-        wind10: glam::DVec3,
+        wind10: Vec3,
     },
 }
 
@@ -164,7 +166,7 @@ impl WindProfile {
     /// the ball. Heights at or below the ground give zero for
     /// [`PowerLaw`](Self::PowerLaw).
     #[must_use]
-    pub fn at_height(self, height_m: f64) -> glam::DVec3 {
+    pub fn at_height(self, height_m: f64) -> Vec3 {
         let (wind, factor) = match self {
             Self::Uniform(wind) => (wind, 1.0),
             Self::PowerLaw { wind10 } => {
@@ -177,13 +179,13 @@ impl WindProfile {
                 (wind10, factor)
             }
         };
-        glam::DVec3::new(wind.x * factor, 0.0, wind.z * factor)
+        Vec3::new(wind.x * factor, 0.0, wind.z * factor)
     }
 
     /// [`at_height`](Self::at_height), evaluating the height above ground
     /// only when the profile depends on it, so uniform wind costs no terrain
     /// lookups.
-    pub(crate) fn sample(self, height_above_ground: impl FnOnce() -> f64) -> glam::DVec3 {
+    pub(crate) fn sample(self, height_above_ground: impl FnOnce() -> f64) -> Vec3 {
         match self {
             Self::Uniform(_) => self.at_height(0.0),
             Self::PowerLaw { .. } => self.at_height(height_above_ground()),
@@ -244,6 +246,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp, reason = "the density is stored as given")]
     fn density_is_used_as_given() {
         for rho in [0.8, 1.225, 1.5] {
             assert_eq!(Atmosphere::from_density(rho).unwrap().air_density, rho);
@@ -267,24 +270,24 @@ mod tests {
 
     #[test]
     fn power_law_profile_and_threshold() {
-        use glam::DVec3;
+        use Vec3;
         let w = WindProfile::PowerLaw {
-            wind10: DVec3::new(3.0, 99.0, 4.0),
+            wind10: Vec3::new(3.0, 99.0, 4.0),
         };
-        assert_eq!(w.at_height(10.0), DVec3::new(3.0, 0.0, 4.0));
-        assert_eq!(w.at_height(0.0), DVec3::ZERO);
-        assert_eq!(w.at_height(-1.0), DVec3::ZERO);
+        assert_eq!(w.at_height(10.0), Vec3::new(3.0, 0.0, 4.0));
+        assert_eq!(w.at_height(0.0), Vec3::ZERO);
+        assert_eq!(w.at_height(-1.0), Vec3::ZERO);
         let expected = 0.2_f64.powf(0.37 - 0.0881 * 5.0_f64.ln());
         assert!((w.at_height(2.0).x - 3.0 * expected).abs() < 1e-12);
         for speed in [0.0, 0.01, 0.1] {
             let weak = WindProfile::PowerLaw {
-                wind10: DVec3::new(speed, 9.0, 0.0),
+                wind10: Vec3::new(speed, 9.0, 0.0),
             };
-            assert_eq!(weak.at_height(0.0), DVec3::new(speed, 0.0, 0.0));
+            assert_eq!(weak.at_height(0.0), Vec3::new(speed, 0.0, 0.0));
         }
         let above = WindProfile::PowerLaw {
-            wind10: DVec3::new(0.100_001, 0.0, 0.0),
+            wind10: Vec3::new(0.100_001, 0.0, 0.0),
         };
-        assert_eq!(above.at_height(0.0), DVec3::ZERO);
+        assert_eq!(above.at_height(0.0), Vec3::ZERO);
     }
 }

@@ -1,14 +1,20 @@
+//! Measured air and wind profile through the public API.
+
+use dimple::Vec3;
 use dimple::aero::BallModel;
 use dimple::environment::{Atmosphere, Environment, WindProfile};
 use dimple::ground::{BallState, GroundModel, Surface};
 use dimple::trajectory::{ShotInput, simulate_shot_with_atmosphere, simulate_shot_with_wind};
-use glam::DVec3;
 
 #[test]
+#[allow(
+    clippy::float_cmp,
+    reason = "both entry points run the same computation"
+)]
 fn legacy_entry_point_keeps_identical_results() {
     let env = Environment::SEA_LEVEL;
     let atmosphere = Atmosphere::legacy(env.air_density());
-    for wind in [DVec3::ZERO, DVec3::new(-5.0, 0.0, 3.0)] {
+    for wind in [Vec3::ZERO, Vec3::new(-5.0, 0.0, 3.0)] {
         let input = ShotInput::driver();
         let old = simulate_shot_with_wind(&input, &BallModel::TOUR, &env, &Surface::FAIRWAY, wind);
         let new = simulate_shot_with_atmosphere(
@@ -32,7 +38,7 @@ fn warmer_air_is_more_viscous_and_shortens_carry_at_constant_density() {
             &BallModel::TOUR,
             &Atmosphere::from_density_and_temperature(1.2, t).unwrap(),
             &Surface::FAIRWAY,
-            WindProfile::Uniform(DVec3::ZERO),
+            WindProfile::Uniform(Vec3::ZERO),
         )
         .flight
         .carry_m
@@ -52,7 +58,7 @@ fn bounce_hops_sample_the_same_profile() {
         &BallModel::TOUR,
         &atmosphere,
         &Surface::FAIRWAY,
-        WindProfile::Uniform(DVec3::ZERO),
+        WindProfile::Uniform(Vec3::ZERO),
     );
     let p = shot.flight.points.last().unwrap();
     let landing = BallState {
@@ -61,7 +67,7 @@ fn bounce_hops_sample_the_same_profile() {
         vel: p.vel,
         spin: shot.flight.landing_spin,
     };
-    let wind10 = DVec3::new(0.0, 0.0, 5.0);
+    let wind10 = Vec3::new(0.0, 0.0, 5.0);
     let uniform = Surface::FAIRWAY.settle_with_atmosphere(
         &landing,
         &BallModel::TOUR,
