@@ -1,5 +1,6 @@
 use crate::Vec3;
 
+use crate::environment::AIR_DYNAMIC_VISCOSITY;
 use crate::units::G;
 
 /// Physical and aerodynamic properties of a golf ball.
@@ -205,18 +206,30 @@ impl BallModel {
     ///
     /// - Re = ρ × V × d / μ (Reynolds number)
     /// - SR = ω × R / V (spin ratio, dimensionless)
+    ///
+    /// μ is the constant viscosity of air at about 19 °C; see
+    /// [`cd_cl_with_viscosity`](Self::cd_cl_with_viscosity) to supply it.
     #[must_use]
     pub fn cd_cl(&self, spin_rate: f64, speed: f64, air_density: f64) -> (f64, f64) {
-        /// Dynamic viscosity of air at ~18°C (Pa·s). Weakly temperature-dependent
-        /// (Sutherland's law); constant approximation is adequate for 0–40°C.
-        const AIR_DYNAMIC_VISCOSITY: f64 = 1.81e-5;
+        self.cd_cl_with_viscosity(spin_rate, speed, air_density, AIR_DYNAMIC_VISCOSITY)
+    }
 
+    /// [`cd_cl`](Self::cd_cl) with the air's dynamic viscosity μ (Pa·s)
+    /// given, e.g. from [`dynamic_viscosity`](crate::environment::dynamic_viscosity).
+    #[must_use]
+    pub fn cd_cl_with_viscosity(
+        &self,
+        spin_rate: f64,
+        speed: f64,
+        air_density: f64,
+        dynamic_viscosity: f64,
+    ) -> (f64, f64) {
         if speed < 1e-10 {
             return (self.cd_sub, 0.0);
         }
 
         // Reynolds number
-        let re = air_density * speed * self.diameter_m / AIR_DYNAMIC_VISCOSITY;
+        let re = air_density * speed * self.diameter_m / dynamic_viscosity;
 
         // Spin ratio
         let sr = (spin_rate * self.radius_m() / speed).abs();
@@ -241,15 +254,32 @@ impl BallModel {
     ///
     /// Coordinate frame: +X downrange, +Y up, +Z right of the target line
     /// (right-handed). `vel` and the returned acceleration are in m/s and m/s².
+    /// Uses the constant viscosity of air at about 19 °C, as
+    /// [`cd_cl`](Self::cd_cl) does.
     #[must_use]
     pub fn acceleration(&self, vel: Vec3, aero: &AeroParams, air_density: f64) -> Vec3 {
+        self.acceleration_with_viscosity(vel, aero, air_density, AIR_DYNAMIC_VISCOSITY)
+    }
+
+    /// [`acceleration`](Self::acceleration) with the air's dynamic
+    /// viscosity μ (Pa·s) given; see
+    /// [`cd_cl_with_viscosity`](Self::cd_cl_with_viscosity).
+    #[must_use]
+    pub fn acceleration_with_viscosity(
+        &self,
+        vel: Vec3,
+        aero: &AeroParams,
+        air_density: f64,
+        dynamic_viscosity: f64,
+    ) -> Vec3 {
         let speed = vel.length();
         if speed < 1e-10 {
             return Vec3::new(0.0, -G, 0.0);
         }
 
         let vel_hat = vel / speed;
-        let (cd, cl) = self.cd_cl(aero.spin_rate, speed, air_density);
+        let (cd, cl) =
+            self.cd_cl_with_viscosity(aero.spin_rate, speed, air_density, dynamic_viscosity);
 
         // Dynamic pressure: q = 0.5 × ρ × v²
         let q = 0.5 * air_density * speed * speed;

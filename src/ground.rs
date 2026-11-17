@@ -3,6 +3,7 @@ use std::fmt;
 use crate::Vec3;
 
 use crate::aero::{AeroParams, BallModel};
+use crate::environment::{Atmosphere, WindProfile};
 use crate::rk4;
 use crate::units::G;
 
@@ -495,14 +496,20 @@ impl<T: Terrain> GroundPhysics<T> {
         t_end: f64,
         points: &mut Vec<GroundPoint>,
         ball: &BallModel,
-        air_density: f64,
-        wind: Vec3,
+        atmosphere: &Atmosphere,
+        wind: WindProfile,
     ) -> Result<BallState, BallState> {
         // `acceleration` never reads `spin_decay`: the hop holds the spin fixed.
+        let air_density = atmosphere.air_density;
         let aero = AeroParams::from_spin_vector(start.spin);
-        let accel = |vel: Vec3| {
+        let accel = |pos: Vec3, vel: Vec3| {
             if air_density > 0.0 {
-                ball.acceleration(vel - wind, &aero, air_density)
+                ball.acceleration_with_viscosity(
+                    vel - wind.sample(|| self.clearance(pos)),
+                    &aero,
+                    air_density,
+                    atmosphere.dynamic_viscosity,
+                )
             } else {
                 GRAVITY
             }
@@ -523,7 +530,7 @@ impl<T: Terrain> GroundPhysics<T> {
                 });
             }
             let h = self.dt.min(t_end - t);
-            let b = rk4::step(s, t, h, |_, v, _| accel(v));
+            let b = rk4::step(s, t, h, |p, v, _| accel(p, v));
             let end = self.clearance(b.pos);
             let arrival = if air_density > 0.0 {
                 self.hop_arrival(s, t, h, end, start.spin, |tau| hermite(s, b, h, tau))
@@ -794,6 +801,25 @@ pub trait GroundModel {
     ) -> GroundResult {
         self.settle(landing, ball, air_density)
     }
+    /// [`settle_with_wind`](Self::settle_with_wind) with a resolved
+    /// atmosphere and a wind profile. The default keeps a custom ground
+    /// model working unchanged: it passes the density on, drops the
+    /// viscosity, and hands over the profile's wind at ground level.
+    #[must_use]
+    fn settle_with_atmosphere(
+        &self,
+        landing: &BallState,
+        ball: &BallModel,
+        atmosphere: &Atmosphere,
+        wind: WindProfile,
+    ) -> GroundResult {
+        self.settle_with_wind(
+            landing,
+            ball,
+            atmosphere.air_density,
+            wind.at_height(landing.pos.y - self.height(landing.pos.x, landing.pos.z)),
+        )
+    }
 }
 
 /// Flat ground with the default [`GroundPhysics`].
@@ -815,6 +841,15 @@ impl GroundModel for Surface {
     ) -> GroundResult {
         GroundPhysics::new(*self).settle_with_wind(landing, ball, air_density, wind)
     }
+    fn settle_with_atmosphere(
+        &self,
+        landing: &BallState,
+        ball: &BallModel,
+        atmosphere: &Atmosphere,
+        wind: WindProfile,
+    ) -> GroundResult {
+        GroundPhysics::new(*self).settle_with_atmosphere(landing, ball, atmosphere, wind)
+    }
 }
 
 impl<T: Terrain> GroundModel for GroundPhysics<T> {
@@ -832,6 +867,21 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
         ball: &BallModel,
         air_density: f64,
         wind: Vec3,
+    ) -> GroundResult {
+        self.settle_with_atmosphere(
+            landing,
+            ball,
+            &Atmosphere::legacy(air_density),
+            WindProfile::Uniform(wind),
+        )
+    }
+
+    fn settle_with_atmosphere(
+        &self,
+        landing: &BallState,
+        ball: &BallModel,
+        atmosphere: &Atmosphere,
+        wind: WindProfile,
     ) -> GroundResult {
         let t_end = landing.time + self.max_time;
         let radius = ball.radius_m();
@@ -858,7 +908,7 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
                 }
                 let mark = points.len();
                 points.push(GroundPoint::new(&out, Phase::Hop));
-                flown = match self.hop(&out, t_end, &mut points, ball, air_density, wind) {
+                flown = match self.hop(&out, t_end, &mut points, ball, atmosphere, wind) {
                     Ok(arrival)
                         if !hops_die_out(&state, &out, &arrival, ball, self.min_hop_height) =>
                     {

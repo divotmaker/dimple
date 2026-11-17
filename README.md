@@ -11,9 +11,11 @@ speed, launch angle, azimuth, backspin, sidespin) and it returns the full
 shot:
 
 - **Flight**: fixed-step RK4 integration (1 ms) of gravity, Reynolds- and
-  spin-dependent drag, Magnus lift, and exponential spin decay, with air
-  density from altitude and temperature, and optional horizontal wind that
-  also acts on the hops between bounces.
+  spin-dependent drag, Magnus lift, and exponential spin decay. Air density
+  comes from altitude and temperature, or is given directly together with
+  a temperature-dependent viscosity. Optional horizontal wind, uniform or
+  scaled with height from a 10 m reading, also acts on the hops between
+  bounces.
 - **Ground**: 3D rigid-ball impacts on turf (Penner's compliant-turf model
   with speed-dependent restitution, friction, and pivot friction), hops,
   then sliding and rolling with speed-dependent rolling resistance. The

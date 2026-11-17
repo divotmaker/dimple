@@ -180,7 +180,11 @@ Per-club results:
 | PW | 137.3y | 142.0y | -4.7y | 52.2 | 52.0 | +0.2 |
 
 Environmental response (density-only): Denver +6.9% driver carry (published
-~6.1%), 90°F-vs-50°F delta ~9y (published ~8y).
+~6.1%), 90°F-vs-50°F delta ~9y (published ~8y). With temperature-dependent
+viscosity as well (`Atmosphere::from_density_and_temperature`, below), the
+same delta is 6.2y, further from the published value: the fit was
+calibrated at a constant viscosity, so the density-only response is the
+validated one.
 
 ### Known limitations
 
@@ -188,8 +192,9 @@ Environmental response (density-only): Denver +6.9% driver carry (published
    limit of the single-sigmoid model.
 2. **Fast low-spin shots (140+ mph, <3k rpm) run a few yards short** with
    slightly high peaks relative to the per-shot validation set.
-3. **Ball COR vs temperature unmodeled** — only air density responds to
-   temperature; cold-ball distance loss is understated.
+3. **Ball COR vs temperature unmodeled** — only air density (and, through
+   `Atmosphere`, viscosity) responds to temperature; cold-ball distance loss
+   is understated.
 4. **Single ball model.** Real balls vary ±5% in drag across dimple designs.
 5. **Spin on the ground: modeled, lightly validated.** The full spin vector
    is carried through every impact, slide and roll (see
@@ -244,6 +249,34 @@ law, ρ ∝ 1/T at constant pressure).
 
 Dynamic viscosity of air is constant at 1.81×10⁻⁵ Pa·s (adequate for 0–40°C).
 
+### Measured air
+
+`Atmosphere` gives the air directly, for callers that know it better than
+an altitude and temperature do (a launch monitor with a weather station,
+say), and is taken by `simulate_flight_with_atmosphere` and
+`simulate_shot_with_atmosphere`:
+
+- `Atmosphere::from_density(ρ)` uses a measured density as given, with no
+  altitude inference and no clamp at sea level, so cold, dense air is
+  modeled as dense. Viscosity stays the constant above.
+- `Atmosphere::from_density_and_temperature(ρ, T)` also sets the viscosity
+  of dry air from Sutherland's law, μ = b T^(3/2) / (T + S) with T in
+  kelvin, b = 1.458×10⁻⁶ kg/(m·s·K^½) and S = 110.4 K
+  (`environment::dynamic_viscosity`; Cambridge University Engineering
+  Department, *Properties of Fluids*). That gives 1.72×10⁻⁵ Pa·s at 0 °C,
+  1.81×10⁻⁵ at about 19 °C and 1.88×10⁻⁵ at 35 °C.
+- `Atmosphere::legacy(ρ)` is the density with the constant viscosity; the
+  `Environment` entry points use it and are unchanged.
+
+Viscosity sets the Reynolds number, and with `TOUR` its effect is not
+negligible. At a constant 1.2 kg/m³, going from 0 °C to 35 °C shortens carry
+by 5.2 m for a 150 mph drive, 2.5 m for the preset 7-iron and 1.4 m for a
+100 mph wedge, mostly late in the flight, where the slowing ball nears the
+drag crisis. How large this is depends on where the fit puts that crisis,
+and the fit was calibrated at a constant viscosity; this response has not
+been checked against temperature-controlled measurements (see
+[Calibration](#calibration)).
+
 ## Wind
 
 `simulate_flight_with_wind` and `simulate_shot_with_wind` take a wind: a
@@ -259,8 +292,9 @@ shift of the still-air trajectory: the airspeed at launch changes, and with
 it the drag and the spin ratio, so the shot is integrated again rather than
 translated.
 
-The wind is the same at every height. For a 150 mph drive at 13° and
-2700 rpm with `TOUR` at sea level (`examples/wind.rs`):
+`simulate_flight_with_wind` and `simulate_shot_with_wind` use the same
+wind at every height (`WindProfile::Uniform`). For a 150 mph drive at 13°
+and 2700 rpm with `TOUR` at sea level (`examples/wind.rs`):
 
 | Wind | Carry | Total | Lateral at rest |
 |---|---:|---:|---:|
@@ -271,6 +305,36 @@ The wind is the same at every height. For a 150 mph drive at 13° and
 
 The headwind costs more than the same tailwind gains, because drag grows
 with the square of the airspeed.
+
+### Wind profile
+
+A reported wind is usually measured 10 m above the ground, and the wind is
+weaker near the ground and stronger above. `WindProfile::PowerLaw { wind10 }`
+scales the 10 m reading by (h / 10)^α, where h is the ball's height above the
+ground directly beneath it, with the shear exponent of Justus & Mikhail
+(1976), α = 0.37 − 0.0881 ln(U₁₀) for the 10 m speed U₁₀ in m/s. Below
+ground level the wind is zero, and at or below 0.1 m/s, where the logarithm
+is meaningless, the wind is applied uniformly. The profile is sampled at
+every RK4 stage of the flight and of the hops, so the hops, a few
+centimeters above the turf, fly through nearly still air. It is a
+neutral-stability assumption, not a measured wind field.
+
+The same drive and winds as above, as 10 m readings:
+
+| Wind (10 m) | Carry | Total | Lateral at rest |
+|---|---:|---:|---:|
+| 5 m/s headwind | 199.8 m | 209.5 m | 0.0 m |
+| 5 m/s tailwind | 235.3 m | 253.7 m | 0.0 m |
+| 5 m/s left to right | 221.6 m | 237.8 m | 21.9 m right |
+
+The drive spends most of its flight above 10 m, where the profile is
+stronger than the reading, so the headwind costs 2.7 m more carry than
+uniform wind. The tailwind's total is shorter despite a longer carry,
+because the hops lose the help of the wind.
+
+Justus, C. G. & Mikhail, A. (1976), "Height variation of wind speed and
+wind distributions statistics", *Geophysical Research Letters* 3(5),
+261–264, doi:10.1029/GL003i005p00261.
 
 ## Spin Decay
 
@@ -493,7 +557,10 @@ elastic and frictionless); real shots end by these rules well before it.
 shot: `GroundModel::settle` takes the air density, and `simulate_shot`
 passes the shot's `Environment::air_density()`. With wind,
 `simulate_shot_with_wind` calls `GroundModel::settle_with_wind`, and the
-hops' drag and lift act on the velocity relative to the moving air. The forces are the flight
+hops' drag and lift act on the velocity relative to the moving air.
+`simulate_shot_with_atmosphere` calls `GroundModel::settle_with_atmosphere`,
+which also passes the viscosity and samples a `WindProfile` at the hop's
+height. The forces are the flight
 model's (`BallModel::acceleration`: gravity, drag and Magnus lift),
 integrated with RK4 at 1 ms. The spin is held fixed over each hop: its axis
 and rate set the lift, and the ball arrives at the next impact with exactly
@@ -1140,7 +1207,10 @@ The ground API has three layers:
    `settle(landing, ball, air_density)` (`simulate_shot` passes the shot's
    air density; an implementation is free to ignore it), and optionally
    `settle_with_wind(landing, ball, air_density, wind)` (by default
-   `settle`, ignoring the wind) and
+   `settle`, ignoring the wind),
+   `settle_with_atmosphere(landing, ball, atmosphere, wind_profile)` (by
+   default `settle_with_wind` with the density and the profile's wind at
+   ground level) and
    `landing(a, b)` (by default the
    solved crossing of the straight segment with the heightfield; an engine
    can substitute its own sweep).
@@ -1245,6 +1315,8 @@ The aerodynamic model lives in `src/aero.rs`, the ground model in
   `ShotInput::launch_spin_rads`) or straight-launch backspin/sidespin RPM
   (`AeroParams::from_spin`).
 - **`Environment`** — altitude + temperature → air density.
+- **`Atmosphere`** — density and viscosity given directly; **`WindProfile`**
+  — uniform or height-dependent wind.
 - **`Surface`**, **`Terrain`**, **`GroundPhysics`**, **`GroundModel`** — the
   ground (above).
 
@@ -1261,7 +1333,10 @@ times).
 
 With wind: `simulate_flight_with_wind(input, ball, env, wind)` and
 `simulate_shot_with_wind(input, ball, env, ground, wind)`, the latter
-settling through `ground.settle_with_wind`.
+settling through `ground.settle_with_wind`. With measured air and a wind
+profile: `simulate_flight_with_atmosphere(input, ball, atmosphere, wind)`
+and `simulate_shot_with_atmosphere(input, ball, atmosphere, ground, wind)`,
+settling through `ground.settle_with_atmosphere`.
 
 ## Test Suite
 
@@ -1274,6 +1349,8 @@ Unit tests live beside the code in each module. Test categories:
 - **Descent angle** — iron DA within expected ranges
 - **Altitude/temperature** — Denver gain, hot-cold delta, directional checks
 - **Spin decay** — exponential decay rate against Trackman measurements
+- **Atmosphere** — measured density used as given and validated; Sutherland reference values; warmer air shortens carry at constant density; the legacy entry points match `Atmosphere::legacy` with uniform wind exactly
+- **Wind profile** — the power law and its 0.1 m/s threshold, and the hops sampling the profile
 - **Wind** — a headwind shortens carry and costs more than the same tailwind gains, a crosswind drifts the ball downwind, a vertical component is ignored, the wind carries through the hops, and a ground model that only implements `settle` settles in still air
 - **Era comparison** — TOUR vs PATENT_1997 carry gaps, Cd reduction, Cl sensitivity
 - **Launch spin axis** — a pushed shot with no sidespin stays on its start line; exact landing-spin projections
