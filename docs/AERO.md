@@ -85,6 +85,12 @@ number: the reference data are fitted best without a drag crisis, so
 neither the air's viscosity nor its temperature enters except through the
 density.
 
+A model that wants the viscosity implements `AeroModel` with a drag that
+depends on the Reynolds number. `examples/viscosity.rs` does this with a
+smooth drag crisis (illustrative constants, not fitted) and the viscosity
+from Sutherland's law at the air temperature, and compares carries at 0 °C
+and 35 °C in air of the same density.
+
 ### Drag coefficient
 
 ```
