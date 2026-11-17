@@ -227,6 +227,24 @@ pub struct Surface {
     /// contact, (3π/16)·μ·a (Johnson 1985), with μ = 0.4 and a contact
     /// radius a ≈ 4 mm (a = 3–5 mm gives 0.7–1.2 mm). Uncalibrated.
     pub pivot: f64,
+    /// Fraction of a rebound the ground absorbs, 0 to 1, stated for a ball
+    /// that lands straight down. A ball that lands at angle θ from the
+    /// surface leaves with `(1 − absorption)^(sin θ)` of the velocity and
+    /// of the spin that the contact model above gives it: a steep landing
+    /// loses nearly the whole fraction, a grazing touch almost nothing.
+    /// `0.0` (every preset) is turf, which returns the whole rebound; `1.0`
+    /// stops every landing on its mark with no spin.
+    ///
+    /// It stands for a bed the ball drives into, such as loose sand. The
+    /// bed resists the ball's motion through it with a drag proportional to
+    /// v² (Katsuragi & Durian 2007, 2013), which takes the same fraction of
+    /// the velocity in every direction, and the ball drives in as deep as
+    /// the normal part of its velocity takes it (Wright et al. 2020), which
+    /// is the `sin θ`. That the spin loses the same fraction is a modeling
+    /// choice; no published measurement covers it. It acts at impacts only;
+    /// a ball rolling on the surface is slowed by `mu_roll`. See
+    /// `docs/AERO.md` for sand.
+    pub absorption: f64,
 }
 
 impl Surface {
@@ -242,6 +260,7 @@ impl Surface {
         roll_law: RollLaw::Quadratic { v_ref: 2.5 },
         compliance: 1.0,
         pivot: 0.001,
+        absorption: 0.0,
     };
 
     /// Standard green: Penner's (2002) green impact model with a rolling
@@ -253,6 +272,7 @@ impl Surface {
         roll_law: RollLaw::Quadratic { v_ref: 2.5 },
         compliance: 1.0,
         pivot: 0.001,
+        absorption: 0.0,
     };
 
     /// Firm green: [`GREEN`](Self::GREEN) with Penner's (2002, Fig. 8)

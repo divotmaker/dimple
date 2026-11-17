@@ -957,6 +957,11 @@ fn hops_die_out(
 /// 5. Pivot friction on the spin about the true normal `n` (not `n'`, so it
 ///    never removes spin along the heading):
 ///    `Δω_n = −sign(ω_n) · min(|ω_n|, pivot · j_n / (k R²))`.
+/// 6. Absorption: with θ the landing angle from the surface
+///    (`sin θ = v_n / |v|`), the ball leaves with
+///    `kept = (1 − absorption)^(sin θ)` of the velocity and spin from steps
+///    1–5. [`Surface::absorption`] is `0.0` on every preset, so `kept` is
+///    exactly 1 there; a value above 1 counts as 1 (the ball stops).
 ///
 /// No impulse is applied if the ball is not moving into the surface
 /// (`v·n ≥ 0`, grazing; a normal speed within rounding of zero,
@@ -1008,13 +1013,21 @@ pub fn impact(state: &BallState, at: &GroundSample, model: &dyn AeroModel) -> Ba
     let dw = w_n.abs().min(surface.pivot * j_n / inertia);
     spin -= n * (w_n.signum() * dw);
 
+    // The ground keeps `1 − absorption` of a straight-down rebound, and more
+    // of a shallower one.
+    let kept = (1.0 - surface.absorption)
+        .max(0.0)
+        .powf(-v_dot_n / v.length());
     BallState {
-        vel,
-        spin,
+        vel: vel * kept,
+        spin: spin * kept,
         ..*state
     }
 }
 
+#[cfg(test)]
+#[allow(clippy::float_cmp, reason = "the tests assert exact results")]
+mod absorption_tests;
 #[cfg(test)]
 mod regression_data;
 #[cfg(test)]

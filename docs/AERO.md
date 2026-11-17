@@ -446,7 +446,8 @@ proposed bounce model and the ShotLink median for its landing angle (see
 (2012) study of a 1.5% green only at the level of its published means; and
 the run and total distances of full shots, the onset speed of the tilt
 fade, `FAIRWAY`'s compliance, rolling resistance above 3 m/s, the pivot
-lever and the lateral ground effects. Only the drive's run is compared
+lever, the lateral ground effects, and `absorption` with the sand example
+(see [Other surfaces](#other-surfaces)). Only the drive's run is compared
 with measured fairway data, and no published measurement of wedge, pitch
 or chip run on a fairway exists to compare against. The presets may be
 recalibrated when such data exist.
@@ -518,6 +519,9 @@ j_t  = min(|u| · k/(1+k), μ · j_n)                 (along −û)
 v   += j_n n' − j_t û
 ω   += (−R n') × (−j_t û) / (k R²)
 Δω_n = −sign(ω_n) · min(|ω_n|, pivot · j_n / (k R²))   about n
+kept = (1 − absorption)^(sin θ)                    (sin θ = v_n / v)
+v'   = kept · v
+ω'   = kept · ω
 ```
 
 `k` is the ball's inertia factor (`I = k m R²`, `AeroModel::inertia_factor`;
@@ -526,6 +530,13 @@ Friction either brings the contact point to rest (grip: the ball leaves
 rolling on the effective plane) or slides throughout at the Coulomb limit.
 No impulse is applied when the ball is not
 moving into the ground (grazing).
+
+The last three lines take the share of the rebound a bed such as loose
+sand absorbs: `absorption` for a ball landing straight down, less the
+shallower it lands (θ is the landing angle from the surface), and nothing
+for a grazing touch. Every preset has `absorption` 0, so `kept` is exactly 1
+and the rebound is Penner's; a value above 1 counts as 1, which stops the
+ball on its mark (see [Other surfaces](#other-surfaces)).
 
 The factor `min(1, v_n / 2 m/s)` fades the tilt in for soft contacts; every
 lofted landing (launch above about 12°) strikes faster than 2 m/s and gets
@@ -963,11 +974,11 @@ of a golf ball on a sloping green", *Eur. J. Phys.* 45, 035002,
 
 ### Surfaces
 
-| Surface | Restitution | `mu_slide` | `compliance` | `mu_roll` | `roll_law` | `pivot` | Stimp |
-|---|---|---|---|---|---|---|---|
-| `Surface::FAIRWAY` | `Penner2002` | 0.40 | 1.0 | 0.12 | `Quadratic { v_ref: 2.5 }` | 1 mm | 5.2 ft |
-| `Surface::GREEN` | `Penner2002` | 0.40 | 1.0 | 0.055 | `Quadratic { v_ref: 2.5 }` | 1 mm | 11.4 ft |
-| `Surface::FIRM_GREEN` | `Penner2002` | 0.25 | 1.0 | 0.055 | `Quadratic { v_ref: 2.5 }` | 1 mm | 11.4 ft |
+| Surface | Restitution | `mu_slide` | `compliance` | `mu_roll` | `roll_law` | `pivot` | `absorption` | Stimp |
+|---|---|---|---|---|---|---|---|---|
+| `Surface::FAIRWAY` | `Penner2002` | 0.40 | 1.0 | 0.12 | `Quadratic { v_ref: 2.5 }` | 1 mm | 0 | 5.2 ft |
+| `Surface::GREEN` | `Penner2002` | 0.40 | 1.0 | 0.055 | `Quadratic { v_ref: 2.5 }` | 1 mm | 0 | 11.4 ft |
+| `Surface::FIRM_GREEN` | `Penner2002` | 0.25 | 1.0 | 0.055 | `Quadratic { v_ref: 2.5 }` | 1 mm | 0 | 11.4 ft |
 
 | Parameter | Source |
 |---|---|
@@ -980,6 +991,7 @@ of a golf ball on a sloping green", *Eur. J. Phys.* 45, 035002,
 | Tilt fade below 2 m/s of normal speed | Chosen, not measured (see [Hops and the bounce-to-roll transition](#hops-and-the-bounce-to-roll-transition)) |
 | `mu_roll`, `roll_law` | Presets: dimple's empirical quadratic law, not fitted to published data: `GREEN`'s `mu_roll` gives stimp 11.4 ft; `v_ref = 2.5 m/s` is chosen for plausible full-shot rollouts. `RollLaw::Constant`: Penner (2002), eq. 9. `RollLaw::Exponential`: the form of Burritt, A. and Henrikson, E. (2024), "Modeling golf ball roll with a variable coefficient of friction", *Sports Engineering* 27:39, [doi:10.1007/s12283-024-00481-5](https://doi.org/10.1007/s12283-024-00481-5) (abstract only consulted). Open conference version: *Engineering of Sport 15* (ISEA 2024), Loughborough University repository, [doi:10.17028/rd.lboro.27051061.v1](https://doi.org/10.17028/rd.lboro.27051061.v1), CC BY 4.0, from which the surface values quoted here are read off Figure 1. |
 | `pivot` | Hertzian full-slip torsional couple (Johnson 1985) with an assumed 4 mm contact radius; uncalibrated |
+| `absorption = 0` | Turf returns Penner's whole rebound |
 | `FAIRWAY` `compliance = 1.0` | Penner's green value, chosen for the fairway (see below) |
 
 Penner uses one turf model throughout: eq. 8 unchanged, with his green
@@ -1215,7 +1227,7 @@ Source: Brede, A. D. (1991), *Agron. J.* 83:425–426,
 ### Other surfaces
 
 Beyond the presets above, dimple adds a surface preset only when its
-parameters come from a published source. Rough, bunker sand and firm or
+parameters come from a published source. Rough, sand and firm or
 soft fairways have no published set of this model's parameters
 (restitution, impact friction, contact angle and rolling resistance
 together), so there are no presets for them. Build them from a preset with struct update
@@ -1255,6 +1267,93 @@ let mat = Surface {
 above); `mu_slide` sets how much backspin an impact checks; `with_stimp`
 sets the roll at stimpmeter speed and `roll_law` how it changes with
 speed.
+
+**Sand (beta).** A ball does not bounce on sand; it skips. Dropped on loose
+sand it comes to rest part-buried whatever its own restitution (Uehara et
+al. 2003), and bunker sand is chosen so that a ball stays where it lands
+"without bouncing" (The R&A, *Golf Course Condition and Playability*). A
+ball that lands at an angle keeps part of its motion along the surface and
+travels on, with most of its speed and spin gone, and the steeper it lands
+the less it keeps: 0.80 of its speed at 10° from the surface, 0.30 at 30°
+and 0.008 at 50° for a small projectile at 104 m/s (Suo et al. 2023); about
+0.14 for a marble at 2–5 m/s, which stops in its crater above about 50°
+(Wright et al. 2020). A golf ball fired into bunker sands at 71° stays in
+its mark, half to fully buried (Baker 2001).
+
+```rust
+// Bunker sand: no bounce. The ball skips on along the sand, and the steeper it lands the less it keeps.
+let sand = Surface {
+    restitution: Restitution::Constant(0.0),
+    compliance: 0.0,
+    absorption: 0.9,
+    mu_roll: 0.3,
+    ..Surface::FAIRWAY
+};
+```
+
+- `restitution` 0 returns no normal speed and `compliance` 0 keeps the
+  contact plane flat, so the ball does not hop: it leaves along the surface.
+- `absorption` is the share of a rebound the sand takes from a ball landing
+  straight down. The sand resists the ball's motion through it with a drag
+  proportional to v² (Katsuragi & Durian 2007, 2013), which leaves
+  `e^(−s/d1)` of the velocity after a path `s`, and the ball drives in as
+  deep as the normal part of its velocity takes it (Wright et al. 2020). A
+  landing at angle θ from the surface therefore keeps
+  `(1 − absorption)^(sin θ)` of its velocity and spin. With 0.9, a ball with
+  no spin leaves with 0.61, 0.37, 0.21, 0.13 and 0.08 of its speed at 10°,
+  20°, 30°, 40° and 50°, between the two experiments from 20° to 40°.
+- `mu_roll` 0.3 is the resistance of a sphere of the ball's density rolling
+  on a granular bed (Fukumoto et al. 2026: about 0.25; De Blasio & Saeter
+  2009: 0.45–0.5 for glass). `mu_slide`, `roll_law` and `pivot` are
+  `FAIRWAY`'s; no source gives other values for a ball on sand.
+
+On this surface no landing hops:
+
+| Landing | Rest past the mark | Speed out | Spin in → out |
+|---|---|---|---|
+| Sand wedge, 49 mph, 51°, 9100 rpm | 0.22 m | 1.17 m/s | 953 → 26 rad/s |
+| 7-iron, 55 mph, 46°, 5100 rpm | 0.66 m | 1.91 m/s | 534 → 56 rad/s |
+| Preset driver, 28.5 m/s, 40° | 1.46 m | 3.22 m/s | 211 → 147 rad/s |
+| Chip, 8 m/s, 30°, 3000 rpm | 0.45 m | 1.68 m/s | 314 → 40 rad/s |
+| Lob, 15 m/s, 65°, 6000 rpm | 0.00 m | 0.11 m/s | 628 → 1 rad/s |
+| Thin, 35 m/s, 10°, 2000 rpm | 33 m | 21.5 m/s | 209 → 51 rad/s |
+
+Full shots leave a short track, a little longer the faster and shallower
+they land. A steep landing trickles a short way (the wedge) or stops on its
+mark (the lob); it does not plug, and dimple reports where the ball stops,
+not how deep it sits. A thin shot keeps most of its speed and skips out of a bunker: the
+33 m above is on endless sand. With `absorption` 0.95 the sand is softer
+(wedge 0.08 m, 7-iron 0.27 m, driver 0.77 m); with 0.8 it is firmer
+(0.63, 1.47 and 2.45 m). It is an example, not a preset: no published
+measurement gives a golf ball's rebound, spin or run on bunker sand, the
+two oblique experiments used other projectiles, and 0.9 is a choice
+between them.
+
+Sources: Uehara, Ambroso, Ojha and Durian
+(2003), "Low-speed impact craters in loose granular media", *Phys. Rev.
+Lett.* 90, 194301,
+[doi:10.1103/PhysRevLett.90.194301](https://doi.org/10.1103/PhysRevLett.90.194301);
+The R&A, *Golf Course Condition and Playability: Sustainability Guidelines
+and Support for Clubs*, §7 Bunkers; Suo et al. (2023), "Subsurface
+pulse, crater and ejecta asymmetry from oblique impacts into granular
+media", *Icarus*,
+[doi:10.1016/j.icarus.2023.115816](https://doi.org/10.1016/j.icarus.2023.115816);
+Wright, Quillen et al. (2020), "Ricochets on asteroids:
+Experimental study of low velocity grazing impacts into granular media",
+*Icarus* 351, 113963,
+[doi:10.1016/j.icarus.2020.113963](https://doi.org/10.1016/j.icarus.2020.113963);
+Baker, S. W. (2001), "True grit", *Greenkeeper International*, May 2001,
+34–36; Katsuragi and Durian (2007), "Unified force law for
+granular impact cratering", *Nature Physics* 3, 420,
+[doi:10.1038/nphys583](https://doi.org/10.1038/nphys583), and (2013), "Drag
+force scaling for penetration into granular media", *Phys. Rev. E* 87,
+052208, [doi:10.1103/PhysRevE.87.052208](https://doi.org/10.1103/PhysRevE.87.052208);
+Fukumoto, Ebata, Sharma and Katsuragi (2026), "Depth and
+slip ratio dependencies of friction for a sphere rolling on a granular
+slope", [arXiv:2602.01652](https://arxiv.org/abs/2602.01652); De Blasio
+and Saeter (2009), "Rolling friction on a granular medium",
+*Phys. Rev. E* 79, 022301,
+[doi:10.1103/PhysRevE.79.022301](https://doi.org/10.1103/PhysRevE.79.022301).
 
 ### Plugging in your own ground
 
@@ -1360,6 +1459,15 @@ points of the continued flight are not in the shot's result.
   chips reach the ground at up to about 4 m/s, so this touches the start of
   their roll, and fast rolls started by the caller and long downhill rolls;
   `RollLaw` offers gentler laws.
+- **Sand has no stop angle, no skip through the air and an assumed effect
+  on spin.** Loose sand stops a projectile that lands steeper than about
+  50° (Wright et al. 2020; Suo et al. 2023); dimple's absorption only
+  shrinks toward a straight-down landing, so a steep ball with little
+  backspin still runs a fraction of a meter. A shallow fast landing skips
+  along the surface, slowed by `mu_slide`, where a real ball may leave the
+  sand for a moment. The absorption does not depend on speed, and it takes
+  the same share of the spin as of the velocity, which no published
+  measurement covers.
 - **Spin is not decayed during hops.** The flight's decay rate is
   calibrated at flight speeds and overstates the decay at hop speeds (see
   [Hops and the bounce-to-roll transition](#hops-and-the-bounce-to-roll-transition)).
@@ -1455,6 +1563,7 @@ Unit tests live beside the code in each module. Test categories:
 - **Ground: invariants** — energy never increases at an impact or along the ground phase, with ballistic hops and through air; mirror (±sidespin, ±azimuth) and rotation about Y give mirrored and rotated results; fades rest right, draws rest left
 - **Ground: terrain** — rest on slopes (hold below atan `mu_roll`, roll downhill above, both presets; one stop and no chatter rolling uphill), long downhill reports `MaxTime`, near-critical (3.1°) `GREEN` comes to rest within the default `max_time`, slide-to-roll on a plane against the closed form, slip turning across a slope, vertical spin kicks on slopes only, uphill landings check up and downhill landings release, elevated green (shorter carry, lands on it), tee on the terrain, landing and hop crossings on curved terrain to 1e-9 m (ballistic hops on the parabola; hops through air on the surface), first crossing of thin walls and ridges in a landing segment and a hop step, ball kept on the surface; slope hop rule, downhill `FAIRWAY` up to 6° (through air and ballistic, the driver run growing with the slope either way, shorter through air) and `GREEN` up to 2.5° end at rest, side slopes rest and mirror exactly, rest judged on the surface where the ball stops, slide-to-roll on curved ground without flicker; mirror and rotation about Y with a sloped plane through air, and energy on slopes at both densities
 - **Ground: validation against published data** — Brede's (1991) slope correction exact under the constant law and within 0.5–1.5% to 4% under the presets' law, `GREEN`'s 5.5% hold grade; Penner's θc in Biber et al.'s (2023) units and their fitted k_P as `compliance`; agreement with their natural-tee fit (δ, Δẏ, normal rebound, spin reversal, lift-off slip sign; a rigid plane and μ = 1 do worse); their mat needs a higher constant restitution; their typical driver landing; Whitlark & Pringle's (2012) 1.5% green (uphill/downhill asymmetry, the sand wedge stopping by its pitch mark, green speed, `compliance` as firmness); Cross's (2024) speed-independent break angle under the constant law
+- **Ground: absorption** — the presets absorb nothing; `impact` with `absorption` equals the turf rebound times `(1 − absorption)^(sin θ)` bit for bit; full absorption stops the ball on its mark; on the sand example no landing hops, every landing ends at rest after one contact with no energy gained, steeper landings keep less speed and stop sooner, the sand wedge keeps under 5% of its spin, full shots leave a 0.3–3 m track, and a thin shot leaves faster than 15 m/s
 - **Run-out** — the hop train dies out (at most 10 impacts, each hop after the first at most 0.7× the one before, at most two below 1 cm) from wedges to drives on both presets; `FAIRWAY` roll and total for a lob wedge, a pitch and the PGA Tour average drive; the preset drive's carry, run and total; the drive runs shorter on `FAIRWAY` than on `GREEN`
 - **Ground: API** — per-point surfaces (fairway-to-green roll), `MaxTime`/`MaxImpacts` termination, tunables, interpolated landing, `&dyn GroundModel`
 
