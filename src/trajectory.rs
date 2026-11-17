@@ -105,20 +105,28 @@ pub struct TrajectoryPoint {
 }
 
 /// Result of a flight simulation.
+///
+/// The distances are measured from where the flight starts: the tee for
+/// [`simulate_flight`], the start state for [`simulate_flight_from`].
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct FlightResult {
-    /// Sampled trajectory from launch (t = 0) to landing (last point). The
-    /// last point is the interpolated ground crossing, exactly on the ground.
+    /// Sampled trajectory from the start (the launch, at t = 0, for
+    /// [`simulate_flight`]) to landing (last point), with absolute times.
+    /// The last point is the interpolated ground crossing, exactly on the
+    /// ground.
     pub points: Vec<TrajectoryPoint>,
-    /// Time from launch to landing (s).
+    /// Time in the air (s): from launch, or from the start state's time, to
+    /// landing.
     pub flight_time: f64,
-    /// Horizontal distance from the tee to the landing point (m).
+    /// Horizontal distance from the start (the tee) to the landing point
+    /// (m).
     pub carry_m: f64,
-    /// Maximum height above the tee (m).
+    /// Maximum height above the start (the tee) (m).
     pub apex_m: f64,
-    /// Lateral offset of the landing point from the target line (m).
-    /// Positive = right, negative = left.
+    /// Lateral offset (`z`) of the landing point from the start (from the
+    /// target line, for a shot from the tee) (m). Positive = right,
+    /// negative = left.
     pub lateral_m: f64,
     /// Angle of the landing velocity below horizontal (degrees); 90 for a
     /// ball falling straight down.
@@ -146,9 +154,64 @@ pub struct FlightResult {
 /// is not a frame shift of the still-air trajectory: the relative airspeed
 /// at launch changes, and with it the drag and the spin ratio, so the whole
 /// flight is integrated through the moving air.
+///
+/// The same as [`simulate_flight_from`] with the launch state: time 0, at
+/// the origin, with the launch velocity and
+/// [`launch_spin_rads`](ShotInput::launch_spin_rads).
 #[must_use]
 pub fn simulate_flight(input: &ShotInput, model: &dyn AeroModel) -> FlightResult {
-    fly(input, model, &Surface::FAIRWAY).0
+    simulate_flight_from(&launch_state(input, 0.0), model)
+}
+
+/// Simulate a ball flight from any state to landing on flat ground
+/// (y = 0): a ball that hit a tree, a wall or a flagstick and flies on.
+///
+/// Integrates exactly as [`simulate_flight`] does, starting from `start`:
+///
+/// - Time continues from `start.time`; the points carry absolute times and
+///   [`flight_time`](FlightResult::flight_time) is the time in the air.
+/// - Positions stay in the crate frame (origin at the tee).
+/// - [`carry_m`](FlightResult::carry_m) and
+///   [`lateral_m`](FlightResult::lateral_m) are measured from the start's
+///   horizontal position, [`apex_m`](FlightResult::apex_m) from its height.
+/// - A start on the ground flies like a launch: if it moves into the ground
+///   it lands within the first step, at its start.
+/// - A start below the ground lands at once: the flight is one point, the
+///   start placed on the ground (`y` set to the ground height) with its
+///   velocity and spin, at `start.time`, so its flight time, carry and
+///   apex are zero.
+///
+/// ```
+/// use dimple::{BallState, ShotInput, Tour, Vec3, simulate_flight, simulate_flight_from};
+///
+/// // A ball 5 m up, 1.5 s into the shot, moving 20 m/s downrange.
+/// let start = BallState {
+///     time: 1.5,
+///     pos: Vec3::new(40.0, 5.0, 0.0),
+///     vel: Vec3::new(20.0, 2.0, 0.0),
+///     spin: Vec3::new(0.0, 0.0, 300.0),
+/// };
+/// let flight = simulate_flight_from(&start, &Tour::SEA_LEVEL);
+/// assert_eq!(flight.points[0].time, 1.5);
+/// assert!(flight.carry_m > 0.0);
+/// let landing = flight.points.last().unwrap();
+/// assert_eq!(landing.pos.y, 0.0);
+/// assert!((landing.pos.x - 40.0 - flight.carry_m).abs() < 1e-9);
+/// ```
+#[must_use]
+pub fn simulate_flight_from(start: &BallState, model: &dyn AeroModel) -> FlightResult {
+    fly(start, model, &Surface::FAIRWAY).0
+}
+
+/// The ball at launch: time 0 at `(0, tee_height, 0)`, with the launch
+/// velocity and spin of `input`.
+fn launch_state(input: &ShotInput, tee_height: f64) -> BallState {
+    BallState {
+        time: 0.0,
+        pos: Vec3::new(0.0, tee_height, 0.0),
+        vel: launch_velocity(input),
+        spin: input.launch_spin_rads(),
+    }
 }
 
 /// Launch velocity (m/s): ball speed along the launch direction.
@@ -163,13 +226,12 @@ fn launch_velocity(input: &ShotInput) -> Vec3 {
     )
 }
 
-/// Flight from the tee at `(0, ground.height(0, 0), 0)` until
-/// `ground.landing` reports a crossing (or 30 s). Returns the flight and the
-/// full landing state.
+/// Flight from `start` until `ground.landing` reports a crossing (or 30 s).
+/// Returns the flight and the full landing state.
 ///
 /// The model is handed the ball's height above `ground` at every stage.
 fn fly<G: GroundModel + ?Sized>(
-    input: &ShotInput,
+    start: &BallState,
     model: &dyn AeroModel,
     ground: &G,
 ) -> (FlightResult, BallState) {
@@ -177,16 +239,18 @@ fn fly<G: GroundModel + ?Sized>(
     const SAMPLE_EVERY: u32 = 10; // record every 10 ms
     const MAX_STEPS: u32 = 30_000; // 30 seconds max
 
-    let gravity = Vec3::new(0.0, -model.gravity(), 0.0);
-    let spin = input.launch_spin_rads();
+    let floor = ground.height(start.pos.x, start.pos.z);
+    if start.pos.y < floor {
+        let mut landed = *start;
+        landed.pos.y = floor;
+        return (
+            summarize(start, vec![trajectory_point(&landed)], 0.0, &landed),
+            landed,
+        );
+    }
 
-    let tee = Vec3::new(0.0, ground.height(0.0, 0.0), 0.0);
-    let mut prev = BallState {
-        time: 0.0,
-        pos: tee,
-        vel: launch_velocity(input),
-        spin,
-    };
+    let gravity = Vec3::new(0.0, -model.gravity(), 0.0);
+    let mut prev = *start;
     let mut apex = 0.0_f64;
     let mut points = Vec::with_capacity((MAX_STEPS / SAMPLE_EVERY + 2) as usize);
     points.push(trajectory_point(&prev));
@@ -211,12 +275,12 @@ fn fly<G: GroundModel + ?Sized>(
             },
         );
         let next = BallState {
-            time: f64::from(step_num) * DT,
+            time: start.time + f64::from(step_num) * DT,
             pos: s.pos,
             vel: s.vel,
             spin: model.spin_after(&prev, DT),
         };
-        apex = apex.max(next.pos.y - tee.y);
+        apex = apex.max(next.pos.y - start.pos.y);
 
         if let Some(l) = ground.landing(&prev, &next) {
             landing = Some(l);
@@ -238,23 +302,32 @@ fn fly<G: GroundModel + ?Sized>(
         prev
     };
 
+    (summarize(start, points, apex, &end), end)
+}
+
+/// The flight from `start` to `end` along `points`.
+fn summarize(
+    start: &BallState,
+    points: Vec<TrajectoryPoint>,
+    apex: f64,
+    end: &BallState,
+) -> FlightResult {
     let horizontal_speed = end.vel.x.hypot(end.vel.z);
     let descent_angle_deg = if horizontal_speed > 1e-10 {
         units::rad_to_deg((-end.vel.y).atan2(horizontal_speed))
     } else {
         90.0
     };
-
-    let flight = FlightResult {
+    let lateral_m = end.pos.z - start.pos.z;
+    FlightResult {
         points,
-        flight_time: end.time,
-        carry_m: end.pos.x.hypot(end.pos.z),
+        flight_time: end.time - start.time,
+        carry_m: (end.pos.x - start.pos.x).hypot(lateral_m),
         apex_m: apex,
-        lateral_m: end.pos.z,
+        lateral_m,
         descent_angle_deg,
         landing_spin: end.spin,
-    };
-    (flight, end)
+    }
 }
 
 fn trajectory_point(s: &BallState) -> TrajectoryPoint {
@@ -269,14 +342,14 @@ fn trajectory_point(s: &BallState) -> TrajectoryPoint {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct ShotResult {
-    /// Airborne phase, launch to first ground contact.
+    /// Airborne phase, from the start (launch) to first ground contact.
     pub flight: FlightResult,
     /// Impacts, hops, slide and roll from the landing point to rest. Its
     /// times are absolute, so `flight.points` followed by `ground.points` is
     /// the whole path.
     pub ground: GroundResult,
-    /// Horizontal distance from the tee to where the ball came to rest,
-    /// `ground.rest.pos` (m).
+    /// Horizontal distance from the start (the tee) to where the ball came
+    /// to rest, `ground.rest.pos` (m).
     pub total_m: f64,
 }
 
@@ -297,19 +370,47 @@ pub struct ShotResult {
 /// impacts through the same air and wind, and use the model's radius,
 /// inertia factor and gravity for the contacts. The ground contacts
 /// themselves are unchanged by the wind, because the turf does not move.
+///
+/// The same as [`simulate_shot_from`] with the launch state: time 0, at
+/// `(0, ground.height(0, 0), 0)`, with the launch velocity and
+/// [`launch_spin_rads`](ShotInput::launch_spin_rads).
 #[must_use]
 pub fn simulate_shot<G: GroundModel + ?Sized>(
     input: &ShotInput,
     model: &dyn AeroModel,
     ground: &G,
 ) -> ShotResult {
-    let (flight, landing) = fly(input, model, ground);
+    simulate_shot_from(&launch_state(input, ground.height(0.0, 0.0)), model, ground)
+}
+
+/// Simulate a complete shot from any state: flight to `ground`, landing,
+/// and the ground phase, as [`simulate_shot`] does from the tee.
+///
+/// The flight follows the rules of [`simulate_flight_from`] on `ground`
+/// instead of the plane y = 0: time continues from `start.time`, positions
+/// stay in the crate frame, carry and lateral offset are measured from the
+/// start's horizontal position, and a start below `ground.height` lands at
+/// once, placed on the ground. [`total_m`](ShotResult::total_m) is measured
+/// from the start's horizontal position too.
+///
+/// A [`GroundModel`] whose [`landing`](GroundModel::landing) reports
+/// obstacles (a tree trunk, a wall, a flagstick) can bounce the ball with
+/// [`impact`](crate::ground::impact) and the obstacle's outward normal in
+/// its [`settle`](GroundModel::settle), then continue with
+/// `simulate_shot_from` from the rebound.
+#[must_use]
+pub fn simulate_shot_from<G: GroundModel + ?Sized>(
+    start: &BallState,
+    model: &dyn AeroModel,
+    ground: &G,
+) -> ShotResult {
+    let (flight, landing) = fly(start, model, ground);
     let settled = ground.settle(&landing, model);
     let rest = settled.rest.pos;
 
     ShotResult {
         flight,
-        total_m: rest.x.hypot(rest.z),
+        total_m: (rest.x - start.pos.x).hypot(rest.z - start.pos.z),
         ground: settled,
     }
 }

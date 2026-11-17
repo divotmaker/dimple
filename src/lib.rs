@@ -161,5 +161,7 @@ mod vec3;
 pub use aero::{AeroModel, Tour};
 pub use air::{Wind, standard_air_density};
 pub use ground::{BallState, Surface};
-pub use trajectory::{ShotInput, simulate_flight, simulate_shot};
+pub use trajectory::{
+    ShotInput, simulate_flight, simulate_flight_from, simulate_shot, simulate_shot_from,
+};
 pub use vec3::Vec3;
