@@ -40,10 +40,12 @@ pub struct GroundSample {
     /// added), consistent with the flight's landing; on ground level with
     /// the tee this is 0 and a ball on the ground has `pos.y == 0`.
     pub height: f64,
-    /// Unit outward surface normal at (x, z), with `normal.y > 0`. For a
-    /// heightfield `y = h(x, z)` this is `(−∂h/∂x, 1, −∂h/∂z)` normalized.
-    /// [`GroundPhysics`] uses it for the impact plane, the normal load and
-    /// the downhill pull, so it should match the slope of `height`.
+    /// Unit outward surface normal at (x, z). From a [`Terrain`] it has
+    /// `normal.y > 0`: for a heightfield `y = h(x, z)` it is
+    /// `(−∂h/∂x, 1, −∂h/∂z)` normalized. [`GroundPhysics`] uses it for the
+    /// impact plane, the normal load and the downhill pull, so it should
+    /// match the slope of `height`. Given to [`impact`] on its own, it may
+    /// point any way: a wall, a tree trunk or the underside of an overhang.
     pub normal: Vec3,
     /// Material at this location.
     pub surface: Surface,
@@ -917,8 +919,18 @@ fn hops_die_out(
     removed - returned >= model.gravity() * min_hop_height
 }
 
-/// One impact of the ball with the ground: the post-impact state (same time
-/// and position, new velocity and spin).
+/// One impact of the ball with the ground or any other surface: the
+/// post-impact state (same time and position, new velocity and spin).
+///
+/// `at.normal` is the surface's outward normal and may point any way: the
+/// ground (`normal.y > 0`), a wall or tree trunk (horizontal), or the
+/// underside of an overhang (`normal.y < 0`); `at.height` is not used. The
+/// spin acts on every such bounce through the friction impulse below:
+/// backspin checks a ball off a cart path and sidespin kicks it sideways
+/// off a wall. The `normal.y > 0` restriction belongs to [`Terrain`] and
+/// [`GroundPhysics`], which need a heightfield. For a hard surface (a cart
+/// path, a wall, bark) use `compliance: 0.0`, a rigid flat contact, and a
+/// [`Restitution::Constant`]; dimple has no published values for them.
 ///
 /// A rigid-sphere point-contact impulse against Penner's (2002) effective
 /// contact plane, in vector form. With `n` the surface normal, `t̂` the
@@ -943,7 +955,7 @@ fn hops_die_out(
 ///    never removes spin along the heading):
 ///    `Δω_n = −sign(ω_n) · min(|ω_n|, pivot · j_n / (k R²))`.
 ///
-/// No impulse is applied if the ball is not moving into the ground
+/// No impulse is applied if the ball is not moving into the surface
 /// (`v·n ≥ 0`, grazing; a normal speed within rounding of zero,
 /// `|v·n| ≤ 1e-12·|v|`, counts as grazing, so a ball moving in a sloped
 /// ground plane is not struck by its own rounding error). Whether the ball then hops or stays on the ground
