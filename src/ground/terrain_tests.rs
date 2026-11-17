@@ -799,12 +799,12 @@ fn hops_die_out_only_where_the_hop_hands_back_less_than_the_impact_takes() {
     ));
     // Level ground in wind: a hop the wind speeds up hands energy back like
     // a slope, so a lossless impact is sustained and a lossy one dies out.
-    let rebound = DVec3::new(2.0, 0.5, 0.0);
-    let blown = state(DVec3::new(2.5, -0.5, 0.0));
+    let rebound = Vec3::new(2.0, 0.5, 0.0);
+    let blown = state(Vec3::new(2.5, -0.5, 0.0));
     let gained = 0.5 * (blown.vel.length_squared() - rebound.length_squared());
     let arriving = |extra: f64| {
         let e = 0.5 * rebound.length_squared() + extra;
-        state((2.0 * e).sqrt() * DVec3::new(2.0, -0.5, 0.0).normalize())
+        state((2.0 * e).sqrt() * Vec3::new(2.0, -0.5, 0.0).normalize())
     };
     assert!(!hops_die_out(
         &arriving(0.0),

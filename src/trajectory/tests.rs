@@ -1305,6 +1305,10 @@ fn driver() -> ShotInput {
 }
 
 #[test]
+#[allow(
+    clippy::float_cmp,
+    reason = "the flight is the same computation either way"
+)]
 fn ground_model_without_wind_support_settles_in_still_air() {
     // Implements only `settle`, as every ground model written before
     // wind existed does: the default `settle_with_wind` must hand it the
@@ -1314,19 +1318,14 @@ fn ground_model_without_wind_support_settles_in_still_air() {
         fn height(&self, x: f64, z: f64) -> f64 {
             Surface::FAIRWAY.height(x, z)
         }
-        fn settle(
-            &self,
-            landing: &BallState,
-            ball: &BallModel,
-            air_density: f64,
-        ) -> GroundResult {
+        fn settle(&self, landing: &BallState, ball: &BallModel, air_density: f64) -> GroundResult {
             Surface::FAIRWAY.settle(landing, ball, air_density)
         }
     }
 
     let input = driver();
     let env = Environment::SEA_LEVEL;
-    let wind = DVec3::new(-5.0, 0.0, 3.0);
+    let wind = Vec3::new(-5.0, 0.0, 3.0);
     let custom = simulate_shot_with_wind(&input, &BALL, &env, &StillAirFairway, wind);
     let windy = simulate_shot_with_wind(&input, &BALL, &env, &Surface::FAIRWAY, wind);
 
@@ -1356,14 +1355,14 @@ fn headwind_shortens_carry_and_tailwind_lengthens_it() {
         &input,
         &BALL,
         &Environment::SEA_LEVEL,
-        DVec3::new(-5.0, 0.0, 0.0),
+        Vec3::new(-5.0, 0.0, 0.0),
     )
     .carry_m;
     let tail = simulate_flight_with_wind(
         &input,
         &BALL,
         &Environment::SEA_LEVEL,
-        DVec3::new(5.0, 0.0, 0.0),
+        Vec3::new(5.0, 0.0, 0.0),
     )
     .carry_m;
     assert!(
@@ -1383,8 +1382,8 @@ fn headwind_shortens_carry_and_tailwind_lengthens_it() {
 fn crosswind_drifts_the_ball_downwind() {
     let input = driver();
     for (wind, sign) in [
-        (DVec3::new(0.0, 0.0, 5.0), 1.0),
-        (DVec3::new(0.0, 0.0, -5.0), -1.0),
+        (Vec3::new(0.0, 0.0, 5.0), 1.0),
+        (Vec3::new(0.0, 0.0, -5.0), -1.0),
     ] {
         let f = simulate_flight_with_wind(&input, &BALL, &Environment::SEA_LEVEL, wind);
         assert!(
@@ -1396,19 +1395,23 @@ fn crosswind_drifts_the_ball_downwind() {
 }
 
 #[test]
+#[allow(
+    clippy::float_cmp,
+    reason = "the vertical component is dropped before any arithmetic"
+)]
 fn vertical_wind_is_ignored() {
     let input = driver();
     let flat = simulate_flight_with_wind(
         &input,
         &BALL,
         &Environment::SEA_LEVEL,
-        DVec3::new(3.0, 0.0, 0.0),
+        Vec3::new(3.0, 0.0, 0.0),
     );
     let up = simulate_flight_with_wind(
         &input,
         &BALL,
         &Environment::SEA_LEVEL,
-        DVec3::new(3.0, 9.0, 0.0),
+        Vec3::new(3.0, 9.0, 0.0),
     );
     assert_eq!(flat.carry_m, up.carry_m);
     assert_eq!(flat.apex_m, up.apex_m);
@@ -1417,14 +1420,13 @@ fn vertical_wind_is_ignored() {
 #[test]
 fn wind_carries_through_the_ground_phase() {
     let input = driver();
-    let still =
-        simulate_shot(&input, &BALL, &Environment::SEA_LEVEL, &Surface::FAIRWAY).total_m;
+    let still = simulate_shot(&input, &BALL, &Environment::SEA_LEVEL, &Surface::FAIRWAY).total_m;
     let head = simulate_shot_with_wind(
         &input,
         &BALL,
         &Environment::SEA_LEVEL,
         &Surface::FAIRWAY,
-        DVec3::new(-5.0, 0.0, 0.0),
+        Vec3::new(-5.0, 0.0, 0.0),
     )
     .total_m;
     let tail = simulate_shot_with_wind(
@@ -1432,7 +1434,7 @@ fn wind_carries_through_the_ground_phase() {
         &BALL,
         &Environment::SEA_LEVEL,
         &Surface::FAIRWAY,
-        DVec3::new(5.0, 0.0, 0.0),
+        Vec3::new(5.0, 0.0, 0.0),
     )
     .total_m;
     assert!(head < still, "head {head} still {still}");
@@ -1448,10 +1450,10 @@ fn wind_carries_through_the_ground_phase() {
 #[test]
 fn strong_wind_does_not_keep_the_ball_bouncing() {
     for (speed_mph, launch_deg, spin, wind) in [
-        (67.1, 8.0, 1500.0, DVec3::new(20.0, 0.0, 0.0)),
-        (67.1, 8.0, 1500.0, DVec3::new(14.0, 0.0, 14.0)),
-        (100.7, 18.0, 10000.0, DVec3::new(-20.0, 0.0, 0.0)),
-        (157.0, 12.0, 2500.0, DVec3::new(20.0, 0.0, 0.0)),
+        (67.1, 8.0, 1500.0, Vec3::new(20.0, 0.0, 0.0)),
+        (67.1, 8.0, 1500.0, Vec3::new(14.0, 0.0, 14.0)),
+        (100.7, 18.0, 10000.0, Vec3::new(-20.0, 0.0, 0.0)),
+        (157.0, 12.0, 2500.0, Vec3::new(20.0, 0.0, 0.0)),
     ] {
         let input = ShotInput {
             ball_speed_mph: speed_mph,

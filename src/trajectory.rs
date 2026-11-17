@@ -145,7 +145,7 @@ pub struct FlightResult {
 /// Still air. For wind see [`simulate_flight_with_wind`].
 #[must_use]
 pub fn simulate_flight(input: &ShotInput, ball: &BallModel, env: &Environment) -> FlightResult {
-    simulate_flight_with_wind(input, ball, env, DVec3::ZERO)
+    simulate_flight_with_wind(input, ball, env, Vec3::ZERO)
 }
 
 /// [`simulate_flight`] through air moving at `wind` (m/s).
@@ -164,7 +164,7 @@ pub fn simulate_flight_with_wind(
     input: &ShotInput,
     ball: &BallModel,
     env: &Environment,
-    wind: DVec3,
+    wind: Vec3,
 ) -> FlightResult {
     fly(input, ball, env, &Surface::FAIRWAY, horizontal(wind)).0
 }
@@ -172,8 +172,8 @@ pub fn simulate_flight_with_wind(
 /// The horizontal part of `wind`: the wind model is two-dimensional, since a
 /// vertical wind component is not a wind a launch monitor reports and the
 /// ball's own vertical motion dominates.
-fn horizontal(wind: DVec3) -> DVec3 {
-    DVec3::new(wind.x, 0.0, wind.z)
+fn horizontal(wind: Vec3) -> Vec3 {
+    Vec3::new(wind.x, 0.0, wind.z)
 }
 
 /// Launch velocity (m/s): ball speed along the launch direction.
@@ -199,7 +199,7 @@ fn fly<G: GroundModel + ?Sized>(
     ball: &BallModel,
     env: &Environment,
     ground: &G,
-    wind: DVec3,
+    wind: Vec3,
 ) -> (FlightResult, BallState) {
     const DT: f64 = 0.001; // 1 ms timestep
     const SAMPLE_EVERY: u32 = 10; // record every 10 ms
@@ -323,7 +323,7 @@ pub fn simulate_shot<G: GroundModel + ?Sized>(
     env: &Environment,
     ground: &G,
 ) -> ShotResult {
-    simulate_shot_with_wind(input, ball, env, ground, DVec3::ZERO)
+    simulate_shot_with_wind(input, ball, env, ground, Vec3::ZERO)
 }
 
 /// [`simulate_shot`] through air moving at `wind` (m/s), flight and hops
@@ -340,7 +340,7 @@ pub fn simulate_shot_with_wind<G: GroundModel + ?Sized>(
     ball: &BallModel,
     env: &Environment,
     ground: &G,
-    wind: DVec3,
+    wind: Vec3,
 ) -> ShotResult {
     let wind = horizontal(wind);
     let (flight, landing) = fly(input, ball, env, ground, wind);

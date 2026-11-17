@@ -3,11 +3,11 @@
 //!
 //! `cargo run --release --example wind`
 
+use dimple::Vec3;
 use dimple::aero::BallModel;
 use dimple::environment::Environment;
 use dimple::ground::Surface;
 use dimple::trajectory::{ShotInput, simulate_shot_with_wind};
-use glam::DVec3;
 
 fn main() {
     let input = ShotInput {
@@ -21,10 +21,10 @@ fn main() {
 
     // +x is downrange, +z is right of the target line.
     let cases = [
-        ("still", DVec3::ZERO),
-        ("5 m/s headwind", DVec3::new(-5.0, 0.0, 0.0)),
-        ("5 m/s tailwind", DVec3::new(5.0, 0.0, 0.0)),
-        ("5 m/s left to right", DVec3::new(0.0, 0.0, 5.0)),
+        ("still", Vec3::ZERO),
+        ("5 m/s headwind", Vec3::new(-5.0, 0.0, 0.0)),
+        ("5 m/s tailwind", Vec3::new(5.0, 0.0, 0.0)),
+        ("5 m/s left to right", Vec3::new(0.0, 0.0, 5.0)),
     ];
 
     println!(

@@ -496,7 +496,7 @@ impl<T: Terrain> GroundPhysics<T> {
         points: &mut Vec<GroundPoint>,
         ball: &BallModel,
         air_density: f64,
-        wind: DVec3,
+        wind: Vec3,
     ) -> Result<BallState, BallState> {
         // `acceleration` never reads `spin_decay`: the hop holds the spin fixed.
         let aero = AeroParams::from_spin_vector(start.spin);
@@ -790,7 +790,7 @@ pub trait GroundModel {
         landing: &BallState,
         ball: &BallModel,
         air_density: f64,
-        _wind: DVec3,
+        _wind: Vec3,
     ) -> GroundResult {
         self.settle(landing, ball, air_density)
     }
@@ -811,7 +811,7 @@ impl GroundModel for Surface {
         landing: &BallState,
         ball: &BallModel,
         air_density: f64,
-        wind: DVec3,
+        wind: Vec3,
     ) -> GroundResult {
         GroundPhysics::new(*self).settle_with_wind(landing, ball, air_density, wind)
     }
@@ -823,7 +823,7 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
     }
 
     fn settle(&self, landing: &BallState, ball: &BallModel, air_density: f64) -> GroundResult {
-        self.settle_with_wind(landing, ball, air_density, DVec3::ZERO)
+        self.settle_with_wind(landing, ball, air_density, Vec3::ZERO)
     }
 
     fn settle_with_wind(
@@ -831,7 +831,7 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
         landing: &BallState,
         ball: &BallModel,
         air_density: f64,
-        wind: DVec3,
+        wind: Vec3,
     ) -> GroundResult {
         let t_end = landing.time + self.max_time;
         let radius = ball.radius_m();
