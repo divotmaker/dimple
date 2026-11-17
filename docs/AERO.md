@@ -181,7 +181,7 @@ Per-club results:
 
 Environmental response (density-only): Denver +6.9% driver carry (published
 ~6.1%), 90°F-vs-50°F delta ~9y (published ~8y). With temperature-dependent
-viscosity as well (`Atmosphere::from_density_and_temperature`, below), the
+viscosity as well (`Viscosity::Sutherland`, below), the
 same delta is 6.2y, further from the published value: the fit was
 calibrated at a constant viscosity, so the density-only response is the
 validated one.
@@ -192,9 +192,9 @@ validated one.
    limit of the single-sigmoid model.
 2. **Fast low-spin shots (140+ mph, <3k rpm) run a few yards short** with
    slightly high peaks relative to the per-shot validation set.
-3. **Ball COR vs temperature unmodeled** — only air density (and, through
-   `Atmosphere`, viscosity) responds to temperature; cold-ball distance loss
-   is understated.
+3. **Ball COR vs temperature unmodeled** — only air density (and, with
+   `Viscosity::Sutherland`, viscosity) responds to temperature; cold-ball
+   distance loss is understated.
 4. **Single ball model.** Real balls vary ±5% in drag across dimple designs.
 5. **Spin on the ground: modeled, lightly validated.** The full spin vector
    is carried through every impact, slide and roll (see
@@ -247,26 +247,39 @@ Where ρ₀=1.225 kg/m³, L=0.0065 K/m, T₀=288.15 K. The temperature correctio
 scales by the ratio of standard to actual temperature at altitude (ideal gas
 law, ρ ∝ 1/T at constant pressure).
 
-Dynamic viscosity of air is constant at 1.81×10⁻⁵ Pa·s (adequate for 0–40°C).
+By default (`Viscosity::Calibrated`) the dynamic viscosity of air is the
+constant 1.81×10⁻⁵ Pa·s, the value both ball models were fitted with.
 
-### Measured air
+### Measured air (beta)
 
-`Atmosphere` gives the air directly, for callers that know it better than
-an altitude and temperature do (a launch monitor with a weather station,
-say), and is taken by `simulate_flight_with_atmosphere` and
-`simulate_shot_with_atmosphere`:
+Two `Environment` fields describe the air for callers that know it better
+than an altitude and temperature do (a launch monitor with a weather
+station, say). Both are **beta**; every preset leaves them at their
+defaults.
 
-- `Atmosphere::from_density(ρ)` uses a measured density as given, with no
-  altitude inference and no clamp at sea level, so cold, dense air is
-  modeled as dense. Viscosity stays the constant above.
-- `Atmosphere::from_density_and_temperature(ρ, T)` also sets the viscosity
-  of dry air from Sutherland's law, μ = b T^(3/2) / (T + S) with T in
-  kelvin, b = 1.458×10⁻⁶ kg/(m·s·K^½) and S = 110.4 K
-  (`environment::dynamic_viscosity`; Cambridge University Engineering
-  Department, *Properties of Fluids*). That gives 1.72×10⁻⁵ Pa·s at 0 °C,
-  1.81×10⁻⁵ at about 19 °C and 1.88×10⁻⁵ at 35 °C.
-- `Atmosphere::legacy(ρ)` is the density with the constant viscosity; the
-  `Environment` entry points use it and are unchanged.
+- `measured_air_density: Some(ρ)` uses a measured density as given, with
+  no altitude inference and no clamp at sea level, so cold, dense air is
+  modeled as dense. `altitude_m` and `temperature_c` then no longer set the
+  density. `Some(0.0)` gives ballistic flight.
+- `viscosity: Viscosity::Sutherland` sets the viscosity of dry air at
+  `temperature_c` from Sutherland's law, μ = b T^(3/2) / (T + S) with T in
+  kelvin, b = 1.458×10⁻⁶ kg/(m·s·K^½) and S = 110.4 K (Cambridge
+  University Engineering Department, *Properties of Fluids*). That gives
+  1.72×10⁻⁵ Pa·s at 0 °C, 1.81×10⁻⁵ at about 19 °C and 1.88×10⁻⁵ at
+  35 °C. `Environment::dynamic_viscosity()` returns the viscosity in use.
+
+```rust
+use dimple::Environment;
+use dimple::environment::Viscosity;
+
+// 1.27 kg/m³ from a weather station on a 2 °C morning.
+let env = Environment {
+    temperature_c: 2.0,
+    measured_air_density: Some(1.27),
+    viscosity: Viscosity::Sutherland,
+    ..Environment::SEA_LEVEL
+};
+```
 
 Viscosity sets the Reynolds number, and with `TOUR` its effect is not
 negligible. At a constant 1.2 kg/m³, going from 0 °C to 35 °C shortens carry
@@ -274,15 +287,30 @@ by 5.2 m for a 150 mph drive, 2.5 m for the preset 7-iron and 1.4 m for a
 100 mph wedge, mostly late in the flight, where the slowing ball nears the
 drag crisis. How large this is depends on where the fit puts that crisis,
 and the fit was calibrated at a constant viscosity; this response has not
-been checked against temperature-controlled measurements (see
-[Calibration](#calibration)).
+been checked against temperature-controlled measurements, and on the one
+temperature benchmark it moves the model away from the data (see
+[Calibration](#calibration)). That is why the calibrated constant is the
+default and Sutherland's law is opt-in.
 
-## Wind
+## Wind (beta)
 
-`simulate_flight_with_wind` and `simulate_shot_with_wind` take a wind: a
+`Environment::wind` is the wind the shot flies through; every preset is
+`Wind::None`, still air. Wind is **beta**: the model below follows the
+physics but has not been compared with measured shots in wind. A wind is a
 horizontal air velocity in the public frame, `+x` blowing downrange (a
 tailwind) and `+z` blowing to the right. A vertical component is ignored.
-`simulate_flight` and `simulate_shot` are the same calls with zero wind.
+
+```rust
+use dimple::{BallModel, Environment, ShotInput, Surface, Vec3, simulate_shot};
+use dimple::environment::Wind;
+
+// 5 m/s into the golfer's face.
+let env = Environment {
+    wind: Wind::Uniform(Vec3::new(-5.0, 0.0, 0.0)),
+    ..Environment::SEA_LEVEL
+};
+let shot = simulate_shot(&ShotInput::driver(), &BallModel::TOUR, &env, &Surface::FAIRWAY);
+```
 
 Drag and Magnus lift act on the ball's velocity relative to the air,
 `v − wind`, both in flight and in the hops between impacts (see
@@ -292,8 +320,7 @@ shift of the still-air trajectory: the airspeed at launch changes, and with
 it the drag and the spin ratio, so the shot is integrated again rather than
 translated.
 
-`simulate_flight_with_wind` and `simulate_shot_with_wind` use the same
-wind at every height (`WindProfile::Uniform`). For a 150 mph drive at 13°
+`Wind::Uniform` is the same wind at every height. For a 150 mph drive at 13°
 and 2700 rpm with `TOUR` at sea level (`examples/wind.rs`):
 
 | Wind | Carry | Total | Lateral at rest |
@@ -309,7 +336,7 @@ with the square of the airspeed.
 ### Wind profile
 
 A reported wind is usually measured 10 m above the ground, and the wind is
-weaker near the ground and stronger above. `WindProfile::PowerLaw { wind10 }`
+weaker near the ground and stronger above. `Wind::PowerLaw { at_10m }`
 scales the 10 m reading by (h / 10)^α, where h is the ball's height above the
 ground directly beneath it, with the shear exponent of Justus & Mikhail
 (1976), α = 0.37 − 0.0881 ln(U₁₀) for the 10 m speed U₁₀ in m/s. Below
@@ -318,6 +345,7 @@ is meaningless, the wind is applied uniformly. The profile is sampled at
 every RK4 stage of the flight and of the hops, so the hops, a few
 centimeters above the turf, fly through nearly still air. It is a
 neutral-stability assumption, not a measured wind field.
+`Wind::at_height(h)` gives the wind at a height.
 
 The same drive and winds as above, as 10 m readings:
 
@@ -554,13 +582,10 @@ rolls. A safety bound of 200 impacts guards degenerate surfaces (e.g.
 elastic and frictionless); real shots end by these rules well before it.
 
 **Flight between impacts.** Each hop flies through the same air as the
-shot: `GroundModel::settle` takes the air density, and `simulate_shot`
-passes the shot's `Environment::air_density()`. With wind,
-`simulate_shot_with_wind` calls `GroundModel::settle_with_wind`, and the
-hops' drag and lift act on the velocity relative to the moving air.
-`simulate_shot_with_atmosphere` calls `GroundModel::settle_with_atmosphere`,
-which also passes the viscosity and samples a `WindProfile` at the hop's
-height. The forces are the flight
+shot: `GroundModel::settle` takes the shot's `Environment`, so the hops
+use its density, viscosity and wind, the wind sampled at the hop's height
+above the terrain, and their drag and lift act on the velocity relative to
+the moving air. The forces are the flight
 model's (`BallModel::acceleration`: gravity, drag and Magnus lift),
 integrated with RK4 at 1 ms. The spin is held fixed over each hop: its axis
 and rate set the lift, and the ball arrives at the next impact with exactly
@@ -575,8 +600,8 @@ g) at 8 m/s. Small as these are, a drive spends nearly 3 s in its hops:
 through sea-level air a `FAIRWAY` drive makes 9 impacts and runs 17.2 yd
 past the landing point, against 10 impacts and 19.0 yd with ballistic hops
 (`GREEN`: 22.9 yd; ballistic 25.0 yd). Irons and wedges, which hop little,
-barely change. An air density of 0 gives ballistic hops under gravity
-alone, the model Penner uses; in dimple they lengthen a drive's run by
+barely change. An air density of 0 (`measured_air_density: Some(0.0)`)
+gives ballistic hops under gravity alone, the model Penner uses; in dimple they lengthen a drive's run by
 about 2 yd.
 
 The spin is not decayed during hops. The flight's decay rate
@@ -644,8 +669,8 @@ hop can hand back energy (`ΔU` then also holds the wind's work). Without
 the rule a fast landing in a strong wind settles into a train of hops that
 the wind refills as fast as the Penner impacts drain them (the tilted
 contact plane turns the regained speed back into bounce), and the ball hops
-on to the impact limit: hundreds of metres past the landing, with hops
-metres high. Judged the same way as on a slope, such a train goes to the
+on to the impact limit: hundreds of meters past the landing, with hops
+meters high. Judged the same way as on a slope, such a train goes to the
 ground once the impacts stop draining it; a wind strong enough at the turf
 may still blow the ball some way along it.
 
@@ -1204,14 +1229,10 @@ The ground API has three layers:
    (5 mm), `stop_speed` and `roll_threshold` (0.01 m/s), `max_impacts`
    (200), `max_time` (120 s).
 3. **`GroundModel`** — replace the physics: implement `height(x, z)` and
-   `settle(landing, ball, air_density)` (`simulate_shot` passes the shot's
-   air density; an implementation is free to ignore it), and optionally
-   `settle_with_wind(landing, ball, air_density, wind)` (by default
-   `settle`, ignoring the wind),
-   `settle_with_atmosphere(landing, ball, atmosphere, wind_profile)` (by
-   default `settle_with_wind` with the density and the profile's wind at
-   ground level) and
-   `landing(a, b)` (by default the
+   `settle(landing, ball, env)` (`simulate_shot` passes the shot's
+   `Environment`: `env.air_density()`, `env.dynamic_viscosity()` and
+   `env.wind`; an implementation uses as much of it as it models), and
+   optionally `landing(a, b)` (by default the
    solved crossing of the straight segment with the heightfield; an engine
    can substitute its own sweep).
    It is object-safe, so `&dyn GroundModel` works. The building blocks
@@ -1314,9 +1335,9 @@ The aerodynamic model lives in `src/aero.rs`, the ground model in
   vector (`AeroParams::from_spin_vector`, with
   `ShotInput::launch_spin_rads`) or straight-launch backspin/sidespin RPM
   (`AeroParams::from_spin`).
-- **`Environment`** — altitude + temperature → air density.
-- **`Atmosphere`** — density and viscosity given directly; **`WindProfile`**
-  — uniform or height-dependent wind.
+- **`Environment`** — the air: density from altitude + temperature or
+  measured, viscosity (**`Viscosity`**), and wind (**`Wind`**: none,
+  uniform or height-dependent).
 - **`Surface`**, **`Terrain`**, **`GroundPhysics`**, **`GroundModel`** — the
   ground (above).
 
@@ -1327,16 +1348,10 @@ every 10ms. Stops at the solved crossing of ground level.
 
 Full shot: `simulate_shot(input, ball, env, ground) -> ShotResult` runs the
 flight from the tee on `ground` until it crosses the terrain, then
-`ground.settle(landing, ball, env.air_density())`: impacts, hops through
-the same air, slide and roll to rest (`ShotResult.ground`, with absolute
-times).
-
-With wind: `simulate_flight_with_wind(input, ball, env, wind)` and
-`simulate_shot_with_wind(input, ball, env, ground, wind)`, the latter
-settling through `ground.settle_with_wind`. With measured air and a wind
-profile: `simulate_flight_with_atmosphere(input, ball, atmosphere, wind)`
-and `simulate_shot_with_atmosphere(input, ball, atmosphere, ground, wind)`,
-settling through `ground.settle_with_atmosphere`.
+`ground.settle(landing, ball, env)`: impacts, hops through the same air
+and wind, slide and roll to rest (`ShotResult.ground`, with absolute
+times). Wind and measured air are `Environment` fields, so both calls take
+them through `env`.
 
 ## Test Suite
 
@@ -1349,9 +1364,9 @@ Unit tests live beside the code in each module. Test categories:
 - **Descent angle** — iron DA within expected ranges
 - **Altitude/temperature** — Denver gain, hot-cold delta, directional checks
 - **Spin decay** — exponential decay rate against Trackman measurements
-- **Atmosphere** — measured density used as given and validated; Sutherland reference values; warmer air shortens carry at constant density; the legacy entry points match `Atmosphere::legacy` with uniform wind exactly
+- **Measured air** — measured density used as given, and a measured density equal to the computed one gives the same shot exactly; Sutherland reference values, and the calibrated constant ignores temperature; warmer air shortens carry at constant density
 - **Wind profile** — the power law and its 0.1 m/s threshold, and the hops sampling the profile
-- **Wind** — a headwind shortens carry and costs more than the same tailwind gains, a crosswind drifts the ball downwind, a vertical component is ignored, the wind carries through the hops, and a ground model that only implements `settle` settles in still air
+- **Wind** — a headwind shortens carry and costs more than the same tailwind gains, a crosswind drifts the ball downwind, a vertical component is ignored, the wind carries through the hops, strong wind does not keep the ball bouncing, and a custom ground model receives the shot's environment, wind included
 - **Era comparison** — TOUR vs PATENT_1997 carry gaps, Cd reduction, Cl sensitivity
 - **Launch spin axis** — a pushed shot with no sidespin stays on its start line; exact landing-spin projections
 - **Ground: planar regression** — with ballistic hops, the 3D impact reproduces the planar Penner solution with the tilt fade impact by impact (preset driver, 7-iron and wedge on both presets) to float tolerance
