@@ -712,8 +712,11 @@ const DEFAULT_ROLL_THRESHOLD: f64 = 0.01;
 pub trait GroundModel {
     /// Height (m) of the ground surface at (`x`, `z`); the ball touches
     /// when its center reaches it (see [`GroundSample::height`]). Used by
-    /// the default [`landing`](Self::landing) and to place the ball on the
-    /// tee at (0, `height(0, 0)`, 0).
+    /// the default [`landing`](Self::landing), to place the ball on the
+    /// tee at (0, `height(0, 0)`, 0), to test whether a flight starts below
+    /// the ground, and to give the [`AeroModel`] the ball's height above
+    /// the ground at every RK4 stage of the flight. Keep it cheap: it is
+    /// called several times per millisecond of flight.
     #[must_use]
     fn height(&self, x: f64, z: f64) -> f64;
 

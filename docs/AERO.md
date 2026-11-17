@@ -116,7 +116,7 @@ strategy that dominates modern equipment.
 The second term is a small low-spin lift term (**beta**). It is zero at zero
 spin, peaks at Cl_bump where SR = SR_bump, and fades out by SR ≈ 0.045 (it
 adds 1.7×10⁻⁴ there and under 10⁻⁹ from SR 0.06). It lifts fast, low-spin
-shots (under about 1,100 rpm at 170 mph) toward the reference data, which
+shots (under about 1,500 rpm at 170 mph) toward the reference data, which
 show a ramp and plateau in carry there that the saturation curve alone
 misses. Lift rises with spin ratio everywhere, and goes to zero smoothly as
 the spin does: a ball with no spin gets no lift.
@@ -163,13 +163,13 @@ Published aerodynamic measurements for comparison:
 The constants are fitted to per-shot carry, apex height and descent angle
 in standard sea-level air (1.225 kg/m³), from two kinds of reference:
 
-1. **A simulator's sweep at sea level:** 41 launches from 70 to 170 mph,
+1. **A reference sweep at sea level:** 41 launches from 70 to 170 mph,
    straight and curving, with the carry, apex, descent angle and offline of
    each.
 2. **Two per-shot launch-monitor sessions:** a hybrid (11 shots) and an
    8-iron (13 shots), 91–133 mph.
 
-The low-spin lift term is fitted on 11 further simulator shots at
+The low-spin lift term is fitted on 11 further reference shots at
 150–185 mph and 9–15° launch below a spin ratio of 0.045. Every other set
 below is held out.
 
@@ -179,24 +179,24 @@ Carry and apex errors are model minus reference: bias / RMSE.
 
 | Reference (shots) | Fitted? | Carry % | Apex ft | Descent ° |
 |---|---|---|---|---|
-| Simulator sweep, sea level (41) | fit | −0.2 / 0.8, worst −3.6 | −0.8 / 2.2 | −0.1 / 0.5 |
+| Reference sweep, sea level (41) | fit | −0.2 / 0.8, worst −3.6 | −0.8 / 2.2 | −0.1 / 0.5 |
 | Launch monitor, hybrid (11) | fit | −0.3 / 0.3 | +4.1 / 4.1 | — |
 | Launch monitor, 8-iron (13) | fit | +0.4 / 0.5 | +0.6 / 1.0 | — |
-| Simulator, high-speed sweep 150–185 mph (27) | low-spin term only | +0.0 / 0.5 | −1.0 / 2.0 | −0.1 / 0.7 |
-| Simulator, all sea-level shots (112) | partly | −0.1 / 0.6, worst −3.6 | −0.9 / 1.9 | −0.2 / 0.6 |
-| Simulator sweep at 5,000 ft (41) | held out | −0.2 / 0.8 | −0.5 / 2.0 | — |
-| Simulator replay of the hybrid and 8-iron sessions (26) | held out | −0.2 / 0.4, −0.0 / 0.3 | −1.2 / 1.8, +0.1 / 0.9 | −0.5 / 0.7, −0.2 / 0.4 |
+| Reference high-speed sweep 150–185 mph (27) | low-spin term only | +0.0 / 0.5 | −1.0 / 2.0 | −0.1 / 0.7 |
+| Reference, all sea-level shots (112) | partly | −0.1 / 0.6, worst −3.6 | −0.9 / 1.9 | −0.2 / 0.6 |
+| Reference sweep at 5,000 ft (41) | held out | −0.2 / 0.8 | −0.5 / 2.0 | — |
+| Reference replay of the hybrid and 8-iron sessions (26) | held out | −0.2 / 0.4, −0.0 / 0.3 | −1.2 / 1.8, +0.1 / 0.9 | −0.5 / 0.7, −0.2 / 0.4 |
 | Launch monitor, driver (12) | held out | +1.0 / 1.5 | +5.4 / 5.5 | — |
-| Simulator replay of the driver session (12) | held out | +0.0 / 0.3 | −1.5 / 1.6 | −0.4 / 0.5 |
-| A second simulator, sea level (41) | held out | +0.5 / 0.9 | +3.0 / 6.4 | +0.1 / 1.3 |
+| Reference replay of the driver session (12) | held out | +0.0 / 0.3 | −1.5 / 1.6 | −0.4 / 0.5 |
+| A second reference set, sea level (41) | held out | +0.5 / 0.9 | +3.0 / 6.4 | +0.1 / 1.3 |
 | Per-shot validation set, 26–153 mph, 0.8k–14k rpm (1,178) | held out | +0.1 yd / 1.6 yd | +0.3 / 2.0 | +0.3 / 1.0 |
 
 On the 1,178-shot set the offline error is −0.0 / 0.8 yd.
 
-**Altitude.** From sea level to 5,000 ft on a standard day the simulator's
+**Altitude.** From sea level to 5,000 ft on a standard day the reference
 carries gain 5.7% on average and the model's 5.8%, from +3.2% for the
 70 mph launches to +6.4% at 130 mph; per launch the gains differ by 0.19
-points RMS (worst +0.45). The second simulator keeps sea-level temperature
+points RMS (worst +0.45). The second reference set keeps sea-level temperature
 at altitude; at its own settings it gains 3.69%, 6.92% and 10.08% at
 2,500, 5,000 and 8,000 ft, the model 3.67%, 6.99% and 10.39%.
 
@@ -233,13 +233,13 @@ the 3-iron at 145 mph 218 yd), so the fit follows the per-shot data.
 
 1. **Trackman's tour table:** the model carries the woods 11–15 yd longer
    and lands the irons 3–7° shallower than its averages
-   (see above). Above 135 mph the fit rests on simulator data; the one
+   (see above). Above 135 mph the fit rests on the reference sweep; the one
    held-out driver session carries 1.0% short of the model with a 5 ft
    lower apex.
 2. **Low spin (beta):** the low-spin lift term is fitted on a small set of
    150–185 mph shots at 9–15° launch below a spin ratio of 0.045, a range no
    shot in the 1,178-shot set reaches (its lowest launch spin ratio is
-   0.048). Below a spin ratio of about 0.01 (under 200 rpm at 170 mph) the
+   0.048). Below a spin ratio of about 0.01 (under about 350 rpm at 170 mph) the
    model is extrapolated, and its zero-spin drag (0.10) is lower than wind
    tunnels measure for a non-spinning ball (about 0.2). A ball with no spin
    gets no lift, so an unmeasured spin must not be passed as zero.
@@ -1305,7 +1305,10 @@ dimple has no published values for cart paths, walls or bark. A
 `GroundModel` whose `landing()` also reports where a flight segment meets
 an obstacle can bounce the ball in `settle()` with `impact` and the
 obstacle's normal, then fly on with `simulate_shot_from(&rebound, model,
-self)`; the crate's `tests/obstacles.rs` does this for a tree trunk.
+self)`; the crate's `tests/obstacles.rs` does this for a tree trunk. The
+pattern keeps only the rebound point of the flight between the obstacle and
+the next landing: `GroundResult` has no slot for flight samples, so the
+points of the continued flight are not in the shot's result.
 
 ### Limitations
 
