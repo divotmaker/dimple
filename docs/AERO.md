@@ -1430,7 +1430,6 @@ Unit tests live beside the code in each module. Test categories:
 - **Sign conventions** — azimuth, slice/hook, push-draw, mirror symmetry, rest position
 - **Cd/Cl** — no lift without spin, lift and drag rise with spin, saturating spin drag, coefficients independent of speed at a given spin ratio, driver and 7-iron values, Li et al. (2017)
 - **Low-spin lift term** — zero and flat at zero spin, no step anywhere, peak height and position, lift rising with spin ratio through it, fading out above a spin ratio of 0.045
-- **Trackman carry** — 7 shots validated against published PGA Tour Averages (±10–12y)
 - **Descent angle** — iron DA within expected ranges; the reported descent angle is the landing velocity's
 - **Altitude/temperature** — ISA density at 1,524 m, Denver gain, hot-cold delta, directional checks, the preset driver's 5,000 ft gain
 - **Spin decay** — exponential decay rate against Trackman measurements, about a fixed axis

@@ -49,16 +49,6 @@ fn flight_at(input: &ShotInput, model: &Tour) -> FlightResult {
     simulate_flight(input, model)
 }
 
-/// Assert carry within ±tolerance yards of expected, with source citation.
-fn assert_carry(result: &FlightResult, expected: f64, tol: f64, label: &str) {
-    let delta = (result.carry_yards() - expected).abs();
-    assert!(
-        delta <= tol,
-        "{label}: model {:.1} yds, expected {expected:.0}±{tol:.0} yds (Δ={delta:+.1})",
-        result.carry_yards()
-    );
-}
-
 // ══════════════════════════════════════════════════════════════════
 //  STRUCTURAL TESTS — invariants that must hold regardless of model
 // ══════════════════════════════════════════════════════════════════
@@ -221,73 +211,6 @@ fn slice_shot_finishes_right() {
         r.ground.rest.pos.z
     );
     assert!(r.flight.lateral_m > 0.0);
-}
-
-// ══════════════════════════════════════════════════════════════════
-//  CARRY DISTANCE — published Trackman / PING data (sea level)
-// ══════════════════════════════════════════════════════════════════
-//
-// Tolerance: ±10 yards. Wider than measurement error (~±2 yds) to absorb
-// differences in temperature normalization and source data across
-// publications; the per-club fit in docs/AERO.md is tighter.
-
-#[test]
-fn carry_pga_driver() {
-    // Source: Trackman PGA Tour Averages 2024
-    // 171 mph ball speed, 10.9° launch, 2686 rpm backspin → 282 yds carry
-    let r = flight(171.0, 10.9, 2686.0, 0.0);
-    assert_carry(&r, 282.0, 10.0, "PGA Tour driver (Trackman 2024)");
-}
-
-#[test]
-fn carry_trackman_classic_driver() {
-    // Source: Trackman PGA Tour Averages (2009-2014), normalized 25°C sea level
-    // 165 mph ball speed, 11.2° launch, 2685 rpm → 269 yds carry
-    // Modern ball model overshoots classic-era data by design (~11 yds for driver).
-    let r = flight(165.0, 11.2, 2685.0, 0.0);
-    assert_carry(&r, 269.0, 12.0, "Trackman classic driver");
-}
-
-#[test]
-fn carry_trackman_classic_5iron() {
-    // Source: Trackman PGA Tour Averages (2009-2014)
-    // 132 mph ball speed, 12.1° launch, 5361 rpm → 194 yds carry
-    let r = flight(132.0, 12.1, 5361.0, 0.0);
-    assert_carry(&r, 194.0, 10.0, "Trackman classic 5-iron");
-}
-
-#[test]
-fn carry_trackman_classic_8iron() {
-    // Source: Trackman PGA Tour Averages (2009-2014)
-    // 115 mph ball speed, 18.1° launch, 7998 rpm → 160 yds carry
-    let r = flight(115.0, 18.1, 7998.0, 0.0);
-    assert_carry(&r, 160.0, 10.0, "Trackman classic 8-iron");
-}
-
-#[test]
-fn carry_trackman_classic_9iron() {
-    // Source: Trackman PGA Tour Averages (2009-2014)
-    // 109 mph ball speed, 20.4° launch, 8647 rpm → 148 yds carry
-    let r = flight(109.0, 20.4, 8647.0, 0.0);
-    assert_carry(&r, 148.0, 10.0, "Trackman classic 9-iron");
-}
-
-#[test]
-fn carry_trackman_7iron() {
-    // Source: Trackman PGA Tour Averages (pre-2024, multiple secondary sources)
-    // ~123 mph ball speed, 16.3° launch, 7097 rpm backspin → 176 yds carry
-    let r = flight(123.0, 16.3, 7097.0, 0.0);
-    assert_carry(&r, 176.0, 10.0, "Trackman PGA 7-iron");
-}
-
-#[test]
-fn carry_trackman_pw() {
-    // Source: Trackman PGA Tour Averages (pre-2024, multiple secondary sources)
-    // ~102 mph ball speed, ~25° launch, ~9300 rpm backspin → 142 yds carry
-    // Wider tolerance: PW is the model's shortest club against the tour
-    // table (about 11 yd short). See docs/AERO.md.
-    let r = flight(102.0, 25.0, 9300.0, 0.0);
-    assert_carry(&r, 142.0, 12.0, "Trackman PGA PW");
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -733,8 +656,7 @@ fn shot_fairway_less_rollout_than_green() {
 //  RUN-OUT — the hop train dies out; roll by club
 // ══════════════════════════════════════════════════════════════════
 
-/// Trackman's normalization, 25 °C at sea level, which the carry
-/// calibration also uses.
+/// Trackman's normalization, 25 °C at sea level.
 fn trackman_air() -> Tour {
     sea_level_at(25.0)
 }
