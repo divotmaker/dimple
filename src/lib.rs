@@ -168,3 +168,7 @@ pub use trajectory::{
     ShotInput, simulate_flight, simulate_flight_from, simulate_shot, simulate_shot_from,
 };
 pub use vec3::Vec3;
+
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
