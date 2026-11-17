@@ -48,7 +48,8 @@
 //! | a wind | [`Wind::Uniform`], [`Wind::PowerLaw`] (a 10 m reading scaled with height), or [`Wind::custom`] (any function of time, position and height) |
 //! | another ball, air or gravity | implement [`AeroModel`] yourself, or wrap [`Tour`] |
 //!
-//! Measured density and wind are **beta**. A ball model of your own needs
+//! [`Tour`]'s drag and lift coefficients, measured density and wind are
+//! **beta**. A ball model of your own needs
 //! four methods; see [`AeroModel`] for a drag-only ball and for a wrapper
 //! that changes gravity in flight and on the ground alike.
 //!

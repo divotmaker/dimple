@@ -5,20 +5,26 @@ flight from launch monitor data.
 
 ## Overview
 
-The model computes drag coefficient (Cd) and lift coefficient (Cl) as functions
-of Reynolds number and spin ratio, then integrates the trajectory using RK4 at
-a 1ms fixed timestep. It handles altitude, temperature, and spin decay.
+A shot is flown by one model value, an `AeroModel`: the ball and the air it
+flies through. dimple's model, `Tour`, computes the drag coefficient (Cd)
+and lift coefficient (Cl) of a modern tour ball as functions of spin ratio,
+in a given air density and wind; dimple adds gravity and integrates the
+trajectory with RK4 at a 1 ms fixed timestep, with exponential spin decay.
 
-**Key inputs:** ball speed, launch angle, backspin RPM, sidespin RPM, altitude,
-temperature.
+**Key inputs:** ball speed, launch angle, launch azimuth, backspin RPM,
+sidespin RPM, and the air: a density (from altitude and temperature with
+`standard_air_density`, or measured) and an optional wind.
 
 **Key outputs:** carry distance, apex height, lateral deviation, flight time,
-full trajectory points; with a ground model, every impact, the hops, slide
-and roll, and the rest position (see [Ground Model](#ground-model)).
+descent angle, full trajectory points; with a ground model, every impact,
+the hops, slide and roll, and the rest position (see
+[Ground Model](#ground-model)).
 
 ## Conventions
 
-Internal units are SI: meters, seconds, kilograms, radians, rad/s.
+Internal units are SI: meters, seconds, kilograms, radians, rad/s. Results
+are SI too, with the descent angle in degrees; `units` converts to yards and
+feet.
 
 Coordinate frame (right-handed, origin at the tee):
 
@@ -34,7 +40,7 @@ All lateral quantities are **positive = right** of the target line:
 |---|---|
 | launch azimuth | ball starts right of target |
 | sidespin | ball curves right (fade/slice for a right-handed golfer) |
-| lateral deviation (`lateral_m`, `lateral_yards`) | ball lands right of target |
+| lateral deviation (`lateral_m`) | ball lands right of target |
 | `z` of any position / velocity | right of / moving right |
 
 Spin is a single angular velocity vector ω (right-hand rule), from launch to
@@ -49,10 +55,9 @@ backspin is about the horizontal axis perpendicular to the start line,
 For a straight launch this is `ω = (0, -sidespin, backspin)`. The Magnus
 direction ω̂ × v̂ then stays in the vertical plane of the start line for
 backspin at any azimuth (a push with no sidespin flies straight along its
-start line) and points toward +Z (right) for positive sidespin. The axis is
-fixed in flight; only the rate decays. `FlightResult` reports the landing
-spin vector and its exact projections on the launch backspin axis
-(`landing_backspin_rads`) and on -Y (`landing_sidespin_rads`).
+start line) and points toward +Z (right) for positive sidespin. With `Tour`
+the axis is fixed in flight and only the rate decays; `FlightResult`
+reports the landing spin vector.
 
 ## Force Model
 
@@ -62,141 +67,188 @@ Three forces act on the ball at each timestep:
 F_total = F_gravity + F_drag + F_magnus
 ```
 
-- **Gravity:** constant -9.80665 m/s² in Y
-- **Drag:** opposes velocity. Fd = -Cd × q × A / m × v̂
-- **Magnus lift:** perpendicular to velocity, in the spin plane. Fl = Cl × q × A / m × (ω̂ × v̂)
+- **Gravity:** −g in Y, with g the model's `AeroModel::gravity()`
+  (standard gravity, 9.80665 m/s², unless a model overrides it). The ground
+  uses the same g.
+- **Drag:** opposes the velocity relative to the air. Fd = -Cd × q × A / m × v̂
+- **Magnus lift:** perpendicular to that velocity, in the spin plane. Fl = Cl × q × A / m × (ω̂ × v̂)
 
-Where q = ½ρv² (dynamic pressure), A = cross-sectional area, m = ball mass.
+Where q = ½ρv² (dynamic pressure, v the airspeed), A = cross-sectional
+area, m = ball mass. Drag and lift are what `AeroModel::acceleration`
+returns; gravity is added by dimple.
 
 ## Cd/Cl Model
 
-The aerodynamic coefficients use a sigmoid transition at the dimpled-ball drag
-crisis (~Re 70,000), with saturating spin-dependent drag and exponential lift
-saturation.
+The coefficients depend on the spin ratio alone, SR = ω × R / V (ω the spin
+rate, R the radius, V the airspeed). They do not depend on the Reynolds
+number: the reference data are fitted best without a drag crisis, so
+neither the air's viscosity nor its temperature enters except through the
+density.
 
 ### Drag coefficient
 
 ```
-Cd = Cd_base(Re) + Cd_spin × SR / (1 + SR / SR_sat)
-
-where:
-  Cd_base = Cd_sub + (Cd_super - Cd_sub) × σ(Re)
-  σ(Re)   = 1 / (1 + exp(-(Re - Re_crit) / Re_width))    [sigmoid]
-  SR      = ω × R / V                                      [spin ratio]
-  Re      = ρ × V × d / μ                                  [Reynolds number]
+Cd = Cd_0 + Cd_spin × SR / (1 + SR / SR_sat)
 ```
 
-The base drag transitions from subcritical to supercritical at the drag crisis.
-Spin adds drag through a saturating term: near-linear (slope Cd_spin) below
-SR ≈ SR_sat, capped at Cd_spin × SR_sat at high spin ratio. Spin drag is
-dominated by induced drag from Magnus lift, and since Cl saturates in SR, the
-drag it induces saturates too. (Set SR_sat = ∞ for a purely linear term, as in
-the PATENT_1997 model.)
+Cd_0 is the drag at zero spin. Spin adds drag through a saturating term:
+near-linear (slope Cd_spin) below SR ≈ SR_sat, capped at Cd_spin × SR_sat
+at high spin ratio. Spin drag is dominated by induced drag from Magnus lift,
+and since Cl saturates in SR, the drag it induces saturates too.
 
 ### Lift coefficient
 
 ```
-Cl = Cl_max(Re) × (1 - exp(-SR / SR_scale))
+Cl = Cl_max × (1 - exp(-SR / SR_scale)) + Cl_bump × u × exp(1 − u)
 
 where:
-  Cl_max = Cl_sub + (Cl_super - Cl_sub) × σ(Re)
+  u = (SR / SR_bump)⁴
 ```
 
-Lift follows an exponential saturation curve in spin ratio. This means:
-- **Low SR (driver, ~0.07):** Cl is well below the ceiling (~0.15)
-- **High SR (iron, ~0.29):** Cl approaches the ceiling (~0.30)
-- **Very high SR (wedge, ~0.45):** Cl is fully saturated (~0.32)
+The first term is an exponential saturation curve in spin ratio. This means:
+- **Low SR (driver, ~0.074):** Cl is well below the ceiling (0.141)
+- **High SR (7-iron, ~0.29):** Cl approaches the ceiling (0.31)
+- **Very high SR (wedge, ~0.45):** Cl is nearly saturated (0.34)
 
-This spin-sensitive lift is a key feature of modern ball design — it rewards
-the "high launch, low spin" fitting strategy that dominates modern equipment.
+This spin-sensitive lift rewards the "high launch, low spin" fitting
+strategy that dominates modern equipment.
 
-## Ball Models
+The second term is a small low-spin lift term (**beta**). It is zero at zero
+spin, peaks at Cl_bump where SR = SR_bump, and fades out by SR ≈ 0.045 (it
+adds 1.7×10⁻⁴ there and under 10⁻⁹ from SR 0.06). It lifts fast, low-spin
+shots (under about 1,100 rpm at 170 mph) toward the reference data, which
+show a ramp and plateau in carry there that the saturation curve alone
+misses. Lift rises with spin ratio everywhere, and goes to zero smoothly as
+the spin does: a ball with no spin gets no lift.
 
-### `BallModel::TOUR` — Modern Tour Ball (2020s)
+## The `Tour` model
+
+`Tour` is a modern tour ball (USGA conforming) in a given air:
+`Tour::new(air_density, wind)`, or `Tour::SEA_LEVEL` for 1.225 kg/m³ and
+still air. Its constants are fixed and not part of the API; the drag and
+lift coefficients are **beta** and may change between releases.
 
 | Parameter | Value | Role |
 |---|---|---|
-| mass_kg | 0.04593 | Ball mass (USGA max: 1.62 oz) |
-| diameter_m | 0.04267 | Ball diameter (USGA min: 1.68 in) |
-| inertia_factor | 0.4 | I = k·m·R², uniform solid sphere (ground phase only) |
-| cd_sub | 0.295 | Subcritical base drag |
-| cd_super | 0.186 | Supercritical base drag (zero spin) |
-| cd_spin | 0.85 | Spin-drag slope (saturating) |
-| sr_sat | 0.25 | Spin-drag saturation constant (cap ≈ 0.21) |
-| cl_sub | 0.203 | Subcritical lift ceiling |
-| cl_super | 0.324 | Supercritical lift ceiling |
-| sr_scale | 0.115 | Lift saturation rate |
-| re_crit | 69,600 | Drag crisis Reynolds number |
-| re_width | 106 | Sigmoid transition width |
+| mass | 0.04593 kg | USGA max (1.62 oz) |
+| diameter | 0.04267 m | USGA min (1.68 in) |
+| inertia factor | 0.4 | I = k·m·R², uniform solid sphere (ground phase only) |
+| Cd_0 | 0.10 | Drag at zero spin |
+| Cd_spin | 1.69 | Spin-drag slope (saturating) |
+| SR_sat | 0.24 | Spin-drag saturation constant (cap ≈ 0.41) |
+| Cl_max | 0.359 | Lift ceiling |
+| SR_scale | 0.149 | Lift saturation rate |
+| Cl_bump | 0.0185 | Height of the low-spin lift term (beta) |
+| SR_bump | 0.027 | Spin ratio where the low-spin term peaks (beta) |
+| spin decay | 0.04 s⁻¹ | see [Spin Decay](#spin-decay) |
 
-Aerodynamic sources:
-- Li, Tsubokura & Tsunoda (2017), *Flow Turb. Combust.* 99(3) — LES CFD, Cd/Cl at Re=1.1×10⁵
-- Lyu, Kensrud, Smith & Tosaya (2018), *ISEA Proc.* — trajectory fit on 13 production balls
-- Crabill (2019), *Sports Eng.* 22:1-9 — high-order CFD at Re=1.5×10⁵
+Coefficients at a few spin ratios:
+
+| SR | 0 | 0.03 | 0.074 (driver) | 0.10 | 0.29 (7-iron) | 0.45 (wedge) |
+|---|---|---|---|---|---|---|
+| Cd | 0.100 | 0.145 | 0.196 | 0.219 | 0.322 | 0.365 |
+| Cl | 0 | 0.082 | 0.141 | 0.176 | 0.308 | 0.341 |
+
+Published aerodynamic measurements for comparison:
+- Li, Tsubokura & Tsunoda (2017), *Flow Turb. Combust.* 99(3) — LES CFD at
+  Re=1.1×10⁵: Cd 0.217 (static), Cd 0.240 and Cl 0.135 spinning at SR 0.1.
+  The model at SR 0.1: Cd 0.219, Cl 0.176.
+- Lyu, Kensrud, Smith & Tosaya (2018), *ISEA Proc.* — trajectory fit on 13
+  production balls, Cd about 0.20 on average at high Reynolds number
+- Crabill (2019), *Sports Eng.* 22:1-9 — high-order CFD at Re=1.5×10⁵: Cd 0.247
 - Bearman & Harvey (1976), *Aero. Q.* 27:112-122 — original wind tunnel study
-- Trackman PGA Tour Averages (2024) — carry and descent angle validation
 
 ### Calibration
 
-The TOUR constants are jointly calibrated against two references:
+The constants are fitted to per-shot carry, apex height and descent angle
+in standard sea-level air (1.225 kg/m³), from two kinds of reference:
 
-1. **2024 Trackman PGA Tour Averages** — 12 clubs, carry + descent angle,
-   normalized to 25°C sea level. Real-world radar data; authoritative for
-   descent angles.
-2. **A 1,178-shot per-shot validation set** spanning 26–153 mph ball speed
-   and 0.8k–14k rpm spin, fitting carry, peak height, descent angle, and
-   offline for every shot — providing breadth (amateur speeds, sidespin and
-   offline behavior) that tour averages can't.
+1. **A simulator's sweep at sea level:** 41 launches from 70 to 170 mph,
+   straight and curving, with the carry, apex, descent angle and offline of
+   each.
+2. **Two per-shot launch-monitor sessions:** a hybrid (11 shots) and an
+   8-iron (13 shots), 91–133 mph.
 
-The saturating spin-drag term is what lets both references fit at once:
-steep iron descent angles (47–52°) come from heavy late-flight induced drag
-on high-spin balls, while subcritical lift stays at a wind-tunnel-plausible
-cl_sub=0.203 — which in turn produces correct sidespin curvature and
-altitude response.
+The low-spin lift term is fitted on 11 further simulator shots at
+150–185 mph and 9–15° launch below a spin ratio of 0.045. Every other set
+below is held out.
 
 ### Fit quality
 
-Trackman 2024 (25°C sea level): carry RMSE **2.8 yds**, DA RMSE **1.3°**,
-9 of 12 clubs within ±3y (3-wood, hybrid and PW fall outside).
-Per-shot validation set (1,178 shots): carry RMSE **3.2 yds** (bias
-−1.0 yds), peak **2.6 ft**, descent **2.7°**, offline RMSE **1.2 yds**
-(bias −0.3 yds).
+Carry and apex errors are model minus reference: bias / RMSE.
 
-Per-club results:
+| Reference (shots) | Fitted? | Carry % | Apex ft | Descent ° |
+|---|---|---|---|---|
+| Simulator sweep, sea level (41) | fit | −0.2 / 0.8, worst −3.6 | −0.8 / 2.2 | −0.1 / 0.5 |
+| Launch monitor, hybrid (11) | fit | −0.3 / 0.3 | +4.1 / 4.1 | — |
+| Launch monitor, 8-iron (13) | fit | +0.4 / 0.5 | +0.6 / 1.0 | — |
+| Simulator, high-speed sweep 150–185 mph (27) | low-spin term only | +0.0 / 0.5 | −1.0 / 2.0 | −0.1 / 0.7 |
+| Simulator, all sea-level shots (112) | partly | −0.1 / 0.6, worst −3.6 | −0.9 / 1.9 | −0.2 / 0.6 |
+| Simulator sweep at 5,000 ft (41) | held out | −0.2 / 0.8 | −0.5 / 2.0 | — |
+| Simulator replay of the hybrid and 8-iron sessions (26) | held out | −0.2 / 0.4, −0.0 / 0.3 | −1.2 / 1.8, +0.1 / 0.9 | −0.5 / 0.7, −0.2 / 0.4 |
+| Launch monitor, driver (12) | held out | +1.0 / 1.5 | +5.4 / 5.5 | — |
+| Simulator replay of the driver session (12) | held out | +0.0 / 0.3 | −1.5 / 1.6 | −0.4 / 0.5 |
+| A second simulator, sea level (41) | held out | +0.5 / 0.9 | +3.0 / 6.4 | +0.1 / 1.3 |
+| Per-shot validation set, 26–153 mph, 0.8k–14k rpm (1,178) | held out | +0.1 yd / 1.6 yd | +0.3 / 2.0 | +0.3 / 1.0 |
+
+On the 1,178-shot set the offline error is −0.0 / 0.8 yd.
+
+**Altitude.** From sea level to 5,000 ft on a standard day the simulator's
+carries gain 5.7% on average and the model's 5.8%, from +3.2% for the
+70 mph launches to +6.4% at 130 mph; per launch the gains differ by 0.19
+points RMS (worst +0.45). The second simulator keeps sea-level temperature
+at altitude; at its own settings it gains 3.69%, 6.92% and 10.08% at
+2,500, 5,000 and 8,000 ft, the model 3.67%, 6.99% and 10.39%.
+
+**Environmental response of the preset driver** (`ShotInput::driver`):
+Denver (1,609 m, 17 °C) +7.5% carry (Titleist's ~6.1% assumes a standard
+day); 90°F vs 50°F at sea level +9.1 yd (published ~8 yd, which includes
+the ball's own response to temperature).
+
+**Trackman 2024 PGA Tour averages** (25 °C sea level, held out): carry
+bias +4.2 yd, RMSE 7.6 yd; descent angle bias −4.5°, RMSE 4.9°.
 
 | Club | Model | Target | Δ | DA° (model) | DA° (TM) | DA Δ |
 |---|---:|---:|---:|---:|---:|---:|
-| Driver | 279.6y | 282.0y | -2.4y | 39.7 | 39.0 | +0.7 |
-| 3-Wood | 253.4y | 249.0y | +4.4y | 46.6 | 44.0 | +2.6 |
-| 5-Wood | 238.7y | 236.0y | +2.7y | 48.6 | 48.0 | +0.6 |
-| Hybrid | 226.0y | 231.0y | -5.0y | 48.3 | 49.0 | -0.7 |
-| 3-Iron | 220.6y | 218.0y | +2.6y | 46.7 | 48.0 | -1.3 |
-| 4-Iron | 210.3y | 209.0y | +1.3y | 46.9 | 49.0 | -2.1 |
-| 5-Iron | 199.8y | 199.0y | +0.8y | 47.8 | 50.0 | -2.2 |
-| 6-Iron | 188.1y | 188.0y | +0.1y | 49.9 | 50.0 | -0.1 |
-| 7-Iron | 173.9y | 176.0y | -2.1y | 50.5 | 51.0 | -0.5 |
-| 8-Iron | 163.5y | 164.0y | -0.5y | 50.9 | 51.0 | -0.1 |
-| 9-Iron | 152.1y | 152.0y | +0.1y | 51.2 | 52.0 | -0.8 |
-| PW | 137.3y | 142.0y | -4.7y | 52.2 | 52.0 | +0.2 |
+| Driver | 296.6y | 282.0y | +14.6y | 38.8 | 39.0 | -0.2 |
+| 3-Wood | 264.4y | 249.0y | +15.4y | 42.2 | 44.0 | -1.8 |
+| 5-Wood | 246.6y | 236.0y | +10.6y | 43.8 | 48.0 | -4.2 |
+| Hybrid | 231.8y | 231.0y | +0.8y | 43.3 | 49.0 | -5.7 |
+| 3-Iron | 226.0y | 218.0y | +8.0y | 41.7 | 48.0 | -6.3 |
+| 4-Iron | 214.2y | 209.0y | +5.2y | 41.9 | 49.0 | -7.1 |
+| 5-Iron | 202.5y | 199.0y | +3.5y | 42.9 | 50.0 | -7.1 |
+| 6-Iron | 189.3y | 188.0y | +1.3y | 45.3 | 50.0 | -4.7 |
+| 7-Iron | 173.9y | 176.0y | -2.1y | 46.2 | 51.0 | -4.8 |
+| 8-Iron | 162.8y | 164.0y | -1.2y | 47.0 | 51.0 | -4.0 |
+| 9-Iron | 151.3y | 152.0y | -0.7y | 47.6 | 52.0 | -4.4 |
+| PW | 137.0y | 142.0y | -5.0y | 48.8 | 52.0 | -3.2 |
 
-Environmental response (density-only): Denver +6.9% driver carry (published
-~6.1%), 90°F-vs-50°F delta ~9y (published ~8y). With temperature-dependent
-viscosity as well (`sutherland_viscosity`, below), the
-same delta is 6.2y, further from the published value: the fit was
-calibrated at a constant viscosity, so the density-only response is the
-validated one.
+The per-shot references agree with each other to about 1% and disagree
+with the tour table the same way: no setting of this model family fits both.
+The tour averages mix competition and range shots across many events, and
+the table is not smooth in ball speed (the hybrid at 149 mph carries 231 yd,
+the 3-iron at 145 mph 218 yd), so the fit follows the per-shot data.
 
 ### Known limitations
 
-1. **PW and hybrid carry ~5y short, 3-wood ~4y long.** Residual structural
-   limit of the single-sigmoid model.
-2. **Fast low-spin shots (140+ mph, <3k rpm) run a few yards short** with
-   slightly high peaks relative to the per-shot validation set.
-3. **Ball COR vs temperature unmodeled** — only air density (and, with
-   `sutherland_viscosity`, viscosity) responds to temperature; cold-ball
-   distance loss is understated.
-4. **Single ball model.** Real balls vary ±5% in drag across dimple designs.
-5. **Spin on the ground: modeled, lightly validated.** The full spin vector
+1. **Trackman's tour table:** the model carries the woods 11–15 yd longer
+   and lands the irons 3–7° shallower than its averages
+   (see above). Above 135 mph the fit rests on simulator data; the one
+   held-out driver session carries 1.0% short of the model with a 5 ft
+   lower apex.
+2. **Low spin (beta):** the low-spin lift term is fitted on a small set of
+   150–185 mph shots at 9–15° launch below a spin ratio of 0.045, a range no
+   shot in the 1,178-shot set reaches (its lowest launch spin ratio is
+   0.048). Below a spin ratio of about 0.01 (under 200 rpm at 170 mph) the
+   model is extrapolated, and its zero-spin drag (0.10) is lower than wind
+   tunnels measure for a non-spinning ball (about 0.2). A ball with no spin
+   gets no lift, so an unmeasured spin must not be passed as zero.
+3. **Slow, high-spin shots** (under 80 mph, or above a spin ratio of 0.4)
+   carry about 1.5% short on average, up to 3.6%.
+4. **Ball COR vs temperature unmodeled:** only the air density responds to
+   temperature; cold-ball distance loss is understated.
+5. **Single ball model.** Real balls vary ±5% in drag across dimple designs.
+6. **Spin on the ground: modeled, lightly validated.** The full spin vector
    is carried through every impact, slide and roll (see
    [Ground Model](#ground-model)), so a curving ball kicks further off-line
    at the first bounces and spin along the direction of travel drifts the
@@ -205,116 +257,82 @@ validated one.
    uncalibrated; the fairway's compliance is chosen, not measured; landing
    shots on slopes are beta (see [Ground limitations](#limitations)).
 
-### `BallModel::PATENT_1997` — 1990s Tour Ball
+### Your own model
 
-| Parameter | Value | Role |
-|---|---|---|
-| mass_kg | 0.04593 | Same physical ball (USGA limits unchanged) |
-| diameter_m | 0.04267 | Same |
-| inertia_factor | 0.4 | Same |
-| cd_sub | 0.19 | Lower subcritical base |
-| cd_super | 0.29 | Much higher supercritical base drag |
-| cd_spin | 0.15 | Spin-dependent drag |
-| sr_sat | ∞ | Linear spin drag (no saturation in patent data) |
-| cl_sub | 0.12 | Subcritical lift |
-| cl_super | 0.285 | Similar lift ceiling |
-| sr_scale | 0.01 | **Near-instant saturation** — Cl independent of SR |
-| re_crit | 100,000 | Higher drag crisis point |
-| re_width | 8,000 | Gradual transition |
+Any type implementing `AeroModel` flies a shot: it returns the air's
+acceleration on the ball (without gravity) from its state (time, position,
+velocity, spin) and its height above the ground, advances the spin over a
+flight step, and gives the radius and inertia factor the ground uses. A
+model can also override `gravity()`; dimple then uses that value in flight
+and in every ground contact. A ball with drag only:
 
-Source: US6186002B1 (Quintavalla/Acushnet, filed 1997) — force-balance wind
-tunnel measurements on production golf balls (Table 1, 7 data points). Model
-fitted with RMSE: Cd=0.008, Cl=0.006.
+```rust
+use dimple::{AeroModel, BallState, ShotInput, Surface, Vec3, simulate_shot};
 
-Key differences from modern balls:
-- **Base Cd much higher** (0.29 vs 0.186 + spin term; effective driver Cd
-  0.30 vs 0.24) — dominant factor for carry gap
-- **Cl saturates instantly** (sr_scale=0.01) — lift is the same for driver and
-  wedge spin rates, unlike modern balls where Cl is spin-sensitive
-- **Lower subcritical Cl** (0.12 vs 0.203) and a gradual drag crisis
-  (re_width=8000 vs 106)
+struct DragOnly { k: f64 }
 
-## Environment Model
+impl AeroModel for DragOnly {
+    fn acceleration(&self, ball: &BallState, _height: f64) -> Vec3 {
+        ball.vel * (-self.k * ball.vel.length())
+    }
+    fn spin_after(&self, ball: &BallState, _dt: f64) -> Vec3 { ball.spin }
+    fn radius_m(&self) -> f64 { 0.021_335 }
+    fn inertia_factor(&self) -> f64 { 0.4 }
+}
 
-Air density is computed from altitude and temperature using the barometric
-formula for the troposphere:
-
-```
-ρ = ρ₀ × (1 - L×h/T₀)^(g×M/(R×L)) × (T_standard / T_actual)
+let shot = simulate_shot(&ShotInput::driver(), &DragOnly { k: 0.004 }, &Surface::FAIRWAY);
 ```
 
-Where ρ₀=1.225 kg/m³, L=0.0065 K/m, T₀=288.15 K. The temperature correction
-scales by the ratio of standard to actual temperature at altitude (ideal gas
-law, ρ ∝ 1/T at constant pressure).
+A model is a pure function of its arguments (the integrator calls
+`acceleration` four times per step), so it has no interior mutability.
 
-By default (`viscosity: None`) the dynamic viscosity of air is dimple's
-model default, currently the constant 1.81×10⁻⁵ Pa·s, the value both ball
-models were fitted with. A later calibration may derive the default from
-`temperature_c`.
+## Air
+
+`standard_air_density(altitude_m, temperature_c)` gives the density from
+the standard pressure at the altitude and the actual temperature there, by
+the ideal gas law:
+
+```
+ρ = ρ₀ × (1 - L×h/T₀)^(g×M/(R×L)) × T₀ / T
+```
+
+Where ρ₀ = 1.225 kg/m³, L = 0.0065 K/m, T₀ = 288.15 K, g×M/(R×L) = 5.2559,
+h the altitude (floored at sea level) and T the temperature in kelvin. The
+first two factors are ρ₀ times the standard pressure ratio at h; the
+temperature is used as given, not lowered with altitude. On a standard day
+(15 °C at sea level, 5.1 °C at 1,524 m) this is the ISA density: 1.225 and
+1.0555 kg/m³.
 
 ### Measured air (beta)
 
-Two `Environment` fields describe the air for callers that know it better
-than an altitude and temperature do (a launch monitor with a weather
-station, say). Both are **beta**; every preset leaves them at their
-defaults.
-
-- `measured_air_density: Some(ρ)` uses a measured density as given, with
-  no altitude inference and no clamp at sea level, so cold, dense air is
-  modeled as dense. `altitude_m` and `temperature_c` then no longer set the
-  density. `Some(0.0)` gives ballistic flight.
-- `viscosity: Some(μ)` uses a dynamic viscosity (Pa·s) as given.
-  `environment::sutherland_viscosity(temperature_c)` gives the viscosity of
-  dry air from Sutherland's law, μ = b T^(3/2) / (T + S) with T in kelvin,
-  b = 1.458×10⁻⁶ kg/(m·s·K^½) and S = 110.4 K (*U.S. Standard
-  Atmosphere, 1976*, NASA TM-X-74335, p. 19,
-  <https://ntrs.nasa.gov/citations/19770009539>). That gives
-  1.72×10⁻⁵ Pa·s at 0 °C, 1.81×10⁻⁵ at about 19 °C and 1.88×10⁻⁵ at
-  35 °C. `Environment::dynamic_viscosity()` returns the viscosity in use.
+`Tour::new(air_density, wind)` takes the density as given, with no
+altitude inference and no clamp at sea level, so cold, dense air is
+modeled as dense. A launch monitor with a weather station can pass its own:
+with pressure p (Pa) and temperature T (K), ρ = p / (287.05 · T). Humidity
+lowers the density slightly (about 0.8% at 30 °C and 50% relative
+humidity). A density of 0 gives ballistic flight under gravity alone.
 
 ```rust
-use dimple::Environment;
-use dimple::environment::sutherland_viscosity;
+use dimple::{Tour, Wind};
 
-// 1.27 kg/m³ from a weather station on a 2 °C morning.
-let env = Environment {
-    temperature_c: 2.0,
-    measured_air_density: Some(1.27),
-    viscosity: Some(sutherland_viscosity(2.0)),
-    ..Environment::SEA_LEVEL
-};
+// 101.8 kPa and 2 °C from a weather station.
+let tour = Tour::new(101_800.0 / (287.05 * (2.0 + 273.15)), Wind::None);
 ```
-
-Viscosity sets the Reynolds number, and with `TOUR` its effect is not
-negligible. At a constant 1.2 kg/m³, going from 0 °C to 35 °C shortens carry
-by 5.2 m for a 150 mph drive, 2.5 m for the preset 7-iron and 1.4 m for a
-100 mph wedge, mostly late in the flight, where the slowing ball nears the
-drag crisis. How large this is depends on where the fit puts that crisis,
-and the fit was calibrated at a constant viscosity; this response has not
-been checked against temperature-controlled measurements, and on the one
-temperature benchmark it moves the model away from the data (see
-[Calibration](#calibration)). That is why the model default (currently the calibrated
-constant) is used when `viscosity` is `None`, as on every preset, and
-Sutherland's law is opt-in.
 
 ## Wind (beta)
 
-`Environment::wind` is the wind the shot flies through; every preset is
+A `Tour`'s wind is the wind the shot flies through; `Tour::SEA_LEVEL` is
 `Wind::None`, still air. Wind is **beta**: the model below follows the
 physics but has not been compared with measured shots in wind. A wind is a
 horizontal air velocity in the public frame, `+x` blowing downrange (a
 tailwind) and `+z` blowing to the right. A vertical component is ignored.
 
 ```rust
-use dimple::{BallModel, Environment, ShotInput, Surface, Vec3, simulate_shot};
-use dimple::environment::Wind;
+use dimple::{ShotInput, Surface, Tour, Vec3, Wind, simulate_shot};
 
 // 5 m/s into the golfer's face.
-let env = Environment {
-    wind: Wind::Uniform(Vec3::new(-5.0, 0.0, 0.0)),
-    ..Environment::SEA_LEVEL
-};
-let shot = simulate_shot(&ShotInput::driver(), &BallModel::TOUR, &env, &Surface::FAIRWAY);
+let tour = Tour::new(1.225, Wind::Uniform(Vec3::new(-5.0, 0.0, 0.0)));
+let shot = simulate_shot(&ShotInput::driver(), &tour, &Surface::FAIRWAY);
 ```
 
 Drag and Magnus lift act on the ball's velocity relative to the air,
@@ -326,14 +344,14 @@ it the drag and the spin ratio, so the shot is integrated again rather than
 translated.
 
 `Wind::Uniform` is the same wind at every height. For a 150 mph drive at 13°
-and 2700 rpm with `TOUR` at sea level (`examples/wind.rs`):
+and 2700 rpm with `Tour` at sea level (`examples/wind.rs`):
 
 | Wind | Carry | Total | Lateral at rest |
 |---|---:|---:|---:|
-| Still | 221.0 m | 236.9 m | 0.0 m |
-| 5 m/s headwind | 202.5 m | 212.1 m | 0.0 m |
-| 5 m/s tailwind | 235.0 m | 254.2 m | 0.0 m |
-| 5 m/s left to right | 221.5 m | 237.5 m | 20.2 m right |
+| Still | 229.5 m | 245.9 m | 0.0 m |
+| 5 m/s headwind | 213.0 m | 223.1 m | 0.0 m |
+| 5 m/s tailwind | 241.3 m | 260.6 m | 0.0 m |
+| 5 m/s left to right | 230.0 m | 246.3 m | 19.9 m right |
 
 The headwind costs more than the same tailwind gains, because drag grows
 with the square of the airspeed.
@@ -351,18 +369,17 @@ is applied uniformly too. The profile is sampled at
 every RK4 stage of the flight and of the hops, so the hops, a few
 centimeters above the turf, fly through nearly still air. It is a
 neutral-stability assumption, not a measured wind field.
-`Wind::at_height(h)` gives the wind at a height.
 
 The same drive and winds as above, as 10 m readings:
 
 | Wind (10 m) | Carry | Total | Lateral at rest |
 |---|---:|---:|---:|
-| 5 m/s headwind | 199.8 m | 209.5 m | 0.0 m |
-| 5 m/s tailwind | 235.3 m | 253.7 m | 0.0 m |
-| 5 m/s left to right | 221.6 m | 237.8 m | 21.9 m right |
+| 5 m/s headwind | 210.4 m | 220.6 m | 0.0 m |
+| 5 m/s tailwind | 241.6 m | 259.9 m | 0.0 m |
+| 5 m/s left to right | 230.2 m | 246.6 m | 21.7 m right |
 
 The drive spends most of its flight above 10 m, where the profile is
-stronger than the reading, so the headwind costs 2.7 m more carry than
+stronger than the reading, so the headwind costs 2.6 m more carry than
 uniform wind. The tailwind's total is shorter despite a longer carry,
 because the hops lose the help of the wind.
 
@@ -370,15 +387,34 @@ Justus, C. G. & Mikhail, A. (1976), "Height variation of wind speed and
 wind distributions statistics", *Geophysical Research Letters* 3(5),
 261–264, doi:10.1029/GL003i005p00261.
 
+### Your own wind
+
+`Wind::custom` takes any function of the shot time, the ball's position
+and its height above the ground (a `WindField`; closures implement it),
+for gusts or a wind field from a course map. It must be a pure function of
+those arguments. A headwind that starts two seconds into the shot:
+
+```rust
+use dimple::{ShotInput, Tour, Vec3, Wind, simulate_flight};
+
+let gust = Wind::custom(|t: f64, _pos: Vec3, _height: f64| {
+    if t > 2.0 { Vec3::new(-8.0, 0.0, 0.0) } else { Vec3::ZERO }
+});
+let flight = simulate_flight(&ShotInput::driver(), &Tour::new(1.225, gust));
+```
+
+A custom wind that returns a constant gives exactly the shot of the same
+`Wind::Uniform`.
+
 ## Spin Decay
 
-Spin decays exponentially during flight:
+`Tour`'s spin decays exponentially during flight, about a fixed axis:
 
 ```
 ω(t) = ω₀ × exp(-λ × t)
 ```
 
-Default λ = 0.04 s⁻¹ (~21% loss over 6 seconds). Published data:
+λ = 0.04 s⁻¹ (~21% loss over 6 seconds). Published data:
 - Trackman (2010): ~4%/s → λ=0.04 → 78% remaining at 6s
 - Lyu et al. (2018): 4%/s trajectory fits
 - Tutelman: τ=30s → λ=0.033 → 82% at 6s
@@ -435,7 +471,7 @@ slips at `u = v_t + ω × r`; friction acts against `u`.
   left. In the grip regime on rigid ground the heading after the bounce is
   exactly `atan((5/7)·v_z / ((5/7)·v_x − (2/7)·R·ω_b))` (backspin ω_b about
   +Z). The effect is **modest**: the driver preset with ±600 rpm sidespin
-  lands heading 12.4° off-line and leaves its first bounce at 14.0°.
+  lands heading 12.4° off-line and leaves its first bounce at 13.8°.
 - **Spin along the direction of travel** ("rifle spin") slips the contact
   point sideways, so it drifts the ball laterally while it slides.
 - **Penner's tilt adds a small throw the other way.** Each impact is against
@@ -447,7 +483,7 @@ slips at `u = v_t + ω × r`; friction acts against `u`.
   sea level, measured as lateral run across the landing heading, the
   heading-mismatch kick alone (the same landing with ω_y removed) adds
   about 0.9 m, the throw takes back about 0.1 m, and the net is about
-  +0.8 m (0.9 yd) on a 16 m run. The fade comes to rest 31.4 m (34.4 yd)
+  +0.8 m (0.9 yd) on a 17 m run. The fade comes to rest 32.1 m (35.1 yd)
   right of the target line, 4.3 m right of its landing point.
 
 So dimple does not convert sidespin into a lateral nudge; it carries the
@@ -476,10 +512,11 @@ v   += j_n n' − j_t û
 Δω_n = −sign(ω_n) · min(|ω_n|, pivot · j_n / (k R²))   about n
 ```
 
-`k` is the ball's inertia factor (`I = k m R²`, 2/5 for a uniform sphere,
-`BallModel::inertia_factor`). Friction either brings the contact point to
-rest (grip: the ball leaves rolling on the effective plane) or slides
-throughout at the Coulomb limit. No impulse is applied when the ball is not
+`k` is the ball's inertia factor (`I = k m R²`, `AeroModel::inertia_factor`;
+2/5, a uniform solid sphere, for `Tour`) and R its radius (`radius_m`).
+Friction either brings the contact point to rest (grip: the ball leaves
+rolling on the effective plane) or slides throughout at the Coulomb limit.
+No impulse is applied when the ball is not
 moving into the ground (grazing).
 
 The factor `min(1, v_n / 2 m/s)` fades the tilt in for soft contacts; every
@@ -531,8 +568,8 @@ impact: a driver landing on `FAIRWAY` can remove up to about 160 rad/s
 (~1500 rpm), and a ±600 rpm-sidespin drive lands with 47 rad/s (450 rpm).
 So on level ground the path is the same for every lever from 1 mm up. With
 no pivot friction at all the spin survives to the later impacts, whose
-throws move that drive's rest by about 5 cm; on rigid ground (no tilt) it
-survives only into the hops, which it curves about 3 cm further the way the
+throws move that drive's rest by about 11 cm; on rigid ground (no tilt) it
+survives only into the hops, which it curves about 6 cm further the way the
 sidespin curved the flight.
 
 ### Hops and the bounce-to-roll transition
@@ -569,12 +606,12 @@ tilt in linearly with the normal impact speed `v_n`:
   fast as it arrived while the ball moves along the ground at 2–4 m/s, so
   the hops die out geometrically (see the slope analysis below): a full
   shot from the bag makes 4–10 impacts (a drive about 9, an iron, pitch or
-  wedge 4–7), then slides and rolls, from about 2–4 m/s after a drive,
-  pitch or chip and under 2 m/s after a full iron or wedge.
+  wedge 4–8), then slides and rolls, from about 2–4 m/s after a drive,
+  iron, pitch or chip and about 1 m/s after a tour wedge.
 - The 2 m/s onset is chosen, not measured. Runs barely depend on it between
   1.5 and 3 m/s (in 25 °C air the tour drive of
-  [Run-out on a fairway](#run-out-on-a-fairway) runs 19.0 to 17.3 yd, its
-  amateur lob wedge 5.5 yd throughout), nor on the shape of the ramp: a
+  [Run-out on a fairway](#run-out-on-a-fairway) runs 19.3 to 17.5 yd, its
+  amateur lob wedge 6.2 to 6.0 yd), nor on the shape of the ramp: a
   quadratic or smoothstep fade moves them by about a yard or less. A fade
   weaker than linear, such as `√(v_n / 2 m/s)`, leaves most of the hop
   train in place.
@@ -588,30 +625,30 @@ rolls. A safety bound of 200 impacts guards degenerate surfaces (e.g.
 elastic and frictionless); real shots end by these rules well before it.
 
 **Flight between impacts.** Each hop flies through the same air as the
-shot: `GroundModel::settle` takes the shot's `Environment`, so the hops
-use its density, viscosity and wind, the wind sampled at the hop's height
-above the terrain, and their drag and lift act on the velocity relative to
-the moving air. The forces are the flight
-model's (`BallModel::acceleration`: gravity, drag and Magnus lift),
+shot: `GroundModel::settle` takes the shot's model, so the hops fly
+through its air and wind, the wind sampled at the hop's height above the
+terrain, and their drag and lift act on the velocity relative to the
+moving air. The forces are the flight's: the model's `acceleration`
+(`Tour`: drag and Magnus lift) plus gravity, the model's `gravity()`,
 integrated with RK4 at 1 ms. The spin is held fixed over each hop: its axis
 and rate set the lift, and the ball arrives at the next impact with exactly
-the spin it left the last one with. At hop speeds (0.3–8 m/s) the Reynolds
-number is about 900–23,000, far below the drag crisis (`TOUR`: 69,600), so
-the coefficients are the subcritical ones. A ball leaving an impact is
-close to rolling, spin ratio about 1, which gives Cd ≈ 0.47 and Cl ≈ 0.20
-with `TOUR`. At sea level drag then decelerates the ball by about
-0.57 m/s² at 8 m/s, 0.14 m/s² at 4 m/s and 0.04 m/s² at 2 m/s, and the
-forward topspin it leaves with pushes it down with about 0.25 m/s² (2.5% of
+the spin it left the last one with. `Tour`'s coefficients depend on the
+spin ratio alone, so they hold at hop speeds (0.3–8 m/s) as in flight. A
+ball leaving an impact is close to rolling, spin ratio about 1, which gives
+Cd ≈ 0.43 and Cl ≈ 0.36. At sea level drag then decelerates the ball by
+about 0.52 m/s² at 8 m/s, 0.13 m/s² at 4 m/s and 0.03 m/s² at 2 m/s, and the
+forward topspin it leaves with pushes it down with about 0.44 m/s² (4.5% of
 g) at 8 m/s. Small as these are, a drive spends nearly 3 s in its hops:
-through sea-level air a `FAIRWAY` drive makes 9 impacts and runs 17.2 yd
-past the landing point, against 10 impacts and 19.0 yd with ballistic hops
-(`GREEN`: 22.9 yd; ballistic 25.0 yd). Irons and wedges, which hop little,
-barely change. An air density of 0 (`measured_air_density: Some(0.0)`)
-gives ballistic hops under gravity alone, the model Penner uses; in dimple they lengthen a drive's run by
-about 2 yd.
+through sea-level air a `FAIRWAY` drive makes 9 impacts and runs 17.4 yd
+past the landing point, against 11 impacts and 19.5 yd with ballistic hops
+(`GREEN`: 23.2 yd; ballistic 25.5 yd). Irons and wedges, which hop little,
+barely change. A model with no air (`Tour::new(0.0, Wind::None)`) gives
+ballistic hops under gravity alone, the model Penner uses; in dimple they
+lengthen a drive's run by about 2 yd.
 
-The spin is not decayed during hops. The flight's decay rate
-(`AeroParams::spin_decay`, 0.04 s⁻¹) is calibrated at 50–75 m/s; an
+The spin is not decayed during hops: dimple does not call the model's
+`spin_after` between impacts. `Tour`'s flight decay rate (0.04 s⁻¹) is
+calibrated at 50–75 m/s; an
 aerodynamic spin-down torque with a moment coefficient linear in spin ratio
 gives a rate proportional to speed, roughly ten times lower at hop speeds,
 and no measurement of it at those speeds is used here.
@@ -619,11 +656,11 @@ and no measurement of it at those speeds is used here.
 Each hop step is checked for a ground crossing at 8 equal sub-steps and the
 crossing is solved within the first sub-step that ends at or below the
 ground, as the root of the clearance `y(τ) − height(x(τ), z(τ))` (regula
-falsi with bisection, to 1e-12 m). With air, the state τ into the step is
-the cubic Hermite interpolant of the step's end states (position and
-velocity at both ends, so exact at both ends of the step); with ballistic
-hops it is the exact parabola, which RK4 reproduces. The next
-impact uses the terrain's normal there.
+falsi with bisection, to 1e-12 m). The state τ into the step is the cubic
+Hermite interpolant of the step's end states (position and velocity at both
+ends, so exact at both ends of the step); under gravity alone it is the
+exact parabola, which RK4 reproduces. The next impact uses the terrain's
+normal there.
 
 **Hops on a slope.** Downhill, gravity hands energy back between hops, and
 the 5 mm height alone need not end them. At grazing incidence (φ ≈ 90°)
@@ -697,9 +734,9 @@ resistance stands for the turf's dissipation at that speed.
 
 On the ground the state is position, velocity and the spin vector,
 integrated with RK4 at 1 ms within each smooth phase, with the terrain
-sampled under the ball every step. With `n` the normal, the normal load is
-`m·g·n_y` and the slope pulls with the tangential gravity
-`g_t = g − (g·n)n` (zero on level ground):
+sampled under the ball every step. With `n` the normal and g the model's
+`gravity()`, the normal load is `m·g·n_y` and the slope pulls with the
+tangential gravity `g_t = g − (g·n)n` (zero on level ground):
 
 - **Slide** (the contact point slips): friction `−μ·m·g·n_y·û`, its torque
   `(−R n) × F`, and `g_t`. On level ground the slip direction is fixed and
@@ -775,8 +812,8 @@ sampled under the ball every step. With `n` the normal, the normal load is
   about 4 m/s (see
   [Hops and the bounce-to-roll transition](#hops-and-the-bounce-to-roll-transition)),
   where the laws part: re-pinned to the same stimp, `Constant` lengthens the
-  preset drive's run from 17.2 to 19.8 yd on `FAIRWAY` and from 22.9 to
-  28.5 yd on `GREEN`; irons and wedges, which reach the ground slower, move
+  preset drive's run from 17.4 to 20.1 yd on `FAIRWAY` and from 23.2 to
+  28.9 yd on `GREEN`; irons and wedges, which reach the ground slower, move
   by a few tenths of a yard. Re-pinned to the
   presets' stimp, `Exponential { v_ref: 7.0 }` gives `GREEN` μ₀ = 0.058
   and `FAIRWAY` μ₀ = 0.126; a roll from 5 m/s on `GREEN` runs 19.46 m
@@ -829,25 +866,26 @@ downrange through the tee; `Rest` unless marked. `FAIRWAY`:
 
 | Slope | −3° | −2° | −1° | 0° | +1° | +2° | +3° | +4° | +5° | +6° |
 |---|---|---|---|---|---|---|---|---|---|---|
-| driver | 15.1 | 15.7 | 16.4 | 17.2 | 18.5 | 19.8 | 21.0 | 22.3 | 24.9 | 27.9 |
-| driver, ballistic hops | 16.5 | 17.0 | 18.0 | 19.0 | 20.5 | 21.7 | 22.9 | 24.3 | 25.9 | 30.0 |
-| 7-iron (`seven_iron`) | 2.4 | 2.6 | 3.1 | 3.7 | 4.4 | 5.4 | 6.6 | 8.3 | 10.5 | 14.3 |
-| wedge | −0.2 | −0.1 | 0.0 | 0.1 | 0.3 | 0.6 | 1.1 | 1.9 | 3.6 | 6.6 |
+| driver | 15.5 | 16.1 | 16.7 | 17.4 | 18.6 | 19.9 | 21.0 | 22.2 | 24.6 | 27.6 |
+| driver, ballistic hops | 17.0 | 17.4 | 18.3 | 19.5 | 20.7 | 21.7 | 22.9 | 24.1 | 25.6 | 28.1 |
+| 7-iron (`seven_iron`) | 3.6 | 4.1 | 4.6 | 5.3 | 6.2 | 7.4 | 8.8 | 10.2 | 12.5 | 16.4 |
+| wedge | 0.2 | 0.4 | 0.6 | 0.9 | 1.3 | 1.9 | 2.8 | 4.0 | 5.9 | 9.4 |
 
 `GREEN`:
 
 | Slope | −3° | −2° | −1° | 0° | +1° | +2° | +2.5° | +3° | +3.1° |
 |---|---|---|---|---|---|---|---|---|---|
-| driver | 17.7 | 19.0 | 20.6 | 22.9 | 26.4 | 32.1 | 37.3 | 50.2 | 60.2 |
-| 7-iron (`seven_iron`) | 2.8 | 3.2 | 4.1 | 5.5 | 7.7 | 12.0 | 16.4 | 28.7 | 38.6 |
-| wedge | −1.1 | −0.1 | 0.0 | 0.1 | 0.4 | 1.4 | 2.8 | 9.9 | 17.9 |
+| driver | 18.2 | 19.5 | 21.0 | 23.2 | 26.7 | 32.2 | 37.4 | 50.2 | 60.1 |
+| 7-iron (`seven_iron`) | 4.4 | 5.2 | 6.3 | 8.0 | 10.6 | 15.6 | 20.3 | 33.1 | 43.0 |
+| wedge | 0.2 | 0.4 | 0.7 | 1.3 | 2.3 | 4.6 | 7.7 | 18.1 | 27.4 |
 
-`simulate_shot` at sea level (hops through air); the "ballistic hops" row
-is the same driver with `settle` given an air density of 0. Downhill, the
-hops end by the slope rule above and the ball rolls the rest of the way;
-the rule is evaluated on the hop actually flown, so drag's loss over a hop
+`simulate_shot` with `Tour::SEA_LEVEL` (hops through air); the "ballistic
+hops" row is the same driver with `settle` given
+`Tour::new(0.0, Wind::None)`. Downhill, the hops end by the slope rule
+above and the ball rolls the rest of the way; the rule is evaluated on the
+hop actually flown, so drag's loss over a hop
 counts against the slope's return. On `FAIRWAY` the driver makes 8–10
-impacts and the 7-iron 5 on every slope here; the runs grow with the
+impacts and the 7-iron 5 or 6 on every slope here; the runs grow with the
 downslope mostly through the roll.
 
 Lateral run (yards, + = right) on a plane falling to the right across the
@@ -856,15 +894,15 @@ mirror image:
 
 | Plane | driver | 7-iron (`seven_iron`) | wedge |
 |---|---|---|---|
-| `FAIRWAY` 2.5° | +3.7 | +1.7 | +0.8 |
-| `FAIRWAY` 5° | +9.2 | +5.0 | +3.3 |
-| `GREEN` 2.5° | +11.6 | +6.4 | +2.6 |
+| `FAIRWAY` 2.5° | +3.7 | +1.9 | +1.0 |
+| `FAIRWAY` 5° | +9.2 | +5.4 | +3.8 |
+| `GREEN` 2.5° | +11.6 | +7.4 | +3.5 |
 
 `GREEN` holds a ball at rest up to 3.1° (`tan θ ≤ 0.055`, 3.15°). Close to
 that the net deceleration of a slow roll, `(5/7)·g·cos θ·(μ_eff − tan θ)`,
 is tiny and the last meters take a long time: on a 3° downhill green a
-drive stops 46 s after landing and a 7-iron 41 s; at 3.1° they take 82 s
-and 77 s, and the wedge 63 s. The default 120 s `max_time` covers these.
+drive stops 46 s after landing and a 7-iron 43 s; at 3.1° they take 82 s
+and 78 s, and the wedge 71 s. The default 120 s `max_time` covers these.
 Beyond the hold angle a ball on `GREEN` never stops, and on a long enough
 slope it runs until `max_time`.
 
@@ -878,18 +916,18 @@ landings of their Table 1:
 
 | Landings | uphill (ft) | downhill (ft) | difference | downhill / uphill |
 |---|---|---|---|---|
-| five fairway landings, mean | 22.3 | 35.6 | 13.3 | 1.60 |
-| all ten, mean | 38.2 | 55.8 | 17.6 | 1.46 |
+| five fairway landings, mean | 22.3 | 35.7 | 13.4 | 1.60 |
+| all ten, mean | 38.3 | 56.0 | 17.7 | 1.46 |
 | measured (four settings) | 13.5 | 32.5 | 19.0 | 2.41 |
 
-The fairway 7-iron (55 mph, 46°, 5100 rpm) runs 26.3 ft uphill, 33.3 ft
-on level ground and 42.5 ft downhill. The uphill-to-downhill difference
+The fairway 7-iron (55 mph, 46°, 5100 rpm) runs 26.3 ft uphill, 33.4 ft
+on level ground and 42.6 ft downhill. The uphill-to-downhill difference
 is close to the measured one; the ratio is lower because dimple's uphill totals
 are longer than the measured mean. Their four settings are not published,
 so the comparison cannot separate the model from the shot mix. Turf firmer
 by 0.08 in on the TruFirm ran 9–12 ft further at their uphill sites;
-`compliance` 0.9 instead of 1.0 adds 7.7 ft to dimple's uphill fairway mean
-(9.0 ft for the 7-iron), so `compliance` is dimple's firmness setting.
+`compliance` 0.9 instead of 1.0 adds 7.8 ft to dimple's uphill fairway mean
+(9.1 ft for the 7-iron), so `compliance` is dimple's firmness setting.
 `FIRM_GREEN`'s lower `mu_slide` changes only the high-spin landings (the
 sand wedge and 9-iron), because the friction limit binds only there.
 Green speeds of 11 ft 3 in and 12 ft 3 in made no difference to their
@@ -898,7 +936,7 @@ bounce and roll; in dimple they change it by up to 5% (about 4% for the
 landing (49 mph, 51°, 9100 rpm) finishes 0.3–1.8 ft behind its landing
 point ("in some cases this distance was negative"), and their shallow,
 fast landings ran "over 100 feet on several occasions": dimple's shallow
-rough landings run 82–87 ft downhill. Source: Whitlark, B. and Pringle, M.
+rough landings run 83–87 ft downhill. Source: Whitlark, B. and Pringle, M.
 (2012), "Can't Stop Your Ball on the Green?", *USGA Green Section Record*
 50(25); summary values only.
 
@@ -951,12 +989,12 @@ past carry, sea level) by `compliance`, other fields as `Surface::FAIRWAY`:
 
 | `compliance` | driver | 7-iron (`seven_iron`) | wedge |
 |---|---|---|---|
-| 1.10 | 12.7 | 2.2 | −0.4 |
-| 1.00 (`FAIRWAY`) | 17.2 | 3.7 | 0.1 |
-| 0.90 | 22.4 | 5.3 | 0.8 |
-| 0.85 | 25.2 | 6.2 | 1.3 |
-| 0.75 | 31.1 | 8.1 | 2.3 |
-| 0.50 | 46.0 | 12.3 | 5.3 |
+| 1.10 | 12.8 | 3.5 | 0.1 |
+| 1.00 (`FAIRWAY`) | 17.4 | 5.3 | 0.9 |
+| 0.90 | 23.2 | 7.4 | 2.0 |
+| 0.85 | 26.1 | 8.4 | 2.7 |
+| 0.75 | 32.3 | 10.5 | 4.0 |
+| 0.50 | 47.9 | 15.5 | 7.4 |
 
 With `GREEN`, the impact reproduces Penner's published drive results: a
 landing at 26.8 m/s, 68.0° from vertical, 224 rad/s backspin rises 2.82 m on
@@ -964,8 +1002,8 @@ the first bounce, and 26.2 m/s at 46.2° with 315 rad/s rises 1.18 m (Penner
 reports 2.82 m and 1.17 m). With ballistic hops, as in Penner's model,
 those drives make 16 and 8 impacts before rolling and stop 37.1 m and
 17.9 m past the landing point (Penner's Fig. 4: about 37 m and 19 m);
-through sea-level air they make 13 and 8 impacts and stop 31.9 m and
-16.9 m past it. A 9-iron landing at 23.8 m/s, 34.0° bounces backward
+through sea-level air they make 13 and 8 impacts and stop 32.0 m and
+17.0 m past it. A 9-iron landing at 23.8 m/s, 34.0° bounces backward
 with 809 rad/s backspin, and its backward run grows with backspin at 1000
 and 1200 rad/s (Penner's Fig. 7). On `FIRM_GREEN` (μ = 0.25) the same
 landings first bounce forward still carrying backspin, then run back
@@ -978,46 +1016,46 @@ sea-level air, with the descent angle at landing:
 
 | Launch (mph / launch° / rpm) | Lands at | `FAIRWAY` | `GREEN` |
 |---|---|---|---|
-| Lob wedge, tour (72 / 32 / 9000) | 47.9° | 1.4 | 2.1 |
-| Lob wedge, amateur (65 / 32 / 6500) | 44.7° | 5.5 | 8.5 |
-| Sand wedge, tour (80 / 30 / 9500) | 49.2° | 0.9 | 1.3 |
-| Sand wedge, amateur (72 / 30 / 7500) | 45.6° | 4.1 | 6.3 |
-| Pitching wedge, tour (102 / 24.2 / 9300) | 51.9° | 1.0 | 1.3 |
-| Pitching wedge, amateur (85 / 26 / 7500) | 46.8° | 4.3 | 6.6 |
-| 50-yard pitch (52 / 30 / 6000) | 37.0° | 7.6 | 11.5 |
-| 50-yard pitch, less spin (52 / 32 / 4000) | 39.1° | 11.0 | 16.1 |
-| Lob-wedge chip (28 / 36 / 3000) | 38.4° | 7.1 | 10.9 |
-| Low chip (30 / 18 / 2500) | 19.1° | 15.4 | 21.1 |
-| 7-iron, tour (120 / 16.3 / 7100) | 49.5° | 4.7 | 7.1 |
-| 7-iron, amateur (105 / 17 / 5900) | 43.4° | 8.8 | 13.0 |
-| Driver, tour (171 / 10.4 / 2545) | 39.7° | 18.2 | 24.0 |
+| Lob wedge, tour (72 / 32 / 9000) | 46.6° | 1.9 | 2.9 |
+| Lob wedge, amateur (65 / 32 / 6500) | 43.9° | 6.0 | 9.3 |
+| Sand wedge, tour (80 / 30 / 9500) | 47.3° | 1.5 | 2.2 |
+| Sand wedge, amateur (72 / 30 / 7500) | 44.3° | 4.7 | 7.3 |
+| Pitching wedge, tour (102 / 24.2 / 9300) | 48.7° | 1.9 | 2.8 |
+| Pitching wedge, amateur (85 / 26 / 7500) | 44.4° | 5.3 | 8.1 |
+| 50-yard pitch (52 / 30 / 6000) | 37.4° | 7.7 | 11.7 |
+| 50-yard pitch, less spin (52 / 32 / 4000) | 39.1° | 11.7 | 16.8 |
+| Lob-wedge chip (28 / 36 / 3000) | 38.2° | 7.2 | 11.2 |
+| Low chip (30 / 18 / 2500) | 19.0° | 15.7 | 21.4 |
+| 7-iron, tour (120 / 16.3 / 7100) | 45.5° | 6.4 | 9.6 |
+| 7-iron, amateur (105 / 17 / 5900) | 40.0° | 10.7 | 15.4 |
+| Driver, tour (171 / 10.4 / 2545) | 38.8° | 18.4 | 24.2 |
 
 Every launch in the table makes 4–10 impacts before it slides and rolls. Published measurements of run on a
 fairway exist for drives:
 
 - The PGA Tour average drive (Trackman's 171 mph, 10.4°, 2545 rpm, landing
-  at 39°) lands at 39.7° in dimple and runs 18.2 yd. The USGA/R&A proposed
+  at 39°) lands at 38.8° in dimple and runs 18.4 yd. The USGA/R&A proposed
   bounce model, a linear fit to launcher tests on real fairways, gives
   `d = 79.1 − 1.6·α` yd for landing angle α: 16.7 yd at 39°. ShotLink drives
   of 2016–18 quoted there have a median run of 21 yd and a mean of 22 yd at
   39°, and the R&A/USGA agronomy study measured 17.8 ± 13.3 yd over 624
   fairway shots landing at 32–50° with about 1800 rpm.
 - Trackman's tour averages land the 7-iron at 51° and the pitching wedge
-  at 52°; dimple lands them at 49.5° and 51.9°. The proposed line reaches
+  at 52°; dimple lands them at 45.5° and 48.7°. The proposed line reaches
   0 yd at about 49°, while its individual site fits give 0–21 yd at 50°;
-  the tour 7-iron's 4.7 yd and the wedges' 1–2 yd lie in that spread.
+  the tour 7-iron's 6.4 yd and the wedges' 1–2 yd lie in that spread.
 - These fairway tests used driver-like impacts (26–32 m/s, about
   1800 rpm). A slower, higher-spin wedge or pitch should run less than the
   line at the same landing angle, as it does here (the amateur lob wedge:
-  5.5 yd at 44.7°, line 7.6 yd). No published measurement of wedge, pitch
+  6.0 yd at 43.9°, line 8.9 yd). No published measurement of wedge, pitch
   or chip run on a fairway is known to dimple.
 
-`FAIRWAY` runs 65–77% as far as `GREEN` for every launch, through its
+`FAIRWAY` runs 65–76% as far as `GREEN` for every launch, through its
 higher rolling resistance alone, since the hops are the same. The rolling
 resistance sets much of the run, so `mu_roll` (or `with_stimp`) is the
 knob for a faster or slower fairway: the tour drive, amateur lob wedge and
-less-spun pitch run 20.6, 6.8 and 13.2 yd at `mu_roll` 0.08 and 15.7, 4.2
-and 8.8 yd at 0.25.
+less-spun pitch run 20.9, 7.4 and 13.8 yd at `mu_roll` 0.08 and 15.9, 4.6
+and 9.4 yd at 0.25.
 
 Sources: USGA and The R&A (2021), *Proposed Bounce Model for Use in
 Evaluating Optimum Overall Distance*
@@ -1129,8 +1167,8 @@ for a negative `v_ref` unchanged.
 
 `Surface::with_stimp(feet)` sets `mu_roll` by this closed form, keeping
 every other field (including `roll_law`), and `Surface::stimp_feet()` is
-the inverse. Both use k = 2/5, the uniform solid sphere of both
-`BallModel` presets. `with_stimp` returns the surface unchanged for a
+the inverse. Both use k = 2/5, the uniform solid sphere of
+`Tour`. `with_stimp` returns the surface unchanged for a
 reading that is not finite and positive, or a law whose `v_ref` is zero or
 NaN, for which `stimp_feet` is NaN.
 
@@ -1215,7 +1253,7 @@ speed.
 The ground API has three layers:
 
 1. **`Surface`** — flat ground of one material, also a complete ground
-   model: `simulate_shot(&input, &ball, &env, &Surface::FAIRWAY)`, or with
+   model: `simulate_shot(&input, &Tour::SEA_LEVEL, &Surface::FAIRWAY)`, or with
    a field changed, `&Surface { mu_roll: 0.09, ..Surface::FAIRWAY }`.
 2. **`GroundPhysics<T: Terrain>`** — the physics above over any terrain.
    `Terrain::sample(x, z)` returns a `GroundSample { height, normal,
@@ -1228,21 +1266,23 @@ The ground API has three layers:
        normal: Vec3::Y,
        surface: if on_green(x, z) { Surface::GREEN } else { Surface::FAIRWAY },
    }));
-   simulate_shot(&input, &ball, &env, &range);
+   simulate_shot(&input, &Tour::SEA_LEVEL, &range);
    ```
 
    Its public fields are the tunables: `dt` (1 ms), `min_hop_height`
    (5 mm), `stop_speed` and `roll_threshold` (0.01 m/s), `max_impacts`
    (200), `max_time` (120 s).
 3. **`GroundModel`** — replace the physics: implement `height(x, z)` and
-   `settle(landing, ball, env)` (`simulate_shot` passes the shot's
-   `Environment`: `env.air_density()`, `env.dynamic_viscosity()` and
-   `env.wind`; an implementation uses as much of it as it models), and
+   `settle(landing, model)` (`simulate_shot` passes the shot's
+   `AeroModel`: its `acceleration` for the hops, `radius_m` and
+   `inertia_factor` for the contacts, and `gravity()` throughout; an
+   implementation uses as much of it as it models), and
    optionally `landing(a, b)` (by default the
    solved crossing of the straight segment with the heightfield; an engine
    can substitute its own sweep).
    It is object-safe, so `&dyn GroundModel` works. The building blocks
-   `ground::impact` and `GroundPhysics::step` are public, and the result
+   `ground::impact` and `GroundPhysics::step` are public (both take the
+   model), and the result
    types (`GroundResult`, `Contact`, `GroundPoint`) have `new`
    constructors. `BallState` (time, position, velocity, spin) is a plain
    struct.
@@ -1332,33 +1372,31 @@ the ground at the solved crossing.
 
 ## Implementation
 
-The aerodynamic model lives in `src/aero.rs`, the ground model in
-`src/ground.rs`. Key types:
+The aerodynamic model lives in `src/aero.rs`, the air in `src/air.rs`, the
+ground model in `src/ground.rs`. Key types:
 
-- **`BallModel`** — physical dimensions, inertia factor, aero coefficients.
-  Presets: `TOUR`, `PATENT_1997`.
-- **`AeroParams`** — per-shot spin state (axis, rate, decay), from a spin
-  vector (`AeroParams::from_spin_vector`, with
-  `ShotInput::launch_spin_rads`) or straight-launch backspin/sidespin RPM
-  (`AeroParams::from_spin`).
-- **`Environment`** — the air: density from altitude + temperature or
-  measured, viscosity (given, or the model default, currently the calibrated constant;
-  **`sutherland_viscosity`** for dry air at a temperature), and wind
-  (**`Wind`**: none, uniform or height-dependent).
+- **`AeroModel`** — the air's effect on one ball: acceleration without
+  gravity, spin over a flight step, radius, inertia factor, and gravity
+  (standard by default).
+- **`Tour`** — dimple's model: the tour ball in an air density and a wind
+  (`Tour::new`, `Tour::SEA_LEVEL`).
+- **`standard_air_density`** — density from altitude and temperature.
+- **`Wind`** — none, uniform, height-dependent (`PowerLaw`) or your own
+  (`Wind::custom`, any `WindField`).
 - **`Surface`**, **`Terrain`**, **`GroundPhysics`**, **`GroundModel`** — the
   ground (above).
 
-Flight simulation: `simulate_flight(input, ball, env) -> FlightResult`
+Flight simulation: `simulate_flight(input, model) -> FlightResult`
 
-RK4 integration at 1ms timestep, spin decays each step, trajectory sampled
-every 10ms. Stops at the solved crossing of ground level.
+RK4 integration at 1ms timestep, gravity plus the model's acceleration at
+every stage, the spin advanced by the model once per step, trajectory
+sampled every 10ms. Stops at the solved crossing of ground level.
 
-Full shot: `simulate_shot(input, ball, env, ground) -> ShotResult` runs the
+Full shot: `simulate_shot(input, model, ground) -> ShotResult` runs the
 flight from the tee on `ground` until it crosses the terrain, then
-`ground.settle(landing, ball, env)`: impacts, hops through the same air
+`ground.settle(landing, model)`: impacts, hops through the same air
 and wind, slide and roll to rest (`ShotResult.ground`, with absolute
-times). Wind and measured air are `Environment` fields, so both calls take
-them through `env`.
+times).
 
 ## Test Suite
 
@@ -1366,15 +1404,15 @@ Unit tests live beside the code in each module. Test categories:
 
 - **Structural invariants** — energy conservation, origin start, axis normalization
 - **Sign conventions** — azimuth, slice/hook, push-draw, mirror symmetry, rest position
-- **Patent wind tunnel** — 7 Cd/Cl data points against PATENT_1997 model
-- **Trackman carry** — 8 shots validated against published PGA Tour Averages (±10-12y)
-- **Descent angle** — iron DA within expected ranges
-- **Altitude/temperature** — Denver gain, hot-cold delta, directional checks
-- **Spin decay** — exponential decay rate against Trackman measurements
-- **Measured air** — measured density used as given, and a measured density equal to the computed one gives the same shot exactly; Sutherland reference values, and the calibrated constant ignores temperature; warmer air shortens carry at constant density
+- **Cd/Cl** — no lift without spin, lift and drag rise with spin, saturating spin drag, coefficients independent of speed at a given spin ratio, driver and 7-iron values, Li et al. (2017)
+- **Low-spin lift term** — zero and flat at zero spin, no step anywhere, peak height and position, lift rising with spin ratio through it, fading out above a spin ratio of 0.045
+- **Trackman carry** — 7 shots validated against published PGA Tour Averages (±10–12y)
+- **Descent angle** — iron DA within expected ranges; the reported descent angle is the landing velocity's
+- **Altitude/temperature** — ISA density at 1,524 m, Denver gain, hot-cold delta, directional checks, the preset driver's 5,000 ft gain
+- **Spin decay** — exponential decay rate against Trackman measurements, about a fixed axis
 - **Wind profile** — the power law and its 0.1 m/s threshold, and the hops sampling the profile
-- **Wind** — a headwind shortens carry and costs more than the same tailwind gains, a crosswind drifts the ball downwind, a vertical component is ignored, the wind carries through the hops, strong wind does not keep the ball bouncing, and a custom ground model receives the shot's environment, wind included
-- **Era comparison** — TOUR vs PATENT_1997 carry gaps, Cd reduction, Cl sensitivity
+- **Wind** — a headwind shortens carry and costs more than the same tailwind gains, a crosswind drifts the ball downwind, a vertical component is ignored, the wind carries through the hops, strong wind does not keep the ball bouncing, and a custom ground model receives the shot's model, wind included
+- **Custom models and winds** — a drag-only model flies and lands through `&dyn AeroModel`; a model with the default gravity, or standard gravity given explicitly, flies bit for bit as `Tour`; lower gravity flies and rolls farther; a constant `Wind::custom` equals `Wind::Uniform` bit for bit; a gust that starts mid-flight shortens the carry less than the same wind throughout
 - **Launch spin axis** — a pushed shot with no sidespin stays on its start line; exact landing-spin projections
 - **Ground: planar regression** — with ballistic hops, the 3D impact reproduces the planar Penner solution with the tilt fade impact by impact (preset driver, 7-iron and wedge on both presets) to float tolerance
 - **Ground: physics** — Penner (2002) restitution, drive bounce heights and runs (Fig. 4, ballistic hops), 9-iron spin-back (Figs. 7–8), 5 mm bounce-to-roll transition, compliance tilt (2β rotation, cap), the tilt fade below 2 m/s of normal speed and the low skimming hops it shrinks, `FAIRWAY` bouncing like `GREEN` and rolling shorter from the same landings, grip-regime kick formula, no kick from spin about the normal, tilt-throw magnitude (grip and slip), rifle-spin drift, grazing impacts, pivot friction about the true normal and its independence from the level-ground path, general inertia factor (k = 2/3), exact slide-to-roll time, stimpmeter closed form, `with_stimp`/`stimp_feet` round trip under every roll law and simulated stimpmeter rolls (6–14 ft) to 1e-9, preset stimp readings, `FIRM_GREEN` as Penner's Fig. 8 green
