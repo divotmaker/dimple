@@ -516,9 +516,8 @@ impl<T: Terrain> GroundPhysics<T> {
             let h = self.dt.min(t_end - t);
             let b = rk4::step(s, t, h, accel);
             let end = self.clearance(b.pos);
-            let arrival = self.hop_arrival(s, t, h, end, start.spin, gravity, |tau| {
-                hermite(s, b, h, tau)
-            });
+            let arrival =
+                self.hop_arrival(t, h, end, start.spin, gravity, |tau| hermite(s, b, h, tau));
             if let Some(arrival) = arrival {
                 return Ok(arrival);
             }
@@ -537,10 +536,10 @@ impl<T: Terrain> GroundPhysics<T> {
         }
     }
 
-    /// First ground crossing within a hop step of length `h` from `a` (at
-    /// time `t`), if there is one; `end` is the clearance at the end of the
+    /// First ground crossing within a hop step of length `h` starting at
+    /// time `t`, if there is one; `end` is the clearance at the end of the
     /// integrated step, `g` the magnitude of gravity and `arc(τ)` the ball's
-    /// state `τ` into the step.
+    /// state `τ` into the step (`arc(0)` is the step's start).
     ///
     /// [`hop`](Self::hop) passes the cubic Hermite interpolant of the step's
     /// end states (position and velocity at both ends), so `arc(h)` is the
@@ -552,13 +551,8 @@ impl<T: Terrain> GroundPhysics<T> {
     /// at the end of the step (exact on level ground without air). The
     /// arrival is placed exactly on the ground, with the arc's velocity
     /// there and `spin`.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "one private call site; a struct would only rename them"
-    )]
     fn hop_arrival(
         &self,
-        a: rk4::State,
         t: f64,
         h: f64,
         end: f64,
@@ -573,6 +567,7 @@ impl<T: Terrain> GroundPhysics<T> {
             reason = "`hi` is `h` itself when the crossing is in the last sub-step"
         )]
         let f_hi = if hi == h { clearance(h).min(0.0) } else { f_hi };
+        let a = arc(0.0);
         let end_height = self.sample(arc(h).pos).height;
         let guess = drop_time(a.pos.y - end_height, a.vel.y, g).clamp(lo.0, hi);
         let tau = find_root(clearance, lo, (hi, f_hi), guess);

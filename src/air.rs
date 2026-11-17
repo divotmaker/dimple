@@ -24,7 +24,7 @@ use crate::ground::BallState;
 ///
 /// With a weather station's pressure `p` (Pa) and temperature `T` (K), use
 /// the ideal gas law directly: ρ = p / (287.05 · T). Humidity lowers the
-/// density by under 1 % in normal weather.
+/// density slightly (about 0.8 % at 30 °C and 50 % relative humidity).
 #[must_use]
 pub fn standard_air_density(altitude_m: f64, temperature_c: f64) -> f64 {
     const RHO_0: f64 = 1.225;
