@@ -900,8 +900,9 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
     }
 }
 
-/// Whether the hops that follow a rebound die out, so that the ball may keep bouncing; otherwise it goes to the
-/// ground at once, as below [`GroundPhysics::min_hop_height`].
+/// Whether the hops that follow a rebound die out, so that the ball may keep
+/// bouncing; otherwise it goes to the ground at once, as below
+/// [`GroundPhysics::min_hop_height`].
 ///
 /// Each hop can hand energy back: gravity down a slope, and wind, whose drag
 /// and lift push a ball moving slower than the air (on level ground in still

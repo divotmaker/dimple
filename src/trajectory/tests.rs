@@ -1396,19 +1396,6 @@ fn crosswind_drifts_the_ball_downwind() {
 }
 
 #[test]
-#[allow(
-    clippy::float_cmp,
-    reason = "the vertical component is dropped before any arithmetic"
-)]
-fn vertical_wind_is_ignored() {
-    let input = driver();
-    let flat = simulate_flight(&input, &BALL, &windy(Vec3::new(3.0, 0.0, 0.0)));
-    let up = simulate_flight(&input, &BALL, &windy(Vec3::new(3.0, 9.0, 0.0)));
-    assert_eq!(flat.carry_m, up.carry_m);
-    assert_eq!(flat.apex_m, up.apex_m);
-}
-
-#[test]
 fn wind_carries_through_the_ground_phase() {
     let input = driver();
     let still = simulate_shot(&input, &BALL, &Environment::SEA_LEVEL, &Surface::FAIRWAY).total_m;

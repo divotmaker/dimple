@@ -247,8 +247,10 @@ Where ρ₀=1.225 kg/m³, L=0.0065 K/m, T₀=288.15 K. The temperature correctio
 scales by the ratio of standard to actual temperature at altitude (ideal gas
 law, ρ ∝ 1/T at constant pressure).
 
-By default (`viscosity: None`) the dynamic viscosity of air is the
-constant 1.81×10⁻⁵ Pa·s, the value both ball models were fitted with.
+By default (`viscosity: None`) the dynamic viscosity of air is dimple's
+model default, currently the constant 1.81×10⁻⁵ Pa·s, the value both ball
+models were fitted with. A later calibration may derive the default from
+`temperature_c`.
 
 ### Measured air (beta)
 
@@ -290,8 +292,9 @@ drag crisis. How large this is depends on where the fit puts that crisis,
 and the fit was calibrated at a constant viscosity; this response has not
 been checked against temperature-controlled measurements, and on the one
 temperature benchmark it moves the model away from the data (see
-[Calibration](#calibration)). That is why the calibrated constant is the
-default (`None` on every preset) and Sutherland's law is opt-in.
+[Calibration](#calibration)). That is why the model default (currently the calibrated
+constant) is used when `viscosity` is `None`, as on every preset, and
+Sutherland's law is opt-in.
 
 ## Wind (beta)
 
@@ -341,8 +344,9 @@ weaker near the ground and stronger above. `Wind::PowerLaw { at_10m }`
 scales the 10 m reading by (h / 10)^α, where h is the ball's height above the
 ground directly beneath it, with the shear exponent of Justus & Mikhail
 (1976), α = 0.37 − 0.0881 ln(U₁₀) for the 10 m speed U₁₀ in m/s. Below
-ground level the wind is zero, and at or below 0.1 m/s, where the logarithm
-is meaningless, the wind is applied uniformly. The profile is sampled at
+ground level the wind is zero, and at or below 0.1 m/s the wind is applied
+uniformly. The exponent is floored at zero, so above about 66.7 m/s the wind
+is applied uniformly too. The profile is sampled at
 every RK4 stage of the flight and of the hops, so the hops, a few
 centimeters above the turf, fly through nearly still air. It is a
 neutral-stability assumption, not a measured wind field.
@@ -1337,7 +1341,7 @@ The aerodynamic model lives in `src/aero.rs`, the ground model in
   `ShotInput::launch_spin_rads`) or straight-launch backspin/sidespin RPM
   (`AeroParams::from_spin`).
 - **`Environment`** — the air: density from altitude + temperature or
-  measured, viscosity (given, or the calibrated constant;
+  measured, viscosity (given, or the model default, currently the calibrated constant;
   **`sutherland_viscosity`** for dry air at a temperature), and wind
   (**`Wind`**: none, uniform or height-dependent).
 - **`Surface`**, **`Terrain`**, **`GroundPhysics`**, **`GroundModel`** — the

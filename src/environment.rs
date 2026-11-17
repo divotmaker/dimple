@@ -26,9 +26,11 @@ pub struct Environment {
     pub measured_air_density: Option<f64>,
     /// The air's dynamic viscosity (Pa·s), which sets the Reynolds number
     /// and so the drag and lift coefficients. Used as given; it must be
-    /// finite and positive. `None` (every preset): the constant
-    /// 1.81e-5 Pa·s (air at about 19 °C) that the ball models were fitted
-    /// with, whatever the temperature.
+    /// finite and positive. `None` (every preset): dimple's model default,
+    /// currently the constant 1.81e-5 Pa·s (air at about 19 °C) that the
+    /// ball models were fitted with, whatever the temperature. A later
+    /// calibration may derive the default from
+    /// [`temperature_c`](Self::temperature_c).
     ///
     /// To follow the temperature, pass
     /// `Some(sutherland_viscosity(env.temperature_c))`
@@ -107,7 +109,8 @@ impl Environment {
     }
 
     /// Dynamic viscosity of the air (Pa·s): [`viscosity`](Self::viscosity)
-    /// if given, otherwise the calibrated constant 1.81e-5 Pa·s.
+    /// if given, otherwise dimple's model default (currently the calibrated
+    /// constant 1.81e-5 Pa·s).
     #[must_use]
     pub fn dynamic_viscosity(&self) -> f64 {
         self.viscosity.unwrap_or(AIR_DYNAMIC_VISCOSITY)
@@ -121,8 +124,9 @@ impl Default for Environment {
 }
 
 /// Dynamic viscosity of air (Pa·s) when [`Environment::viscosity`] is
-/// `None`: Sutherland's law gives this value at about 19 °C. The `TOUR` and
-/// `PATENT_1997` coefficients were fitted with it.
+/// `None` (dimple's model default, currently this constant): Sutherland's law
+/// gives this value at about 19 °C. The `TOUR` and `PATENT_1997` coefficients
+/// were fitted with it.
 pub(crate) const AIR_DYNAMIC_VISCOSITY: f64 = 1.81e-5;
 
 /// Dynamic viscosity (Pa·s) of dry air at `temperature_c` (°C) by
@@ -154,7 +158,7 @@ pub fn sutherland_viscosity(temperature_c: f64) -> f64 {
 }
 
 /// Horizontal wind, in the public frame: `+x` blows downrange (a
-/// tailwind), `+z` blows to the right. The vertical component of any wind
+/// tailwind), `+z` blows to the right. **Beta.** The vertical component of any wind
 /// vector is ignored. Drag and Magnus lift act on the ball's velocity
 /// relative to the air, in flight and in the hops between bounces; the
 /// ground contacts themselves are unchanged, because the turf does not move.
@@ -170,8 +174,10 @@ pub enum Wind {
     /// power law `wind(h) = at_10m (h / 10)^α`, where `h` is the ball's
     /// height above the ground directly beneath it. The shear exponent
     /// follows Justus & Mikhail (1976), `α = 0.37 − 0.0881 ln(speed)`, with
-    /// the 10 m speed in m/s. At or below 0.1 m/s the logarithm is
-    /// meaningless and the wind is applied uniformly instead.
+    /// the 10 m speed in m/s. At or below 0.1 m/s the wind is applied
+    /// uniformly. The exponent is floored at zero, so above about 66.7 m/s
+    /// (where it would turn negative) there is no shear and the wind is
+    /// applied uniformly as well.
     ///
     /// This is a neutral-stability modeling assumption, not a measured wind
     /// field.
@@ -188,7 +194,7 @@ pub enum Wind {
 impl Wind {
     /// Horizontal wind velocity (m/s) at `height_m` above the ground beneath
     /// the ball. Heights at or below the ground give zero for
-    /// [`PowerLaw`](Self::PowerLaw).
+    /// [`PowerLaw`](Self::PowerLaw) with a positive exponent.
     #[must_use]
     pub fn at_height(self, height_m: f64) -> Vec3 {
         let (wind, factor) = match self {
@@ -197,7 +203,7 @@ impl Wind {
             Self::PowerLaw { at_10m } => {
                 let speed = at_10m.x.hypot(at_10m.z);
                 let factor = if speed > 0.1 {
-                    (height_m.max(0.0) / 10.0).powf(0.37 - 0.0881 * speed.ln())
+                    (height_m.max(0.0) / 10.0).powf((0.37 - 0.0881 * speed.ln()).max(0.0))
                 } else {
                     1.0
                 };
@@ -332,5 +338,23 @@ mod tests {
             Wind::Uniform(Vec3::new(3.0, 9.0, -4.0)).at_height(0.0),
             Vec3::new(3.0, 0.0, -4.0)
         );
+    }
+
+    #[test]
+    fn power_law_exponent_never_goes_negative() {
+        // Above e^(0.37 / 0.0881) = 66.7 m/s the fitted exponent is negative;
+        // the wind is then uniform, never infinite at the ground.
+        for speed in [67.0, 100.0, 1000.0] {
+            let w = Wind::PowerLaw {
+                at_10m: Vec3::new(speed, 0.0, 0.0),
+            };
+            for h in [0.0, 0.5, 10.0, 80.0] {
+                assert_eq!(w.at_height(h), Vec3::new(speed, 0.0, 0.0));
+            }
+        }
+        let below = Wind::PowerLaw {
+            at_10m: Vec3::new(66.0, 0.0, 0.0),
+        };
+        assert!(below.at_height(0.0).x.is_finite());
     }
 }
