@@ -98,6 +98,17 @@ fn lower_gravity_flies_and_rolls_farther() {
     );
     assert!(moon.flight.apex_m > earth.flight.apex_m);
 
+    // The driver stays up for more than 30 s under 1.62 m/s²; it lands
+    // rather than running out of flight time.
+    let driver = simulate_shot(&ShotInput::driver(), &with_gravity(1.62), &Surface::FAIRWAY);
+    let last = driver.flight.points.last().unwrap();
+    assert!(driver.flight.flight_time > 30.0 && driver.flight.flight_time < 120.0);
+    assert!(
+        last.pos.y.abs() < 1e-9,
+        "last flight point at y = {}",
+        last.pos.y
+    );
+
     // The same ball rolling away at 5 m/s: rolling resistance scales with
     // gravity, so it rolls about 9.81 / 1.62 times as far.
     let rolling = BallState {

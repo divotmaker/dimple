@@ -96,7 +96,8 @@ impl ShotInput {
 /// line, origin at the tee.
 #[derive(Debug, Clone, Copy)]
 pub struct TrajectoryPoint {
-    /// Time since launch (s).
+    /// Shot time (s): 0 at launch, and continuing from the start state's
+    /// time for a flight from [`simulate_flight_from`].
     pub time: f64,
     /// Position (m).
     pub pos: Vec3,
@@ -145,10 +146,11 @@ pub struct FlightResult {
 /// point every 10 ms, plus the landing point, which is interpolated to the
 /// exact ground crossing.
 ///
-/// `model` gives everything the air does: gravity, along −Y with magnitude
-/// [`AeroModel::gravity`], plus [`AeroModel::acceleration`] at every RK4
-/// stage, with the spin advanced by [`AeroModel::spin_after`] once per
-/// step. [`Tour`](crate::Tour) is dimple's model; its wind acts on the
+/// Gravity acts along −Y with the magnitude [`AeroModel::gravity`] of `model`
+/// (standard gravity, [`units::G`], unless the model overrides it), added to
+/// [`AeroModel::acceleration`] at every RK4 stage; the spin is advanced by
+/// [`AeroModel::spin_after`] once per step. A flight that has not landed
+/// after 120 s ends there, in the air. [`Tour`](crate::Tour) is dimple's model; its wind acts on the
 /// ball's velocity relative to the air, so a headwind makes the ball fly as
 /// if the air were faster and a crosswind curves it downwind. A uniform wind
 /// is not a frame shift of the still-air trajectory: the relative airspeed
@@ -226,7 +228,7 @@ fn launch_velocity(input: &ShotInput) -> Vec3 {
     )
 }
 
-/// Flight from `start` until `ground.landing` reports a crossing (or 30 s).
+/// Flight from `start` until `ground.landing` reports a crossing (or 120 s).
 /// Returns the flight and the full landing state.
 ///
 /// The model is handed the ball's height above `ground` at every stage.
@@ -237,7 +239,7 @@ fn fly<G: GroundModel + ?Sized>(
 ) -> (FlightResult, BallState) {
     const DT: f64 = 0.001; // 1 ms timestep
     const SAMPLE_EVERY: u32 = 10; // record every 10 ms
-    const MAX_STEPS: u32 = 30_000; // 30 seconds max
+    const MAX_STEPS: u32 = 120_000; // 120 seconds max
 
     let floor = ground.height(start.pos.x, start.pos.z);
     if start.pos.y < floor {
@@ -252,7 +254,7 @@ fn fly<G: GroundModel + ?Sized>(
     let gravity = Vec3::new(0.0, -model.gravity(), 0.0);
     let mut prev = *start;
     let mut apex = 0.0_f64;
-    let mut points = Vec::with_capacity((MAX_STEPS / SAMPLE_EVERY + 2) as usize);
+    let mut points = Vec::with_capacity(1024);
     points.push(trajectory_point(&prev));
 
     let mut landing = None;
