@@ -1,9 +1,8 @@
 use crate::Vec3;
 
-use super::{BallState, GRAVITY, GroundSample, Phase, find_root, holds_at_rest};
-use crate::aero::BallModel;
+use super::{BallState, GroundSample, Phase, find_root, holds_at_rest};
+use crate::aero::AeroModel;
 use crate::rk4::{self, Integrable};
-use crate::units::G;
 
 /// Contact-point slip speed, or rolling speed, (m/s) treated as zero.
 /// Slides end exactly at zero slip and rolls exactly at zero speed; this
@@ -60,10 +59,12 @@ fn saturate_pivot(start: Vec3, end: Vec3, n: Vec3) -> Vec3 {
     }
 }
 
-/// Tangential gravity `g − (g·n)n` on ground with unit normal `n`: the
-/// downhill pull (m/s²), zero on level ground.
-pub(super) fn tangential_gravity(n: Vec3) -> Vec3 {
-    GRAVITY - GRAVITY.dot(n) * n
+/// Tangential gravity `g − (g·n)n` on ground with unit normal `n`, for
+/// gravity of magnitude `g` along −Y: the downhill pull (m/s²), zero on
+/// level ground.
+pub(super) fn tangential_gravity(n: Vec3, g: f64) -> Vec3 {
+    let gravity = Vec3::new(0.0, -g, 0.0);
+    gravity - gravity.dot(n) * n
 }
 
 /// Put a ball that has just stepped across the ground back onto it.
@@ -174,20 +175,20 @@ fn pivot_friction(w_n: f64, pivot_rate: f64, n: Vec3) -> Vec3 {
 pub(super) fn contact_step(
     state: &BallState,
     at: &GroundSample,
-    ball: &BallModel,
+    model: &dyn AeroModel,
     dt: f64,
     stop_speed: f64,
     roll_threshold: f64,
 ) -> (BallState, Phase, bool) {
     let n = at.normal.normalize();
     let surface = &at.surface;
-    let radius = ball.radius_m();
-    let k = ball.inertia_factor;
+    let radius = model.radius_m();
+    let k = model.inertia_factor();
     let inertia = k * radius * radius; // per unit mass
 
     // Normal load and tangential gravity per unit mass.
-    let g_n = G * n.y;
-    let g_t = tangential_gravity(n);
+    let g_n = model.gravity() * n.y;
+    let g_t = tangential_gravity(n, model.gravity());
 
     let vel = state.vel - state.vel.dot(n) * n;
     let spin = state.spin;
@@ -244,7 +245,7 @@ pub(super) fn contact_step(
     // At (rounding-level) zero speed the ball stops exactly when the slope
     // holds it, the same test the caller uses to end the roll.
     let stops = if speed <= SLIP_EPS {
-        holds_at_rest(n, surface)
+        holds_at_rest(n, surface, model.gravity())
     } else {
         a0 >= 0.0 && speed <= stop_speed.max(a0 * dt)
     };

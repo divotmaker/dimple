@@ -15,7 +15,7 @@ use crate::units::{self, G};
 pub const STIMPMETER_SPEED: f64 = 1.83;
 
 /// Inertia factor k = I/(m·R²) of the ball the stimpmeter conversions
-/// assume: a uniform solid sphere, as in both [`BallModel`](crate::aero::BallModel) presets.
+/// assume: a uniform solid sphere, as in [`Tour`](crate::Tour).
 const STIMP_INERTIA_FACTOR: f64 = 0.4;
 
 /// Penner (2002) eq. 8 reference contact angle θc (rad): 15.4°, his fit to
@@ -283,8 +283,8 @@ impl Surface {
     /// Exponential:  I = 2·v_ref²·(1 − e^(−s₀)·(1 + s₀))
     /// ```
     ///
-    /// k = 2/5 (a uniform solid sphere, the inertia factor of both
-    /// [`BallModel`](crate::aero::BallModel) presets). A ball with another inertia factor rolls
+    /// k = 2/5 (a uniform solid sphere, the inertia factor of
+    /// [`Tour`](crate::Tour)). A ball with another inertia factor rolls
     /// `(1+k)/1.4` times this distance.
     ///
     /// Returns the surface unchanged if `feet` is not finite and positive,

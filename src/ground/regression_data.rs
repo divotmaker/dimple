@@ -1,7 +1,7 @@
 //! Reference impact sequences for the planar regression test.
 //!
 //! Each entry is a preset shot (`ShotInput::driver`, `seven_iron`, `wedge`
-//! with `BallModel::TOUR` at sea level) landing on `Surface::FAIRWAY` or
+//! with `Tour::SEA_LEVEL`) landing on `Surface::FAIRWAY` or
 //! `Surface::GREEN` with zero sidespin and zero azimuth, solved with the
 //! planar (2D) form of the same impact model: Penner's eq. 8 tilt, faded in
 //! linearly below 2 m/s of normal impact speed, Daish's grip/slip impulse in

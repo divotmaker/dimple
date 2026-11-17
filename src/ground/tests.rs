@@ -1,20 +1,24 @@
 use super::regression_data::REFERENCES;
 use super::*;
-use crate::environment::Environment;
+use crate::aero::Tour;
+use crate::air::Wind;
 use crate::units;
 
-const BALL: BallModel = BallModel::TOUR;
+const BALL: Tour = Tour::SEA_LEVEL;
 const R: f64 = 0.04267 / 2.0;
 
+/// Gravity vector (m/s²).
+const GRAVITY: Vec3 = Vec3::new(0.0, -G, 0.0);
+
+static NO_AIR: Tour = Tour::new(0.0, Wind::None);
+static STILL_AIR: Tour = Tour::SEA_LEVEL;
+
 /// No air: ballistic hops, gravity only.
-const VACUUM: &Environment = &Environment {
-    measured_air_density: Some(0.0),
-    ..Environment::SEA_LEVEL
-};
+const VACUUM: &Tour = &NO_AIR;
 
 /// Still air at sea level.
-fn air() -> &'static Environment {
-    &Environment::SEA_LEVEL
+fn air() -> &'static Tour {
+    &STILL_AIR
 }
 
 fn rpm_to_rads(rpm: f64) -> f64 {
@@ -49,13 +53,13 @@ fn penner_impact(speed: f64, from_vertical_deg: f64) -> Vec3 {
 
 /// Mechanical energy per unit mass: translation + rotation + height.
 fn energy(vel: Vec3, spin: Vec3, y: f64) -> f64 {
-    let k = BALL.inertia_factor;
+    let k = BALL.inertia_factor();
     0.5 * vel.length_squared() + 0.5 * k * R * R * spin.length_squared() + G * y
 }
 
 /// Ground phase only: a ball already on flat ground moving horizontally.
 fn roll(vel: Vec3, spin: Vec3, surface: &Surface) -> GroundResult {
-    surface.settle(&state(vel, spin), &BALL, air())
+    surface.settle(&state(vel, spin), air())
 }
 
 /// Rolling spin for a ball moving along +X at `v` (no slip).
@@ -93,7 +97,7 @@ fn planar_impacts_match_reference() {
             vel: Vec3::from(r.landing_vel),
             spin: backspin(r.backspin),
         };
-        let g = r.surface.settle(&landing, &BALL, VACUUM);
+        let g = r.surface.settle(&landing, VACUUM);
         let label = format!(
             "{} on {}",
             r.name,
@@ -117,7 +121,7 @@ fn planar_impacts_match_reference() {
                 expected.y = 0.0;
                 if slip(expected, expected_spin, Vec3::Y, R).length() <= DEFAULT_ROLL_THRESHOLD {
                     (expected, expected_spin) =
-                        lock_rolling(expected, expected_spin, Vec3::Y, R, BALL.inertia_factor);
+                        lock_rolling(expected, expected_spin, Vec3::Y, R, BALL.inertia_factor());
                 }
             }
             let scale = expected.length().max(1.0);
@@ -550,7 +554,7 @@ fn spin_back_into_ground_rolls_instead_of_rebounding_down() {
     let vel = Vec3::new(10.0, -10.0, 0.0);
     let raw = hit(vel, backspin(1500.0), &surface);
     assert!(raw.vel.y < 0.0, "impulse alone points into the ground");
-    let g = surface.settle(&state(vel, backspin(1500.0)), &BALL, air());
+    let g = surface.settle(&state(vel, backspin(1500.0)), air());
     assert_eq!(g.contacts.len(), 1);
     assert!(g.contacts[0].vel_out.y == 0.0);
     assert!(g.contacts[0].vel_out.x < 0.0);
@@ -594,7 +598,7 @@ fn penner_nine_iron_bounces_backward_on_green() {
 /// Net run (m) along x from the landing point: hops, slide and roll.
 /// Run (m) past the landing point with ballistic hops, as in Penner's model.
 fn run_out(vel: Vec3, w: f64, surface: &Surface) -> f64 {
-    let g = surface.settle(&state(vel, backspin(w)), &BALL, VACUUM);
+    let g = surface.settle(&state(vel, backspin(w)), VACUUM);
     assert_ends_by_hop_height(&g);
     g.rest.pos.x
 }
@@ -678,7 +682,6 @@ fn ball_rolling_backward_keeps_rolling_backward() {
 fn bounce_sequence_terminates() {
     let g = Surface::FAIRWAY.settle(
         &state(Vec3::new(20.0, -15.0, 0.0), backspin(rpm_to_rads(3000.0))),
-        &BALL,
         air(),
     );
     assert_ends_by_hop_height(&g);
@@ -690,7 +693,7 @@ fn bounce_sequence_stops_below_threshold() {
     // Penner's e rising toward 0.51 as the ball slows. Rebounds of 2.26,
     // 0.97, 0.46 and 0.23 m/s rise 260, 48, 10.8 and 2.6 mm: the fourth is
     // below the 5 mm transition height.
-    let g = Surface::FAIRWAY.settle(&state(Vec3::new(0.0, -15.0, 0.0), Vec3::ZERO), &BALL, air());
+    let g = Surface::FAIRWAY.settle(&state(Vec3::new(0.0, -15.0, 0.0), Vec3::ZERO), air());
     assert_eq!(g.contacts.len(), 4);
     assert_ends_by_hop_height(&g);
     assert!(g.rest.pos.length() < 1e-9);
@@ -706,7 +709,7 @@ fn bounce_sequence_safety_bound() {
         ..GroundPhysics::new(plane(1.0, 0.0, 0.0))
     };
     let start = state(Vec3::new(5.0, -5.0, 0.0), Vec3::ZERO);
-    let g = physics.settle(&start, &BALL, VACUUM);
+    let g = physics.settle(&start, VACUUM);
     assert_eq!(g.termination, Termination::MaxImpacts);
     assert_eq!(g.contacts.len(), 200);
     assert!(g.contacts.iter().all(|c| c.vel_out.y > 4.99));
@@ -715,7 +718,7 @@ fn bounce_sequence_safety_bound() {
     assert_eq!(*end, GroundPoint::new(&g.rest, Phase::Hop));
     assert_eq!(end.time, g.contacts[199].time);
     // With the default limits the same ball runs out of time instead.
-    let timed = plane(1.0, 0.0, 0.0).settle(&start, &BALL, VACUUM);
+    let timed = plane(1.0, 0.0, 0.0).settle(&start, VACUUM);
     assert_eq!(timed.termination, Termination::MaxTime);
     assert!((timed.rest.time - 120.0).abs() < 1e-9);
 }
@@ -724,7 +727,6 @@ fn bounce_sequence_safety_bound() {
 fn bounce_sequence_height_decreases() {
     let g = Surface::FAIRWAY.settle(
         &state(Vec3::new(15.0, -10.0, 0.0), backspin(rpm_to_rads(2000.0))),
-        &BALL,
         air(),
     );
     for w in g.contacts.windows(2) {
@@ -739,7 +741,6 @@ fn contacts_record_true_arrival_velocity() {
     // component reversed.
     let g = Surface::GREEN.settle(
         &state(Vec3::new(12.0, -9.0, 1.0), Vec3::new(0.0, -40.0, 400.0)),
-        &BALL,
         VACUUM,
     );
     assert!(g.contacts.len() > 3);
@@ -756,7 +757,6 @@ fn contacts_record_true_arrival_velocity() {
 fn soft_drop_ends_by_hop_height() {
     let g = Surface::GREEN.settle(
         &state(Vec3::new(5.0, -1.0, 0.0), backspin(rpm_to_rads(500.0))),
-        &BALL,
         air(),
     );
     assert_ends_by_hop_height(&g);
@@ -769,8 +769,8 @@ fn soft_drop_ends_by_hop_height() {
 /// A single hop on `FAIRWAY`: a ball leaving the ground at `vel` (moving
 /// up, so the first contact applies no impulse) with `spin`, through the
 /// air of `env`. Returns the arrival contact.
-fn hop_with(vel: Vec3, spin: Vec3, env: &Environment) -> Contact {
-    let g = Surface::FAIRWAY.settle(&state(vel, spin), &BALL, env);
+fn hop_with(vel: Vec3, spin: Vec3, env: &Tour) -> Contact {
+    let g = Surface::FAIRWAY.settle(&state(vel, spin), env);
     assert_eq!(g.contacts[0].vel_out, vel, "no impulse leaving the ground");
     g.contacts[1]
 }
@@ -781,8 +781,8 @@ fn vacuum_hops_are_bit_identical() {
     // the bit, and every arrival is on the parabola from the rebound before
     // it, with the spin carried unchanged.
     let start = state(Vec3::new(21.3, -18.5, 0.0), backspin(212.0));
-    let physics = GroundPhysics::new(Surface::FAIRWAY).settle(&start, &BALL, VACUUM);
-    let surface = Surface::FAIRWAY.settle(&start, &BALL, VACUUM);
+    let physics = GroundPhysics::new(Surface::FAIRWAY).settle(&start, VACUUM);
+    let surface = Surface::FAIRWAY.settle(&start, VACUUM);
     assert_eq!(physics, surface);
     assert!(surface.contacts.len() > 5);
     for w in surface.contacts.windows(2) {
@@ -792,7 +792,7 @@ fn vacuum_hops_are_bit_identical() {
         assert!((w[1].vel_in - (w[0].vel_out + GRAVITY * tau)).length() < 1e-9);
         assert_eq!(w[1].spin_in, w[0].spin_out);
     }
-    assert_ne!(surface, Surface::FAIRWAY.settle(&start, &BALL, air()));
+    assert_ne!(surface, Surface::FAIRWAY.settle(&start, air()));
 }
 
 #[test]
@@ -801,8 +801,8 @@ fn hops_lose_speed_to_drag() {
     // and the hop through air arrives earlier, nearer and slower, on the
     // ground, still carrying the rebound's spin exactly.
     let start = state(Vec3::new(21.3, -18.5, 0.0), backspin(212.0));
-    let vacuum = Surface::FAIRWAY.settle(&start, &BALL, VACUUM);
-    let air = Surface::FAIRWAY.settle(&start, &BALL, air());
+    let vacuum = Surface::FAIRWAY.settle(&start, VACUUM);
+    let air = Surface::FAIRWAY.settle(&start, air());
     assert_eq!(vacuum.contacts[0], air.contacts[0]);
     let (v, a) = (&vacuum.contacts[1], &air.contacts[1]);
     assert!(a.time < v.time, "{} vs {} s", a.time, v.time);
@@ -824,13 +824,19 @@ fn hop_drag_scales_with_density() {
     // Thinner air takes less of the run: the loss against ballistic hops
     // shrinks from sea level to Denver to Mexico City.
     let start = state(Vec3::new(21.3, -18.5, 0.0), backspin(212.0));
-    let run = |env: &Environment| Surface::FAIRWAY.settle(&start, &BALL, env).rest.pos.x;
+    let run = |env: &Tour| Surface::FAIRWAY.settle(&start, env).rest.pos.x;
     let ballistic = run(VACUUM);
-    let loss = |env: Environment| ballistic - run(&env);
+    let loss = |env: Tour| ballistic - run(&env);
+    let at = |altitude_m, temperature_c| {
+        Tour::new(
+            crate::air::standard_air_density(altitude_m, temperature_c),
+            Wind::None,
+        )
+    };
     let (sea, denver, mexico) = (
-        loss(Environment::SEA_LEVEL),
-        loss(Environment::DENVER),
-        loss(Environment::MEXICO_CITY),
+        loss(Tour::SEA_LEVEL),
+        loss(at(1609.0, 17.0)),
+        loss(at(2240.0, 16.0)),
     );
     assert!(
         sea > denver && denver > mexico && mexico > 0.0,
@@ -996,7 +1002,7 @@ fn tilt_throw_magnitude() {
     // along −û gives the lateral impulse
     //   grip:  Δv_z = (k/(1+k))·R·w·sin β
     //   slip:  Δv_z = μ·j_n·R·w·sin β / |u|,  j_n = (1+e)·|v·n'|
-    let k = BALL.inertia_factor;
+    let k = BALL.inertia_factor();
     let e = 0.4;
     let vel = Vec3::new(18.0, -15.0, 0.0);
     let incidence = vel.x.atan2(-vel.y);
@@ -1411,7 +1417,7 @@ fn energy_never_increases_over_the_ground_phase() {
     ];
     for (vel, spin) in starts {
         for surface in [Surface::FAIRWAY, Surface::GREEN] {
-            let g = surface.settle(&state(vel, spin), &BALL, air());
+            let g = surface.settle(&state(vel, spin), air());
             let mut prev = energy(vel, spin, 0.0);
             for p in &g.points {
                 let e = energy(p.vel, p.spin, p.pos.y);
@@ -1451,8 +1457,8 @@ fn fairway_rolls_less_than_green_from_the_same_landing() {
             Vec3::new(speed * a.cos(), -speed * a.sin(), 0.0),
             backspin(rpm_to_rads(rpm)),
         );
-        let fairway = Surface::FAIRWAY.settle(&landing, &BALL, air());
-        let green = Surface::GREEN.settle(&landing, &BALL, air());
+        let fairway = Surface::FAIRWAY.settle(&landing, air());
+        let green = Surface::GREEN.settle(&landing, air());
         assert_eq!(
             fairway.contacts,
             green
@@ -1556,15 +1562,30 @@ fn ground_physics_step() {
     );
 }
 
+/// The tour ball in still sea-level air with inertia factor `.0`.
+struct Hollow(f64);
+
+impl AeroModel for Hollow {
+    fn acceleration(&self, ball: &BallState, height: f64) -> Vec3 {
+        STILL_AIR.acceleration(ball, height)
+    }
+    fn spin_after(&self, ball: &BallState, dt: f64) -> Vec3 {
+        STILL_AIR.spin_after(ball, dt)
+    }
+    fn radius_m(&self) -> f64 {
+        STILL_AIR.radius_m()
+    }
+    fn inertia_factor(&self) -> f64 {
+        self.0
+    }
+}
+
 #[test]
 fn hollow_ball_follows_generalized_formulas() {
     // A thin-shelled ball, k = 2/3, follows the general-k forms of the
     // grip kick, the slide-to-roll time and the stimpmeter distance.
     let k = 2.0 / 3.0;
-    let hollow = BallModel {
-        inertia_factor: k,
-        ..BallModel::TOUR
-    };
+    let hollow = Hollow(k);
 
     // Grip on rigid ground: heading atan(v_z / (v_x − k·R·ω_b)).
     let rigid = plane(0.5, 1.0, 0.0);
@@ -1582,14 +1603,14 @@ fn hollow_ball_follows_generalized_formulas() {
     let vel = Vec3::new(3.0, 0.0, 0.5);
     let spin = Vec3::new(-20.0, 30.0, 300.0);
     let expected = slip(vel, spin, Vec3::Y, R).length() / ((1.0 + k) / k * 0.40 * G);
-    let g = Surface::GREEN.settle(&state(vel, spin), &hollow, air());
+    let g = Surface::GREEN.settle(&state(vel, spin), &hollow);
     let roll_start = g.points.iter().find(|p| p.phase == Phase::Roll).unwrap();
     assert!((roll_start.time - expected).abs() < 1e-12);
 
     // Stimpmeter: (1+k)·v_ref²/(2·μ_roll·g)·ln(1 + v₀²/v_ref²).
     let v0 = STIMPMETER_SPEED;
     for surface in [Surface::GREEN, Surface::FAIRWAY] {
-        let g = surface.settle(&state(Vec3::new(v0, 0.0, 0.0), rolling(v0)), &hollow, air());
+        let g = surface.settle(&state(Vec3::new(v0, 0.0, 0.0), rolling(v0)), &hollow);
         let RollLaw::Quadratic { v_ref: vr } = surface.roll_law else {
             panic!("presets use the quadratic law");
         };
@@ -1625,20 +1646,12 @@ fn ground_point_times_are_monotonic() {
             max_time: 0.0237,
             ..GroundPhysics::new(Surface::GREEN)
         }
-        .settle(
-            &state(Vec3::new(3.0, 0.0, 0.0), backspin(300.0)),
-            &BALL,
-            air(),
-        ),
+        .settle(&state(Vec3::new(3.0, 0.0, 0.0), backspin(300.0)), air()),
         GroundPhysics {
             max_impacts: 3,
             ..GroundPhysics::new(Surface::FAIRWAY)
         }
-        .settle(
-            &state(Vec3::new(21.3, -18.5, 0.0), backspin(212.0)),
-            &BALL,
-            air(),
-        ),
+        .settle(&state(Vec3::new(21.3, -18.5, 0.0), backspin(212.0)), air()),
     ];
     for (vel, spin) in [
         (Vec3::new(21.3, -18.5, 0.0), backspin(212.0)),
@@ -1646,7 +1659,7 @@ fn ground_point_times_are_monotonic() {
         (Vec3::new(9.0, -20.0, -1.0), Vec3::new(10.0, 40.0, 700.0)),
     ] {
         for surface in [Surface::FAIRWAY, Surface::GREEN] {
-            results.push(surface.settle(&state(vel, spin), &BALL, air()));
+            results.push(surface.settle(&state(vel, spin), air()));
         }
     }
     for g in &results {
@@ -1690,7 +1703,7 @@ fn roll_from_fairway_onto_green_ends_between() {
         },
     }));
     let start = state(Vec3::new(v0, 0.0, 0.0), rolling(v0));
-    let g = mixed.settle(&start, &BALL, air());
+    let g = mixed.settle(&start, air());
     let fairway = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &Surface::FAIRWAY);
     let green = roll(Vec3::new(v0, 0.0, 0.0), rolling(v0), &Surface::GREEN);
     assert_eq!(g.termination, Termination::Rest);
@@ -1717,11 +1730,8 @@ fn landing_on_green_from_fn_terrain_uses_green() {
             Surface::FAIRWAY
         },
     });
-    let g = GroundPhysics::new(terrain).settle(
-        &state(Vec3::new(10.0, -8.0, 0.0), backspin(300.0)),
-        &BALL,
-        air(),
-    );
+    let g = GroundPhysics::new(terrain)
+        .settle(&state(Vec3::new(10.0, -8.0, 0.0), backspin(300.0)), air());
     assert_eq!(g.contacts[0].surface, Surface::FAIRWAY);
     assert!(g.contacts[1..].iter().all(|c| c.surface == Surface::GREEN));
 }
@@ -1736,7 +1746,7 @@ fn long_roll_reports_max_time() {
             ..Surface::GREEN
         })
     };
-    let g = physics.settle(&state(Vec3::new(3.0, 0.0, 0.0), rolling(3.0)), &BALL, air());
+    let g = physics.settle(&state(Vec3::new(3.0, 0.0, 0.0), rolling(3.0)), air());
     assert_eq!(g.termination, Termination::MaxTime);
     assert!((g.rest.time - 2.0).abs() < 1e-9);
     assert!((g.rest.pos.x - 6.0).abs() < 1e-6);
@@ -1746,21 +1756,21 @@ fn long_roll_reports_max_time() {
 #[test]
 fn ground_physics_tunables() {
     let start = state(Vec3::new(15.0, -10.0, 0.0), backspin(250.0));
-    let default = GroundPhysics::new(Surface::FAIRWAY).settle(&start, &BALL, air());
-    assert_eq!(default, Surface::FAIRWAY.settle(&start, &BALL, air()));
+    let default = GroundPhysics::new(Surface::FAIRWAY).settle(&start, air());
+    assert_eq!(default, Surface::FAIRWAY.settle(&start, air()));
     // A higher hop transition ends the bouncing sooner.
     let fewer = GroundPhysics {
         min_hop_height: 0.05,
         ..GroundPhysics::new(Surface::FAIRWAY)
     }
-    .settle(&start, &BALL, air());
+    .settle(&start, air());
     assert!(fewer.contacts.len() < default.contacts.len());
     // A coarser step barely moves the rest position.
     let coarse = GroundPhysics {
         dt: 0.004,
         ..GroundPhysics::new(Surface::FAIRWAY)
     }
-    .settle(&start, &BALL, air());
+    .settle(&start, air());
     assert!((coarse.rest.pos - default.rest.pos).length() < 1e-3);
 }
 

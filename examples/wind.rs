@@ -4,8 +4,8 @@
 //!
 //! `cargo run --release --example wind`
 
-use dimple::environment::Wind;
-use dimple::{BallModel, Environment, ShotInput, Surface, Vec3, simulate_shot};
+use dimple::air::Wind;
+use dimple::{ShotInput, Surface, Tour, Vec3, simulate_shot};
 
 fn main() {
     let input = ShotInput {
@@ -38,18 +38,15 @@ fn main() {
             "wind", "carry m", "total m", "lateral m"
         );
         for (label, wind) in cases {
-            let env = Environment {
-                wind: if profile {
-                    Wind::PowerLaw { at_10m: wind }
-                } else {
-                    Wind::Uniform(wind)
-                },
-                ..Environment::SEA_LEVEL
+            let wind = if profile {
+                Wind::PowerLaw { at_10m: wind }
+            } else {
+                Wind::Uniform(wind)
             };
-            let shot = simulate_shot(&input, &BallModel::TOUR, &env, &Surface::FAIRWAY);
+            let shot = simulate_shot(&input, &Tour::new(1.225, wind), &Surface::FAIRWAY);
             println!(
                 "{label:<22} {:>9.1} {:>9.1} {:>9.1}",
-                shot.flight.carry_m, shot.total_m, shot.final_pos.z
+                shot.flight.carry_m, shot.total_m, shot.ground.rest.pos.z
             );
         }
     }

@@ -27,21 +27,22 @@
 //!   independent of its launch speed, at a distance proportional to v₀².
 
 use super::*;
-use crate::environment::Environment;
+use crate::aero::Tour;
+use crate::air::Wind;
 use crate::units;
 
-const BALL: BallModel = BallModel::TOUR;
+const BALL: Tour = Tour::SEA_LEVEL;
 const R: f64 = 0.04267 / 2.0;
 
+static NO_AIR: Tour = Tour::new(0.0, Wind::None);
+static STILL_AIR: Tour = Tour::SEA_LEVEL;
+
 /// No air: ballistic hops, gravity only.
-const VACUUM: &Environment = &Environment {
-    measured_air_density: Some(0.0),
-    ..Environment::SEA_LEVEL
-};
+const VACUUM: &Tour = &NO_AIR;
 
 /// Still air at sea level.
-fn air() -> &'static Environment {
-    &Environment::SEA_LEVEL
+fn air() -> &'static Tour {
+    &STILL_AIR
 }
 
 /// A plane rising at `grade` (rise over run) toward +X, made of `surface`.
@@ -82,11 +83,7 @@ fn rolling_start(grade: f64, heading: Vec3, speed: f64) -> BallState {
 /// A stimpmeter roll along +X on a plane rising at `grade` (negative:
 /// downhill).
 fn stimp_roll(surface: Surface, grade: f64) -> GroundResult {
-    incline(grade, surface).settle(
-        &rolling_start(grade, Vec3::X, STIMPMETER_SPEED),
-        &BALL,
-        VACUUM,
-    )
+    incline(grade, surface).settle(&rolling_start(grade, Vec3::X, STIMPMETER_SPEED), VACUUM)
 }
 
 /// Length (ft) of a stimpmeter roll along a plane rising at `grade`,
@@ -194,11 +191,7 @@ fn green_cannot_hold_downhill_stimp_roll_past_hold_grade() {
         max_time: 20.0,
         ..incline(-0.06, Surface::GREEN)
     }
-    .settle(
-        &rolling_start(-0.06, Vec3::X, STIMPMETER_SPEED),
-        &BALL,
-        VACUUM,
-    );
+    .settle(&rolling_start(-0.06, Vec3::X, STIMPMETER_SPEED), VACUUM);
     assert_eq!(six.termination, Termination::MaxTime);
     assert!(six.rest.vel.length() > 0.7, "{}", six.rest.vel.length());
 
@@ -548,11 +541,7 @@ const SAND_WEDGE: (f64, f64, f64) = (49.0, 51.0, 9100.0);
 /// `grade` in the direction of play, through sea-level air; negative when
 /// the ball finishes behind its landing point.
 fn bounce_and_roll_ft(surface: Surface, grade: f64, (mph, descent, rpm): (f64, f64, f64)) -> f64 {
-    let g = incline(grade, surface).settle(
-        &landing(units::mph_to_mps(mph), descent, rpm),
-        &BALL,
-        air(),
-    );
+    let g = incline(grade, surface).settle(&landing(units::mph_to_mps(mph), descent, rpm), air());
     assert_eq!(g.termination, Termination::Rest);
     units::meters_to_feet(g.rest.pos.x * grade.hypot(1.0))
 }
@@ -634,7 +623,7 @@ fn cross_break_angle_independent_of_speed_under_constant_law() {
         let mut first: Option<(f64, f64)> = None;
         for v0 in [0.5, 1.0, 2.0, 3.0] {
             let start = rolling_start(grade, heading, v0);
-            let g = ground.settle(&start, &BALL, VACUUM);
+            let g = ground.settle(&start, VACUUM);
             assert_eq!(g.termination, Termination::Rest);
             let d = g.rest.pos - start.pos;
             let angle = units::rad_to_deg(angle_between(d, start.vel));

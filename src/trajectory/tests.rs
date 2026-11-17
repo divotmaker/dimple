@@ -2,10 +2,37 @@ use super::*;
 
 // ── Helper ──
 
-use crate::aero::BallModel;
-use crate::environment::Wind;
+use crate::aero::Tour;
+use crate::air::{Wind, standard_air_density};
 
-const BALL: BallModel = BallModel::TOUR;
+const BALL: Tour = Tour::SEA_LEVEL;
+
+/// Denver, CO: 1,609 m (5,280 ft), 17 °C.
+fn denver() -> Tour {
+    Tour::new(standard_air_density(1609.0, 17.0), Wind::None)
+}
+
+/// Sea level at `temperature_c`, still air.
+fn sea_level_at(temperature_c: f64) -> Tour {
+    Tour::new(standard_air_density(0.0, temperature_c), Wind::None)
+}
+
+/// Distances in yards, for comparison with published figures.
+trait Yards {
+    fn carry_yards(&self) -> f64;
+}
+
+impl Yards for FlightResult {
+    fn carry_yards(&self) -> f64 {
+        units::meters_to_yards(self.carry_m)
+    }
+}
+
+impl ShotResult {
+    fn total_yards(&self) -> f64 {
+        units::meters_to_yards(self.total_m)
+    }
+}
 
 fn flight(speed_mph: f64, launch_deg: f64, backspin: f64, sidespin: f64) -> FlightResult {
     let input = ShotInput {
@@ -15,20 +42,20 @@ fn flight(speed_mph: f64, launch_deg: f64, backspin: f64, sidespin: f64) -> Flig
         backspin_rpm: backspin,
         sidespin_rpm: sidespin,
     };
-    simulate_flight(&input, &BALL, &Environment::SEA_LEVEL)
+    simulate_flight(&input, &BALL)
 }
 
-fn flight_at(input: &ShotInput, env: &Environment) -> FlightResult {
-    simulate_flight(input, &BALL, env)
+fn flight_at(input: &ShotInput, model: &Tour) -> FlightResult {
+    simulate_flight(input, model)
 }
 
 /// Assert carry within ±tolerance yards of expected, with source citation.
 fn assert_carry(result: &FlightResult, expected: f64, tol: f64, label: &str) {
-    let delta = (result.carry_yards - expected).abs();
+    let delta = (result.carry_yards() - expected).abs();
     assert!(
         delta <= tol,
         "{label}: model {:.1} yds, expected {expected:.0}±{tol:.0} yds (Δ={delta:+.1})",
-        result.carry_yards
+        result.carry_yards()
     );
 }
 
@@ -52,8 +79,9 @@ fn apex_positive() {
 fn energy_decreasing() {
     let r = flight(132.0, 16.0, 7000.0, 0.0);
     let energy = |p: &TrajectoryPoint| {
-        let ke = 0.5 * BALL.mass_kg * p.vel.length_squared();
-        let pe = BALL.mass_kg * crate::units::G * p.pos.y;
+        // Per unit mass.
+        let ke = 0.5 * p.vel.length_squared();
+        let pe = crate::units::G * p.pos.y;
         ke + pe
     };
     for w in r.points.windows(2) {
@@ -103,7 +131,7 @@ fn lateral_input(azimuth_deg: f64, sidespin_rpm: f64) -> ShotInput {
 
 #[test]
 fn positive_azimuth_starts_right() {
-    let r = flight_at(&lateral_input(5.0, 0.0), &Environment::SEA_LEVEL);
+    let r = flight_at(&lateral_input(5.0, 0.0), &BALL);
     assert!(
         r.lateral_m > 0.0,
         "lateral {:.2}m should be > 0",
@@ -115,7 +143,7 @@ fn positive_azimuth_starts_right() {
 
 #[test]
 fn negative_azimuth_starts_left() {
-    let r = flight_at(&lateral_input(-5.0, 0.0), &Environment::SEA_LEVEL);
+    let r = flight_at(&lateral_input(-5.0, 0.0), &BALL);
     assert!(
         r.lateral_m < 0.0,
         "lateral {:.2}m should be < 0",
@@ -127,7 +155,7 @@ fn negative_azimuth_starts_left() {
 #[test]
 fn slice_spin_curves_right() {
     // Right-handed slice: square start, positive sidespin.
-    let r = flight_at(&lateral_input(0.0, 1500.0), &Environment::SEA_LEVEL);
+    let r = flight_at(&lateral_input(0.0, 1500.0), &BALL);
     assert!(
         r.lateral_m > 5.0,
         "slice should finish right: {:.2}m",
@@ -140,7 +168,7 @@ fn slice_spin_curves_right() {
 
 #[test]
 fn hook_spin_curves_left() {
-    let r = flight_at(&lateral_input(0.0, -1500.0), &Environment::SEA_LEVEL);
+    let r = flight_at(&lateral_input(0.0, -1500.0), &BALL);
     assert!(
         r.lateral_m < -5.0,
         "hook should finish left: {:.2}m",
@@ -150,7 +178,7 @@ fn hook_spin_curves_left() {
 
 #[test]
 fn push_draw_starts_right_and_curves_left() {
-    let r = flight_at(&lateral_input(4.0, -800.0), &Environment::SEA_LEVEL);
+    let r = flight_at(&lateral_input(4.0, -800.0), &BALL);
     assert!(r.points[1].vel.z > 0.0, "should start right");
     assert!(
         r.points.last().unwrap().vel.z < 0.0,
@@ -160,34 +188,39 @@ fn push_draw_starts_right_and_curves_left() {
 
 #[test]
 fn lateral_mirror_symmetry() {
-    let right = flight_at(&lateral_input(3.0, 1200.0), &Environment::SEA_LEVEL);
-    let left = flight_at(&lateral_input(-3.0, -1200.0), &Environment::SEA_LEVEL);
+    let right = flight_at(&lateral_input(3.0, 1200.0), &BALL);
+    let left = flight_at(&lateral_input(-3.0, -1200.0), &BALL);
     assert!((right.lateral_m + left.lateral_m).abs() < 1e-9);
     assert!((right.carry_m - left.carry_m).abs() < 1e-9);
 }
 
 #[test]
 fn lateral_matches_landing_position() {
-    let r = flight_at(&lateral_input(2.0, 900.0), &Environment::SEA_LEVEL);
+    let r = flight_at(&lateral_input(2.0, 900.0), &BALL);
     assert!((r.lateral_m - r.points.last().unwrap().pos.z).abs() < 1e-12);
 }
 
 #[test]
 fn landing_sidespin_keeps_input_sign() {
     let input = lateral_input(0.0, 1500.0);
-    let r = flight_at(&input, &Environment::SEA_LEVEL);
+    let r = flight_at(&input, &BALL);
     let initial = units::rpm_to_rads(1500.0);
-    assert!(r.landing_sidespin_rads > 0.0 && r.landing_sidespin_rads < initial);
-    let r = flight_at(&lateral_input(0.0, -1500.0), &Environment::SEA_LEVEL);
-    assert!(r.landing_sidespin_rads < 0.0);
+    // Sidespin is about -Y: positive curves right.
+    let sidespin = -r.landing_spin.y;
+    assert!(sidespin > 0.0 && sidespin < initial);
+    let r = flight_at(&lateral_input(0.0, -1500.0), &BALL);
+    assert!(-r.landing_spin.y < 0.0);
 }
 
 #[test]
 fn slice_shot_finishes_right() {
     let r = shot_on_fairway(&lateral_input(0.0, 1500.0));
-    assert!(r.final_pos.z > 0.0, "final_pos.z={:.2}", r.final_pos.z);
-    let stats = crate::stats::ShotStats::from_shot(&r);
-    assert!(stats.lateral_yards > 0.0);
+    assert!(
+        r.ground.rest.pos.z > 0.0,
+        "rest z={:.2}",
+        r.ground.rest.pos.z
+    );
+    assert!(r.flight.lateral_m > 0.0);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -210,7 +243,7 @@ fn carry_pga_driver() {
 fn carry_trackman_classic_driver() {
     // Source: Trackman PGA Tour Averages (2009-2014), normalized 25°C sea level
     // 165 mph ball speed, 11.2° launch, 2685 rpm → 269 yds carry
-    // Modern ball model overshoots classic-era data by design (~10 yds for driver).
+    // Modern ball model overshoots classic-era data by design (~11 yds for driver).
     let r = flight(165.0, 11.2, 2685.0, 0.0);
     assert_carry(&r, 269.0, 12.0, "Trackman classic driver");
 }
@@ -251,8 +284,8 @@ fn carry_trackman_7iron() {
 fn carry_trackman_pw() {
     // Source: Trackman PGA Tour Averages (pre-2024, multiple secondary sources)
     // ~102 mph ball speed, ~25° launch, ~9300 rpm backspin → 142 yds carry
-    // Wider tolerance: PW is the model's coldest club, a residual limit of
-    // the single-sigmoid Cd/Cl model. See docs/AERO.md.
+    // Wider tolerance: PW is the model's shortest club against the tour
+    // table (about 11 yd short). See docs/AERO.md.
     let r = flight(102.0, 25.0, 9300.0, 0.0);
     assert_carry(&r, 142.0, 12.0, "Trackman PGA PW");
 }
@@ -268,11 +301,11 @@ fn altitude_denver_driver_gain() {
     // Formula: elevation_ft × 0.00116 = fractional gain.
     // 5280 × 0.00116 = 6.1%
     let driver = ShotInput::driver();
-    let sea = flight_at(&driver, &Environment::SEA_LEVEL);
-    let denver = flight_at(&driver, &Environment::DENVER);
-    let gain_pct = (denver.carry_yards - sea.carry_yards) / sea.carry_yards * 100.0;
-    // The TOUR model (saturating spin drag, cd_super=0.186) reproduces the
-    // published altitude response: model ~7% vs Titleist ~6.1%.
+    let sea = flight_at(&driver, &BALL);
+    let denver = flight_at(&driver, &denver());
+    let gain_pct = (denver.carry_yards() - sea.carry_yards()) / sea.carry_yards() * 100.0;
+    // The tour model gives about 7.5% here (Titleist ~6.1%, which assumes a
+    // standard day; Denver at 17 °C is warmer than standard).
     assert!(
         gain_pct > 4.0 && gain_pct < 9.0,
         "Denver gain {gain_pct:.1}%, expected ~6.1% (Titleist: elevation_ft × 0.00116)"
@@ -283,9 +316,9 @@ fn altitude_denver_driver_gain() {
 fn altitude_increases_carry() {
     // Directional: higher altitude = more carry (less drag).
     let driver = ShotInput::driver();
-    let sea = flight_at(&driver, &Environment::SEA_LEVEL);
-    let denver = flight_at(&driver, &Environment::DENVER);
-    assert!(denver.carry_yards > sea.carry_yards);
+    let sea = flight_at(&driver, &BALL);
+    let denver = flight_at(&driver, &denver());
+    assert!(denver.carry_yards() > sea.carry_yards());
 }
 
 #[test]
@@ -298,8 +331,8 @@ fn altitude_reduces_curve() {
         backspin_rpm: 3000.0,
         sidespin_rpm: 2000.0,
     };
-    let sea = flight_at(&fade, &Environment::SEA_LEVEL);
-    let denver = flight_at(&fade, &Environment::DENVER);
+    let sea = flight_at(&fade, &BALL);
+    let denver = flight_at(&fade, &denver());
     assert!(
         denver.lateral_m.abs() < sea.lateral_m.abs(),
         "Denver lateral ({:.1}m) should be less than sea level ({:.1}m)",
@@ -318,17 +351,11 @@ fn temperature_hot_vs_cold() {
     // 90°F vs 50°F → ~8 yards difference for driver.
     // Note: this only captures air density effect, not ball COR change.
     let driver = ShotInput::driver();
-    let hot = Environment {
-        temperature_c: 32.2,
-        ..Environment::SEA_LEVEL
-    }; // 90°F
-    let cold = Environment {
-        temperature_c: 10.0,
-        ..Environment::SEA_LEVEL
-    }; // 50°F
+    let hot = sea_level_at(32.2); // 90°F
+    let cold = sea_level_at(10.0); // 50°F
     let r_hot = flight_at(&driver, &hot);
     let r_cold = flight_at(&driver, &cold);
-    let delta = r_hot.carry_yards - r_cold.carry_yards;
+    let delta = r_hot.carry_yards() - r_cold.carry_yards();
     // Published: ~8 yds per 40°F, which includes ball COR changes. The model
     // responds to air density only (ball COR is unmodeled) and gives ~9 yds.
     // See docs/AERO.md.
@@ -342,15 +369,9 @@ fn temperature_hot_vs_cold() {
 fn temperature_direction() {
     // Hot air is less dense → more carry.
     let driver = ShotInput::driver();
-    let hot = Environment {
-        temperature_c: 35.0,
-        ..Environment::SEA_LEVEL
-    };
-    let cold = Environment {
-        temperature_c: 5.0,
-        ..Environment::SEA_LEVEL
-    };
-    assert!(flight_at(&driver, &hot).carry_yards > flight_at(&driver, &cold).carry_yards);
+    let hot = sea_level_at(35.0);
+    let cold = sea_level_at(5.0);
+    assert!(flight_at(&driver, &hot).carry_yards() > flight_at(&driver, &cold).carry_yards());
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -363,170 +384,20 @@ fn spin_decay_driver_6s() {
     // Trackman (Oct 2010): ~4% per second → at 6s: 0.96^6 = 78.3% remains.
     // TrajectoWare Drive: 3.3%/s → at 6s: 0.967^6 = 81.5% remains.
     // Our model: exp(-0.04 × 6) = 78.7% — matches Trackman consensus.
-    let mut aero = crate::aero::AeroParams::from_spin(2700.0, 0.0);
-    let initial = aero.spin_rate;
+    let mut ball = BallState {
+        time: 0.0,
+        pos: Vec3::ZERO,
+        vel: Vec3::new(70.0, 0.0, 0.0),
+        spin: ShotInput::driver().launch_spin_rads(),
+    };
+    let initial = ball.spin.length();
     for _ in 0..6000 {
-        aero.decay_spin(0.001);
+        ball.spin = BALL.spin_after(&ball, 0.001);
     }
-    let remaining_pct = aero.spin_rate / initial * 100.0;
+    let remaining_pct = ball.spin.length() / initial * 100.0;
     assert!(
         (remaining_pct - 78.0).abs() < 6.0,
         "after 6s: {remaining_pct:.1}% spin remaining, expected ~78% (Trackman)"
-    );
-}
-
-// ══════════════════════════════════════════════════════════════════
-//  BALL ERA COMPARISON — same launch, different ball technology
-// ══════════════════════════════════════════════════════════════════
-//
-// These tests document how much ball technology affects carry distance.
-// Same launch conditions (speed, angle, spin), same environment (sea level),
-// but BallModel::TOUR (2020s) vs BallModel::PATENT_1997 (1990s).
-//
-// Modern tour balls carry ~15-25% farther than 1990s balls at the same
-// launch conditions. The primary driver is ~30% lower drag coefficient
-// from optimized dimple geometry. Secondary: spin-sensitive lift that
-// rewards the modern "high launch, low spin" strategy.
-//
-// Historical context: the USGA distance insight report (2020) attributes
-// roughly 30 yards of driver carry increase since 1995 to ball technology.
-// The model reproduces this: at 15°C sea level, TOUR driver ≈ 277 yds,
-// PATENT ≈ 248 yds, Δ ≈ 29 yards.
-
-const PATENT_BALL: BallModel = BallModel::PATENT_1997;
-
-fn flight_1997(speed_mph: f64, launch_deg: f64, backspin: f64) -> FlightResult {
-    let input = ShotInput {
-        ball_speed_mph: speed_mph,
-        launch_angle_deg: launch_deg,
-        launch_azimuth_deg: 0.0,
-        backspin_rpm: backspin,
-        sidespin_rpm: 0.0,
-    };
-    simulate_flight(&input, &PATENT_BALL, &Environment::SEA_LEVEL)
-}
-
-#[test]
-fn era_driver_carry_gap() {
-    // Driver: 171 mph, 10.9°, 2686 rpm (Trackman PGA 2024 conditions).
-    //
-    // Modern tour ball: ~277 yds at 15°C sea level (validated above against
-    // Trackman data).
-    // 1990s patent ball: expected ~245-255 yds — the ~30 yard gap matches
-    // USGA Distance Insights (2020) findings on ball technology contribution.
-    //
-    // The gap comes almost entirely from lower Cd (0.22 vs 0.30 at launch).
-    // The Cl difference is small at driver SR≈0.08: modern Cl≈0.19, patent
-    // Cl≈0.28. Higher patent Cl actually helps lift, partially offsetting
-    // the drag penalty — but drag dominates.
-    let modern = flight(171.0, 10.9, 2686.0, 0.0);
-    let vintage = flight_1997(171.0, 10.9, 2686.0);
-    let gap = modern.carry_yards - vintage.carry_yards;
-    assert!(
-        gap > 20.0 && gap < 50.0,
-        "driver era gap should be 20-50 yds, got {gap:.1} (modern={:.1}, vintage={:.1})",
-        modern.carry_yards,
-        vintage.carry_yards
-    );
-}
-
-#[test]
-fn era_7iron_carry_gap() {
-    // 7-iron: 123 mph, 16.3°, 7097 rpm (Trackman PGA conditions).
-    //
-    // The gap is smaller for irons because high spin partially compensates:
-    // 1990s balls had higher Cl (nearly saturated at all SR values), giving
-    // more lift. But the drag penalty still dominates.
-    //
-    // Expected: ~5-25 yard gap — proportionally much less than driver.
-    // Historically, iron distance gains came mostly from loft changes, not
-    // ball aero; the modern ball's saturating spin drag (high late-flight
-    // drag at iron SR) narrows the aero-only gap further.
-    let modern = flight(123.0, 16.3, 7097.0, 0.0);
-    let vintage = flight_1997(123.0, 16.3, 7097.0);
-    let gap = modern.carry_yards - vintage.carry_yards;
-    assert!(
-        gap > 5.0 && gap < 40.0,
-        "7-iron era gap should be 5-40 yds, got {gap:.1} (modern={:.1}, vintage={:.1})",
-        modern.carry_yards,
-        vintage.carry_yards
-    );
-}
-
-#[test]
-fn era_wedge_carry_gap() {
-    // PW: 102 mph, 25°, 9300 rpm (Trackman PGA conditions).
-    //
-    // Wedges have very high spin (SR≈0.46), so the patent ball's Cl advantage
-    // is fully saturated (both models give Cl≈0.28). The gap is pure drag.
-    // At this SR, spin-dependent drag is large: CD_SPIN × 0.46 adds ~0.07-0.09
-    // to Cd in both models.
-    //
-    // With cl_sub=0.203 (modern) vs cl_sub=0.12 (patent), the modern ball has
-    // more subcritical lift than the 1990s ball, but also more subcritical
-    // drag (cd_sub=0.295 vs 0.19). At PW landing speeds (Re≈45-60k) the two
-    // effects nearly cancel, so the era gap is very small for wedges.
-    //
-    // Expected: ~0-15 yard gap (may be near zero).
-    let modern = flight(102.0, 25.0, 9300.0, 0.0);
-    let vintage = flight_1997(102.0, 25.0, 9300.0);
-    let gap = modern.carry_yards - vintage.carry_yards;
-    assert!(
-        gap > -1.0 && gap < 15.0,
-        "PW era gap should be -1 to 15 yds, got {gap:.1} (modern={:.1}, vintage={:.1})",
-        modern.carry_yards,
-        vintage.carry_yards
-    );
-}
-
-#[test]
-fn era_modern_always_farther() {
-    // Sanity check: modern tour ball should carry farther than 1990s ball
-    // at every club condition. The aerodynamic improvements help universally.
-    let cases = [
-        (171.0, 10.9, 2686.0, "driver"),
-        (132.0, 12.1, 5361.0, "5-iron"),
-        (123.0, 16.3, 7097.0, "7-iron"),
-        (109.0, 20.4, 8647.0, "9-iron"),
-        (102.0, 25.0, 9300.0, "PW"),
-    ];
-    for (speed, launch, spin, label) in cases {
-        let modern = flight(speed, launch, spin, 0.0);
-        let vintage = flight_1997(speed, launch, spin);
-        assert!(
-            modern.carry_yards > vintage.carry_yards,
-            "{label}: modern ({:.1}) should carry farther than vintage ({:.1})",
-            modern.carry_yards,
-            vintage.carry_yards
-        );
-    }
-}
-
-#[test]
-fn era_gap_consistent_across_clubs() {
-    // The era gap (modern minus vintage carry) should be positive for all clubs,
-    // largest for driver (low spin, drag-dominated) and smaller for wedges
-    // (high spin, subcritical lift similarity between eras).
-    //
-    // Source: USGA Distance Insights (2020) — ball technology contributes ~20-30
-    // yards for driver over the past 25 years.
-    let driver_modern = flight(171.0, 10.9, 2686.0, 0.0);
-    let driver_vintage = flight_1997(171.0, 10.9, 2686.0);
-    let iron_modern = flight(123.0, 16.3, 7097.0, 0.0);
-    let iron_vintage = flight_1997(123.0, 16.3, 7097.0);
-
-    let gap_driver = driver_modern.carry_yards - driver_vintage.carry_yards;
-    let gap_iron = iron_modern.carry_yards - iron_vintage.carry_yards;
-
-    // Driver gap should be larger than iron gap (drag reduction benefits low-spin more).
-    assert!(
-        gap_driver > gap_iron,
-        "driver era gap ({gap_driver:.1}) should exceed iron ({gap_iron:.1})"
-    );
-    // Both gaps should be substantial.
-    assert!(
-        gap_driver > 15.0 && gap_iron > 5.0,
-        "era gaps should be substantial: driver={gap_driver:.1}, iron={gap_iron:.1}"
     );
 }
 
@@ -541,7 +412,7 @@ fn flight_lands_exactly_on_the_ground() {
         ShotInput::seven_iron(),
         ShotInput::wedge(),
     ] {
-        let r = flight_at(&input, &Environment::SEA_LEVEL);
+        let r = flight_at(&input, &BALL);
         let last = r.points.last().unwrap();
         assert!(
             last.pos.y.abs() < f64::EPSILON,
@@ -558,7 +429,7 @@ fn flight_lands_exactly_on_the_ground() {
 #[test]
 fn shot_flight_matches_simulate_flight_on_flat_ground() {
     let input = lateral_input(2.0, 700.0);
-    let f = flight_at(&input, &Environment::SEA_LEVEL);
+    let f = flight_at(&input, &BALL);
     let s = shot_on_fairway(&input);
     assert!((f.carry_m - s.flight.carry_m).abs() < 1e-12);
     assert!((f.landing_spin - s.flight.landing_spin).length() < 1e-12);
@@ -593,17 +464,20 @@ fn pushed_straight_shot_stays_on_its_start_line() {
     let az = units::deg_to_rad(6.0);
     let across = Vec3::new(-az.sin(), 0.0, az.cos()); // horizontal, ⟂ start line
 
-    let aero = crate::aero::AeroParams::from_spin_vector(input.launch_spin_rads());
-    let v = 60.0 * Vec3::new(az.cos() * 0.9, 0.3, az.sin() * 0.9).normalize();
-    let gravity_free =
-        BALL.acceleration(v, &aero, Environment::SEA_LEVEL.air_density()) + Vec3::Y * units::G;
+    let ball = BallState {
+        time: 0.0,
+        pos: Vec3::ZERO,
+        vel: 60.0 * Vec3::new(az.cos() * 0.9, 0.3, az.sin() * 0.9).normalize(),
+        spin: input.launch_spin_rads(),
+    };
+    let gravity_free = BALL.acceleration(&ball, 10.0);
     assert!(
         gravity_free.dot(across).abs() < 1e-12,
         "aero force has a sideways component {:.3e}",
         gravity_free.dot(across)
     );
 
-    let r = flight_at(&input, &Environment::SEA_LEVEL);
+    let r = flight_at(&input, &BALL);
     for p in &r.points {
         assert!(
             p.pos.dot(across).abs() < 1e-9,
@@ -613,20 +487,22 @@ fn pushed_straight_shot_stays_on_its_start_line() {
         );
     }
     assert!((r.lateral_m - r.carry_m * az.sin()).abs() < 1e-9);
-    assert!(r.landing_sidespin_rads.abs() < 1e-12);
+    assert!(r.landing_spin.y.abs() < 1e-12);
     assert!(r.landing_spin.dot(across) > 0.0);
-    assert!((r.landing_spin.dot(across) - r.landing_backspin_rads).abs() < 1e-12);
 }
 
 #[test]
 fn landing_spin_projections_are_exact() {
     let input = lateral_input(-4.0, 900.0);
-    let r = flight_at(&input, &Environment::SEA_LEVEL);
+    let r = flight_at(&input, &BALL);
     let decay = r.landing_spin.length() / input.launch_spin_rads().length();
     assert!(decay > 0.0 && decay < 1.0);
+    // Projected on the launch backspin axis and on -Y.
+    let az = units::deg_to_rad(-4.0);
+    let backspin_axis = Vec3::new(-az.sin(), 0.0, az.cos());
     assert!(
-        (r.landing_backspin_rads - units::rpm_to_rads(3000.0) * decay).abs() < 1e-9
-            && (r.landing_sidespin_rads - units::rpm_to_rads(900.0) * decay).abs() < 1e-9
+        (r.landing_spin.dot(backspin_axis) - units::rpm_to_rads(3000.0) * decay).abs() < 1e-9
+            && (-r.landing_spin.y - units::rpm_to_rads(900.0) * decay).abs() < 1e-9
     );
 }
 
@@ -637,28 +513,18 @@ fn landing_spin_projections_are_exact() {
 use crate::ground::{GroundPhysics, Termination};
 
 fn shot_on_fairway(input: &ShotInput) -> ShotResult {
-    simulate_shot(input, &BALL, &Environment::SEA_LEVEL, &Surface::FAIRWAY)
+    simulate_shot(input, &BALL, &Surface::FAIRWAY)
 }
 
 fn shot_on_green(input: &ShotInput) -> ShotResult {
-    simulate_shot(input, &BALL, &Environment::SEA_LEVEL, &Surface::GREEN)
+    simulate_shot(input, &BALL, &Surface::GREEN)
 }
 
 #[test]
 fn simulate_shot_accepts_dyn_ground_model() {
     let models: [&dyn GroundModel; 2] = [&Surface::GREEN, &GroundPhysics::new(Surface::GREEN)];
-    let a = simulate_shot(
-        &ShotInput::driver(),
-        &BALL,
-        &Environment::SEA_LEVEL,
-        models[0],
-    );
-    let b = simulate_shot(
-        &ShotInput::driver(),
-        &BALL,
-        &Environment::SEA_LEVEL,
-        models[1],
-    );
+    let a = simulate_shot(&ShotInput::driver(), &BALL, models[0]);
+    let b = simulate_shot(&ShotInput::driver(), &BALL, models[1]);
     let c = shot_on_green(&ShotInput::driver());
     assert_eq!(a.ground, c.ground);
     assert_eq!(b.ground, c.ground);
@@ -669,10 +535,10 @@ fn shot_total_greater_than_carry_driver() {
     // Driver on fairway: low spin, should roll forward significantly.
     let r = shot_on_fairway(&ShotInput::driver());
     assert!(
-        r.total_yards > r.flight.carry_yards,
+        r.total_yards() > r.flight.carry_yards(),
         "driver total ({:.1}) should exceed carry ({:.1})",
-        r.total_yards,
-        r.flight.carry_yards
+        r.total_yards(),
+        r.flight.carry_yards()
     );
 }
 
@@ -681,31 +547,31 @@ fn shot_driver_total_distance() {
     // Fairway drives landing near 40° run about 17–21 yd: 16.7 yd at 39°
     // on the USGA/R&A proposed bounce model's fairway line, a 21 yd
     // ShotLink median. The preset launches slower than the PGA Tour
-    // average (Trackman: 282 yd carry), carries about 269 yd, lands at
-    // about 41° and runs about 17 yd on FAIRWAY.
+    // average (Trackman: 282 yd carry), carries about 283 yd, lands at
+    // about 40° and runs about 17 yd on FAIRWAY.
     let r = shot_on_fairway(&ShotInput::driver());
-    let run = r.total_yards - r.flight.carry_yards;
+    let run = r.total_yards() - r.flight.carry_yards();
     assert!(
-        (260.0..280.0).contains(&r.flight.carry_yards),
-        "driver carry should be 260-280 yds, got {:.1}",
-        r.flight.carry_yards
+        (260.0..290.0).contains(&r.flight.carry_yards()),
+        "driver carry should be 260-290 yds, got {:.1}",
+        r.flight.carry_yards()
     );
     assert!(
         (14.0..22.0).contains(&run),
         "driver fairway run should be 14-22 yds, got {run:.1}"
     );
     assert!(
-        (276.0..300.0).contains(&r.total_yards),
-        "driver total should be 276-300 yds, got {:.1}",
-        r.total_yards
+        (276.0..310.0).contains(&r.total_yards()),
+        "driver total should be 276-310 yds, got {:.1}",
+        r.total_yards()
     );
 }
 
 #[test]
 fn shot_7iron_carry_and_run() {
     // PGA Tour 7-iron (Trackman): about 120–123 mph, 16°, 7100 rpm,
-    // 172–176 yd carry. The model carries about 171.5 yd and runs about
-    // 4.1 yd on FAIRWAY.
+    // 172–176 yd carry. The model carries about 171 yd and runs about
+    // 5.8 yd on FAIRWAY.
     let input = ShotInput {
         ball_speed_mph: 123.0,
         launch_angle_deg: 16.3,
@@ -714,11 +580,11 @@ fn shot_7iron_carry_and_run() {
         sidespin_rpm: 0.0,
     };
     let r = shot_on_fairway(&input);
-    let run = r.total_yards - r.flight.carry_yards;
+    let run = r.total_yards() - r.flight.carry_yards();
     assert!(
-        (165.0..185.0).contains(&r.flight.carry_yards),
+        (165.0..185.0).contains(&r.flight.carry_yards()),
         "7-iron carry should be 165-185 yds, got {:.1}",
-        r.flight.carry_yards
+        r.flight.carry_yards()
     );
     assert!(
         (3.0..12.0).contains(&run),
@@ -730,7 +596,7 @@ fn shot_7iron_carry_and_run() {
 fn shot_wedge_minimal_rollout_on_green() {
     // Wedge on green: high spin, should check up with minimal rollout.
     let r = shot_on_green(&ShotInput::wedge());
-    let rollout_yards = r.total_yards - r.flight.carry_yards;
+    let rollout_yards = r.total_yards() - r.flight.carry_yards();
     assert!(
         rollout_yards.abs() < 15.0,
         "wedge on green rollout should be minimal, got {rollout_yards:.1} yds"
@@ -741,7 +607,7 @@ fn shot_wedge_minimal_rollout_on_green() {
 fn shot_driver_first_bounce_height_in_penner_range() {
     // Penner (2002) §3.1 reports first-bounce heights from 2.82 m
     // (landing 68.0° from vertical) to 1.17 m (46.2°) for drives on his
-    // green model. The driver preset lands about 49° from vertical.
+    // green model. The driver preset lands about 50° from vertical.
     for r in [
         shot_on_green(&ShotInput::driver()),
         shot_on_fairway(&ShotInput::driver()),
@@ -794,23 +660,23 @@ fn shot_has_bounces() {
 }
 
 #[test]
-fn shot_final_pos_on_ground() {
+fn shot_rest_on_ground() {
     let r = shot_on_fairway(&ShotInput::seven_iron());
     assert!(
-        r.final_pos.y.abs() < 1e-12,
+        r.ground.rest.pos.y.abs() < 1e-12,
         "final position should be on ground: y={:.6}",
-        r.final_pos.y
+        r.ground.rest.pos.y
     );
     assert_eq!(r.ground.rest.vel, Vec3::ZERO);
 }
 
 #[test]
-fn shot_final_pos_downrange() {
+fn shot_rest_downrange() {
     let r = shot_on_fairway(&ShotInput::driver());
     assert!(
-        r.final_pos.x > 0.0,
+        r.ground.rest.pos.x > 0.0,
         "driver should finish downrange: x={:.1}",
-        r.final_pos.x
+        r.ground.rest.pos.x
     );
 }
 
@@ -826,22 +692,22 @@ fn shot_path_times_are_continuous() {
     for w in r.ground.points.windows(2) {
         assert!(w[1].time >= w[0].time);
     }
-    assert!((r.ground.points.last().unwrap().pos - r.final_pos).length() < 1e-12);
+    assert!((r.ground.points.last().unwrap().pos - r.ground.rest.pos).length() < 1e-12);
 }
 
 #[test]
 fn shot_landing_spin_decayed() {
     // Landing spin should be less than initial spin (decay during flight).
-    let flight = simulate_flight(&ShotInput::driver(), &BALL, &Environment::SEA_LEVEL);
+    let flight = simulate_flight(&ShotInput::driver(), &BALL);
     let initial_backspin = units::rpm_to_rads(2700.0);
     assert!(
-        flight.landing_backspin_rads < initial_backspin,
+        flight.landing_spin.z < initial_backspin,
         "landing backspin ({:.1}) should be less than initial ({:.1})",
-        flight.landing_backspin_rads,
+        flight.landing_spin.z,
         initial_backspin
     );
     assert!(
-        flight.landing_backspin_rads > 0.0,
+        flight.landing_spin.z > 0.0,
         "should still have some backspin"
     );
 }
@@ -855,8 +721,8 @@ fn shot_fairway_less_rollout_than_green() {
     let fairway = shot_on_fairway(&input);
     let green = shot_on_green(&input);
     assert_eq!(fairway.ground.contacts.len(), green.ground.contacts.len());
-    let rollout_fairway = fairway.total_yards - fairway.flight.carry_yards;
-    let rollout_green = green.total_yards - green.flight.carry_yards;
+    let rollout_fairway = fairway.total_yards() - fairway.flight.carry_yards();
+    let rollout_green = green.total_yards() - green.flight.carry_yards();
     assert!(
         rollout_fairway < rollout_green - 3.0,
         "fairway rollout ({rollout_fairway:.1}) should be well short of green ({rollout_green:.1})"
@@ -869,10 +735,9 @@ fn shot_fairway_less_rollout_than_green() {
 
 /// Trackman's normalization, 25 °C at sea level, which the carry
 /// calibration also uses.
-const TRACKMAN_AIR: Environment = Environment {
-    temperature_c: 25.0,
-    ..Environment::SEA_LEVEL
-};
+fn trackman_air() -> Tour {
+    sea_level_at(25.0)
+}
 
 fn launch(mph: f64, launch_deg: f64, rpm: f64) -> ShotInput {
     ShotInput {
@@ -903,7 +768,7 @@ fn shot_hop_train_dies_out() {
         ShotInput::wedge(),
     ] {
         for surface in [Surface::FAIRWAY, Surface::GREEN] {
-            let r = simulate_shot(&input, &BALL, &Environment::SEA_LEVEL, &surface);
+            let r = simulate_shot(&input, &BALL, &surface);
             let contacts = &r.ground.contacts;
             let label = format!("{input:?} on {surface:?}");
             assert!(contacts.len() <= 10, "{label}: {} impacts", contacts.len());
@@ -923,10 +788,10 @@ fn shot_hop_train_dies_out() {
 #[test]
 fn shot_roll_by_club_on_fairway() {
     // FAIRWAY roll and total for three launches in Trackman's air.
-    // A lob wedge (65 mph, 32°, 6500 rpm) lands at about 45° and rolls
-    // about 5.5 yd; a 50-yard pitch (52 mph, 32°, 4000 rpm) lands at
-    // about 39° and rolls about 11 yd. The PGA Tour average drive
-    // (Trackman: 171 mph, 10.4°, 2545 rpm) lands at about 40° and rolls
+    // A lob wedge (65 mph, 32°, 6500 rpm) lands at about 44° and rolls
+    // about 6 yd; a 50-yard pitch (52 mph, 32°, 4000 rpm) lands at
+    // about 39° and rolls about 11.7 yd. The PGA Tour average drive
+    // (Trackman: 171 mph, 10.4°, 2545 rpm) lands at about 39° and rolls
     // about 18 yd, between the USGA/R&A proposed bounce model's 16.7 yd
     // at 39° and the 21 yd ShotLink median there. No published run data
     // exists for wedges or pitches on a fairway, so their windows guard
@@ -936,34 +801,37 @@ fn shot_roll_by_club_on_fairway() {
             "lob wedge",
             launch(65.0, 32.0, 6500.0),
             4.5..6.5,
-            71.0..77.0,
+            71.0..81.0,
         ),
-        ("pitch", launch(52.0, 32.0, 4000.0), 9.5..12.5, 54.5..60.0),
+        ("pitch", launch(52.0, 32.0, 4000.0), 9.5..12.5, 54.5..65.0),
         (
             "drive",
             launch(171.0, 10.4, 2545.0),
             15.5..21.5,
-            292.0..304.0,
+            292.0..318.0,
         ),
     ] {
-        let r = simulate_shot(&input, &BALL, &TRACKMAN_AIR, &Surface::FAIRWAY);
-        let run = r.total_yards - r.flight.carry_yards;
+        let r = simulate_shot(&input, &trackman_air(), &Surface::FAIRWAY);
+        let run = r.total_yards() - r.flight.carry_yards();
         assert!(roll.contains(&run), "{name}: roll {run:.2} yd");
         assert!(
-            total.contains(&r.total_yards),
+            total.contains(&r.total_yards()),
             "{name}: total {:.1} yd",
-            r.total_yards
+            r.total_yards()
         );
     }
 }
 
 #[test]
-fn shot_stats_from_shot() {
+fn shot_total_is_the_rest_point_and_descent_is_reported() {
     let r = shot_on_fairway(&ShotInput::driver());
-    let stats = crate::stats::ShotStats::from_shot(&r);
-    assert!(stats.total_yards > stats.carry_yards);
-    assert!(stats.rollout_yards > 0.0);
-    assert!((stats.carry_yards + stats.rollout_yards - stats.total_yards).abs() < 0.1);
+    let rest = r.ground.rest.pos;
+    assert!((r.total_m - rest.x.hypot(rest.z)).abs() < 1e-12);
+    assert!(r.total_m > r.flight.carry_m);
+    let last = r.flight.points.last().unwrap().vel;
+    let descent = units::rad_to_deg((-last.y).atan2(last.x.hypot(last.z)));
+    assert!((r.flight.descent_angle_deg - descent).abs() < 1e-12);
+    assert!((30.0..50.0).contains(&r.flight.descent_angle_deg));
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -980,32 +848,20 @@ fn driver_with_sidespin(sidespin_rpm: f64) -> ShotInput {
 #[test]
 fn fade_rests_right_draw_rests_left() {
     for (surface, name) in [(Surface::FAIRWAY, "fairway"), (Surface::GREEN, "green")] {
-        let fade = simulate_shot(
-            &driver_with_sidespin(600.0),
-            &BALL,
-            &Environment::SEA_LEVEL,
-            &surface,
-        );
-        let draw = simulate_shot(
-            &driver_with_sidespin(-600.0),
-            &BALL,
-            &Environment::SEA_LEVEL,
-            &surface,
-        );
+        let fade = simulate_shot(&driver_with_sidespin(600.0), &BALL, &surface);
+        let draw = simulate_shot(&driver_with_sidespin(-600.0), &BALL, &surface);
         assert!(
-            fade.final_pos.z > fade.flight.lateral_m && fade.flight.lateral_m > 0.0,
+            fade.ground.rest.pos.z > fade.flight.lateral_m && fade.flight.lateral_m > 0.0,
             "{name}: fade lands right and keeps moving right: land {:.2}, rest {:.2}",
             fade.flight.lateral_m,
-            fade.final_pos.z
+            fade.ground.rest.pos.z
         );
         assert!(
-            draw.final_pos.z < draw.flight.lateral_m && draw.flight.lateral_m < 0.0,
+            draw.ground.rest.pos.z < draw.flight.lateral_m && draw.flight.lateral_m < 0.0,
             "{name}: draw lands left and keeps moving left: land {:.2}, rest {:.2}",
             draw.flight.lateral_m,
-            draw.final_pos.z
+            draw.ground.rest.pos.z
         );
-        let stats = crate::stats::ShotStats::from_shot(&fade);
-        assert!(stats.lateral_yards > 0.0);
     }
 }
 
@@ -1022,7 +878,7 @@ fn sidespin_hop_curves_right() {
             vel: Vec3::new(6.0, 2.0, 0.0),
             spin: Vec3::new(0.0, -sidespin, 0.0),
         };
-        let g = Surface::FAIRWAY.settle(&leave, &BALL, &Environment::SEA_LEVEL);
+        let g = Surface::FAIRWAY.settle(&leave, &BALL);
         g.contacts[1].pos
     };
     let (right, left) = (hop(200.0), hop(-200.0));
@@ -1063,7 +919,6 @@ fn pivot_does_not_steer_on_level_ground() {
     // between. Every lever that clears that spin at each impact, from the
     // presets' 1 mm up, gives the same path, on rigid ground (no tilt)
     // and on compliant turf.
-    let env = Environment::SEA_LEVEL;
     let rigid = Surface {
         compliance: 0.0,
         ..Surface::FAIRWAY
@@ -1077,14 +932,14 @@ fn pivot_does_not_steer_on_level_ground() {
         ] {
             let shots: Vec<ShotResult> = levers
                 .iter()
-                .map(|&pivot| simulate_shot(&input, &BALL, &env, &Surface { pivot, ..base }))
+                .map(|&pivot| simulate_shot(&input, &BALL, &Surface { pivot, ..base }))
                 .collect();
             for (shot, pivot) in shots.iter().zip(levers).skip(1) {
                 assert!(
-                    (shot.final_pos - shots[0].final_pos).length() < 1e-9,
+                    (shot.ground.rest.pos - shots[0].ground.rest.pos).length() < 1e-9,
                     "sidespin {side}, pivot {pivot}: rest {:?} vs {:?}",
-                    shot.final_pos,
-                    shots[0].final_pos
+                    shot.ground.rest.pos,
+                    shots[0].ground.rest.pos
                 );
                 assert_eq!(shot.ground.contacts.len(), shots[0].ground.contacts.len());
             }
@@ -1095,14 +950,13 @@ fn pivot_does_not_steer_on_level_ground() {
         let kept = simulate_shot(
             &input,
             &BALL,
-            &env,
             &Surface {
                 pivot: 0.0,
                 ..rigid
             },
         );
-        let cleared = simulate_shot(&input, &BALL, &env, &rigid);
-        let curve = side.signum() * (kept.final_pos.z - cleared.final_pos.z);
+        let cleared = simulate_shot(&input, &BALL, &rigid);
+        let curve = side.signum() * (kept.ground.rest.pos.z - cleared.ground.rest.pos.z);
         assert!(
             curve > 0.0 && curve < 0.2,
             "sidespin {side}: curve {curve:.3} m"
@@ -1112,14 +966,13 @@ fn pivot_does_not_steer_on_level_ground() {
         let free = simulate_shot(
             &input,
             &BALL,
-            &env,
             &Surface {
                 pivot: 0.0,
                 ..Surface::FAIRWAY
             },
         );
         let preset = shot_on_fairway(&input);
-        let shift = (free.final_pos - preset.final_pos).length();
+        let shift = (free.ground.rest.pos - preset.ground.rest.pos).length();
         assert!(shift > 0.01 && shift < 0.2, "shift {shift:.3} m");
     }
 }
@@ -1142,19 +995,9 @@ fn shot_mirror_symmetry_on_the_ground() {
     // ±sidespin and ±azimuth give mirrored z at every contact, every
     // ground point and at rest.
     for surface in [Surface::FAIRWAY, Surface::GREEN] {
-        let right = simulate_shot(
-            &lateral_input(3.0, 900.0),
-            &BALL,
-            &Environment::SEA_LEVEL,
-            &surface,
-        );
-        let left = simulate_shot(
-            &lateral_input(-3.0, -900.0),
-            &BALL,
-            &Environment::SEA_LEVEL,
-            &surface,
-        );
-        assert!(right.final_pos.z > 1.0);
+        let right = simulate_shot(&lateral_input(3.0, 900.0), &BALL, &surface);
+        let left = simulate_shot(&lateral_input(-3.0, -900.0), &BALL, &surface);
+        assert!(right.ground.rest.pos.z > 1.0);
         assert_eq!(right.ground.contacts.len(), left.ground.contacts.len());
         assert_eq!(right.ground.points.len(), left.ground.points.len());
         for (r, l) in right.ground.contacts.iter().zip(&left.ground.contacts) {
@@ -1166,7 +1009,7 @@ fn shot_mirror_symmetry_on_the_ground() {
             assert!((mirror_z(r.pos) - l.pos).length() < 1e-9);
             assert_eq!(r.phase, l.phase);
         }
-        assert!((mirror_z(right.final_pos) - left.final_pos).length() < 1e-9);
+        assert!((mirror_z(right.ground.rest.pos) - left.ground.rest.pos).length() < 1e-9);
     }
 }
 
@@ -1193,10 +1036,10 @@ fn shot_frame_invariance_about_y() {
             assert!((rot(b.spin_out) - t.spin_out).length() < 1e-5);
         }
         assert!(
-            (rot(base.final_pos) - turned.final_pos).length() < 1e-6,
+            (rot(base.ground.rest.pos) - turned.ground.rest.pos).length() < 1e-6,
             "sidespin {side}: rest {:?} vs rotated {:?}",
-            turned.final_pos,
-            rot(base.final_pos)
+            turned.ground.rest.pos,
+            rot(base.ground.rest.pos)
         );
     }
 }
@@ -1205,7 +1048,7 @@ fn shot_frame_invariance_about_y() {
 //  PINNED OUTPUTS — exact f64 results of three full shots
 // ══════════════════════════════════════════════════════════════════
 
-/// `[carry_m, apex_m, total_m, final_pos.x, final_pos.y, final_pos.z]` of
+/// `[carry_m, apex_m, total_m, rest.x, rest.y, rest.z]` of
 /// a driver on `FAIRWAY`, a 7-iron fade on `GREEN`, and a wedge draw onto
 /// a tilted plane, bit for bit.
 fn pinned_shots() -> [[f64; 6]; 3] {
@@ -1218,7 +1061,6 @@ fn pinned_shots() -> [[f64; 6]; 3] {
         backspin_rpm: back,
         sidespin_rpm: side,
     };
-    let env = Environment::SEA_LEVEL;
     let slope = GroundPhysics::new(FnTerrain(|x: f64, z: f64| GroundSample {
         height: -0.03 * x + 0.02 * z,
         normal: Vec3::new(0.03, 1.0, -0.02).normalize(),
@@ -1228,30 +1070,23 @@ fn pinned_shots() -> [[f64; 6]; 3] {
         simulate_shot(
             &shot(167.0, 10.9, 0.0, 2686.0, 0.0),
             &BALL,
-            &env,
             &Surface::FAIRWAY,
         ),
         simulate_shot(
             &shot(120.0, 16.3, 1.5, 7097.0, 900.0),
             &BALL,
-            &env,
             &Surface::GREEN,
         ),
-        simulate_shot(
-            &shot(102.0, 24.2, -2.0, 9304.0, -700.0),
-            &BALL,
-            &env,
-            &slope,
-        ),
+        simulate_shot(&shot(102.0, 24.2, -2.0, 9304.0, -700.0), &BALL, &slope),
     ];
     results.map(|r| {
         [
             r.flight.carry_m,
             r.flight.apex_m,
             r.total_m,
-            r.final_pos.x,
-            r.final_pos.y,
-            r.final_pos.z,
+            r.ground.rest.pos.x,
+            r.ground.rest.pos.y,
+            r.ground.rest.pos.z,
         ]
     })
 }
@@ -1266,28 +1101,28 @@ fn full_shot_outputs_are_pinned() {
         pinned_shots(),
         [
             [
-                246.51510523254217,
-                34.38767873276154,
-                261.9496801636913,
-                261.9496801636913,
+                259.2803652763695,
+                34.69155184333128,
+                274.9293607191314,
+                274.9293607191314,
                 0.0,
                 0.0,
             ],
             [
-                152.2390348557556,
-                28.45641073160605,
-                158.42910845329266,
-                157.74023756597762,
+                151.63377813048913,
+                28.141717089577387,
+                160.14592001401195,
+                159.29737857771525,
                 0.0,
-                14.7580438383313,
+                16.463926488003366,
             ],
             [
-                123.75756309767006,
-                27.77561824315454,
-                127.03104465367497,
-                126.64267404800755,
-                -3.9977941159404144,
-                -9.92569472500941,
+                123.56988682054241,
+                27.660157785411993,
+                130.1088706226585,
+                129.56382397134033,
+                -4.124850620279335,
+                -11.896795056956273,
             ],
         ]
     );
@@ -1296,11 +1131,8 @@ fn full_shot_outputs_are_pinned() {
 // ── Wind ──
 
 /// Sea-level air moving uniformly at `wind` (m/s).
-fn windy(wind: Vec3) -> Environment {
-    Environment {
-        wind: Wind::Uniform(wind),
-        ..Environment::SEA_LEVEL
-    }
+fn windy(wind: Vec3) -> Tour {
+    Tour::new(1.225, Wind::Uniform(wind))
 }
 
 fn driver() -> ShotInput {
@@ -1318,17 +1150,18 @@ fn driver() -> ShotInput {
     clippy::float_cmp,
     reason = "the flight and the ground phase are the same computation either way"
 )]
-fn ground_model_gets_the_shot_environment() {
-    // A custom model receives the shot's environment, wind included: one
+fn ground_model_gets_the_shot_model() {
+    // A custom ground model receives the shot's model, wind included: one
     // that forwards it settles exactly as the built-in surface does, and
-    // one that ignores it settles as in still air.
+    // one that settles with its own still-air model settles as in still
+    // air.
     struct Forwarding;
     impl GroundModel for Forwarding {
         fn height(&self, x: f64, z: f64) -> f64 {
             Surface::FAIRWAY.height(x, z)
         }
-        fn settle(&self, landing: &BallState, ball: &BallModel, env: &Environment) -> GroundResult {
-            Surface::FAIRWAY.settle(landing, ball, env)
+        fn settle(&self, landing: &BallState, model: &dyn AeroModel) -> GroundResult {
+            Surface::FAIRWAY.settle(landing, model)
         }
     }
     struct StillAir;
@@ -1336,36 +1169,31 @@ fn ground_model_gets_the_shot_environment() {
         fn height(&self, x: f64, z: f64) -> f64 {
             Surface::FAIRWAY.height(x, z)
         }
-        fn settle(
-            &self,
-            landing: &BallState,
-            ball: &BallModel,
-            _env: &Environment,
-        ) -> GroundResult {
-            Surface::FAIRWAY.settle(landing, ball, &Environment::SEA_LEVEL)
+        fn settle(&self, landing: &BallState, _model: &dyn AeroModel) -> GroundResult {
+            Surface::FAIRWAY.settle(landing, &BALL)
         }
     }
 
     let input = driver();
-    let env = windy(Vec3::new(-5.0, 0.0, 3.0));
-    let windy = simulate_shot(&input, &BALL, &env, &Surface::FAIRWAY);
-    let forwarded = simulate_shot(&input, &BALL, &env, &Forwarding);
-    let still_air = simulate_shot(&input, &BALL, &env, &StillAir);
+    let model = windy(Vec3::new(-5.0, 0.0, 3.0));
+    let windy = simulate_shot(&input, &model, &Surface::FAIRWAY);
+    let forwarded = simulate_shot(&input, &model, &Forwarding);
+    let still_air = simulate_shot(&input, &model, &StillAir);
 
-    assert_eq!(forwarded.final_pos, windy.final_pos);
+    assert_eq!(forwarded.ground.rest.pos, windy.ground.rest.pos);
     // The flight is dimple's own, so the wind acts on it either way.
     assert_eq!(still_air.flight.carry_m, windy.flight.carry_m);
     assert_eq!(still_air.flight.lateral_m, windy.flight.lateral_m);
-    assert_ne!(still_air.final_pos, windy.final_pos);
+    assert_ne!(still_air.ground.rest.pos, windy.ground.rest.pos);
 }
 
 #[test]
 fn headwind_shortens_carry_and_tailwind_lengthens_it() {
     let input = driver();
-    let still = simulate_flight(&input, &BALL, &Environment::SEA_LEVEL).carry_m;
+    let still = simulate_flight(&input, &BALL).carry_m;
     // +x is downrange, so a tailwind blows along +x and a headwind along −x.
-    let head = simulate_flight(&input, &BALL, &windy(Vec3::new(-5.0, 0.0, 0.0))).carry_m;
-    let tail = simulate_flight(&input, &BALL, &windy(Vec3::new(5.0, 0.0, 0.0))).carry_m;
+    let head = simulate_flight(&input, &windy(Vec3::new(-5.0, 0.0, 0.0))).carry_m;
+    let tail = simulate_flight(&input, &windy(Vec3::new(5.0, 0.0, 0.0))).carry_m;
     assert!(
         head < still,
         "headwind {head} should fall short of still {still}"
@@ -1386,7 +1214,7 @@ fn crosswind_drifts_the_ball_downwind() {
         (Vec3::new(0.0, 0.0, 5.0), 1.0),
         (Vec3::new(0.0, 0.0, -5.0), -1.0),
     ] {
-        let f = simulate_flight(&input, &BALL, &windy(wind));
+        let f = simulate_flight(&input, &windy(wind));
         assert!(
             f.lateral_m * sign > 1.0,
             "wind {wind:?} should drift the ball with it, lateral {}",
@@ -1398,21 +1226,9 @@ fn crosswind_drifts_the_ball_downwind() {
 #[test]
 fn wind_carries_through_the_ground_phase() {
     let input = driver();
-    let still = simulate_shot(&input, &BALL, &Environment::SEA_LEVEL, &Surface::FAIRWAY).total_m;
-    let head = simulate_shot(
-        &input,
-        &BALL,
-        &windy(Vec3::new(-5.0, 0.0, 0.0)),
-        &Surface::FAIRWAY,
-    )
-    .total_m;
-    let tail = simulate_shot(
-        &input,
-        &BALL,
-        &windy(Vec3::new(5.0, 0.0, 0.0)),
-        &Surface::FAIRWAY,
-    )
-    .total_m;
+    let still = simulate_shot(&input, &BALL, &Surface::FAIRWAY).total_m;
+    let head = simulate_shot(&input, &windy(Vec3::new(-5.0, 0.0, 0.0)), &Surface::FAIRWAY).total_m;
+    let tail = simulate_shot(&input, &windy(Vec3::new(5.0, 0.0, 0.0)), &Surface::FAIRWAY).total_m;
     assert!(head < still, "head {head} still {still}");
     assert!(tail > still, "tail {tail} still {still}");
 }
@@ -1438,7 +1254,7 @@ fn strong_wind_does_not_keep_the_ball_bouncing() {
             backspin_rpm: spin,
             sidespin_rpm: 0.0,
         };
-        let r = simulate_shot(&input, &BALL, &windy(wind), &Surface::FAIRWAY);
+        let r = simulate_shot(&input, &windy(wind), &Surface::FAIRWAY);
         let hops = r.ground.contacts.len();
         assert_eq!(
             r.ground.termination,

@@ -1,22 +1,26 @@
 //! Ground physics on terrain: slopes, heights and curved ground.
 
 use super::*;
-use crate::environment::Environment;
+use crate::aero::Tour;
+use crate::air::Wind;
 use crate::trajectory::{ShotInput, ShotResult, simulate_flight, simulate_shot};
 use crate::units;
 
-const BALL: BallModel = BallModel::TOUR;
+const BALL: Tour = Tour::SEA_LEVEL;
 const R: f64 = 0.04267 / 2.0;
 
+/// Gravity vector (m/s²).
+const GRAVITY: Vec3 = Vec3::new(0.0, -G, 0.0);
+
+static NO_AIR: Tour = Tour::new(0.0, Wind::None);
+static STILL_AIR: Tour = Tour::SEA_LEVEL;
+
 /// No air: ballistic hops, gravity only.
-const VACUUM: &Environment = &Environment {
-    measured_air_density: Some(0.0),
-    ..Environment::SEA_LEVEL
-};
+const VACUUM: &Tour = &NO_AIR;
 
 /// Still air at sea level.
-fn air() -> &'static Environment {
-    &Environment::SEA_LEVEL
+fn air() -> &'static Tour {
+    &STILL_AIR
 }
 
 /// Terrain `y = h(x, z)` with normal from the gradient `(∂h/∂x, ∂h/∂z)`,
@@ -58,7 +62,7 @@ fn tilt(deg: f64, azimuth_deg: f64) -> Vec3 {
 
 /// Unit vector down the fall line of a plane with unit normal `n`.
 fn fall_line(n: Vec3) -> Vec3 {
-    tangential_gravity(n).normalize()
+    tangential_gravity(n, G).normalize()
 }
 
 fn at_origin(vel: Vec3, spin: Vec3) -> BallState {
@@ -72,12 +76,12 @@ fn at_origin(vel: Vec3, spin: Vec3) -> BallState {
 
 /// Mechanical energy per unit mass: translation + rotation + height.
 fn energy(vel: Vec3, spin: Vec3, y: f64) -> f64 {
-    let k = BALL.inertia_factor;
+    let k = BALL.inertia_factor();
     0.5 * vel.length_squared() + 0.5 * k * R * R * spin.length_squared() + G * y
 }
 
 fn shot(input: &ShotInput, ground: &dyn GroundModel) -> ShotResult {
-    simulate_shot(input, &BALL, &Environment::SEA_LEVEL, ground)
+    simulate_shot(input, &BALL, ground)
 }
 
 /// A ground model whose hops are ballistic: the flight is the same, and
@@ -93,8 +97,8 @@ impl<G: GroundModel> GroundModel for Ballistic<G> {
         self.0.landing(a, b)
     }
 
-    fn settle(&self, landing: &BallState, ball: &BallModel, _env: &Environment) -> GroundResult {
-        self.0.settle(landing, ball, VACUUM)
+    fn settle(&self, landing: &BallState, _model: &dyn AeroModel) -> GroundResult {
+        self.0.settle(landing, VACUUM)
     }
 }
 
@@ -138,7 +142,7 @@ fn ball_at_rest_holds_on_gentle_slopes_and_rolls_down_steep_ones() {
             let sample = ground.terrain.sample(0.0, 0.0);
             assert_eq!(sample.holds_at_rest(), holds, "{deg:.2}° vs {limit:.2}°");
 
-            let g = ground.settle(&at_origin(Vec3::ZERO, Vec3::ZERO), &BALL, air());
+            let g = ground.settle(&at_origin(Vec3::ZERO, Vec3::ZERO), air());
             if holds {
                 assert_eq!(g.termination, Termination::Rest);
                 assert_eq!(g.rest.pos, Vec3::ZERO);
@@ -195,7 +199,7 @@ fn ball_rolling_uphill_stops_once_then_rolls_back_or_holds() {
         if holds {
             assert_eq!(end.vel, Vec3::ZERO);
             assert!(end.pos.dot(up) > 0.0);
-            let g = ground.settle(&start, &BALL, air());
+            let g = ground.settle(&start, air());
             assert_eq!(g.termination, Termination::Rest);
             assert!((g.rest.pos - end.pos).length() < 1e-9);
         } else {
@@ -205,7 +209,7 @@ fn ball_rolling_uphill_stops_once_then_rolls_back_or_holds() {
                 max_time: 6.0,
                 ..ground
             }
-            .settle(&start, &BALL, air());
+            .settle(&start, air());
             assert_eq!(g.termination, Termination::MaxTime);
         }
     }
@@ -222,7 +226,7 @@ fn long_downhill_reports_max_time() {
     };
     let down = fall_line(n);
     let v0 = 1.9 * down;
-    let g = ground.settle(&at_origin(v0, n.cross(v0) / R), &BALL, air());
+    let g = ground.settle(&at_origin(v0, n.cross(v0) / R), air());
     assert_eq!(g.termination, Termination::MaxTime);
     assert!((g.rest.time - 8.0).abs() < 1e-9);
     let mu = 5.0_f64.to_radians().tan() / Surface::GREEN.mu_roll;
@@ -263,7 +267,7 @@ fn slide_to_roll_on_a_plane_matches_closed_form() {
     // d|u|/dt = −c ± g sin θ with c = ((1+k)/k)·μ·g·cos θ (+ moving
     // downhill, − uphill), and v(t) = v₀ + (∓μ g cos θ + g sin θ)·t along
     // the line until the slip vanishes.
-    let k = BALL.inertia_factor;
+    let k = BALL.inertia_factor();
     let theta = units::deg_to_rad(4.0);
     let n = tilt(4.0, 0.0);
     let down = fall_line(n);
@@ -280,7 +284,7 @@ fn slide_to_roll_on_a_plane_matches_closed_form() {
         let t_roll = u0.length() / rate;
         let accel = -mu * G * theta.cos() + sign * G * theta.sin();
 
-        let g = plane(n, Surface::GREEN).settle(&start, &BALL, air());
+        let g = plane(n, Surface::GREEN).settle(&start, air());
         let roll = g.points.iter().find(|p| p.phase == Phase::Roll).unwrap();
         assert!(
             (roll.time - t_roll).abs() < 1e-12,
@@ -304,14 +308,14 @@ fn slide_across_a_slope_ends_rolling() {
     // Slip across the fall line: the slope turns the slip direction, so
     // the slide-to-roll time lies between |u₀|/(c + g sin θ) and
     // |u₀|/(c − g sin θ), and the ball leaves without slip.
-    let k = BALL.inertia_factor;
+    let k = BALL.inertia_factor();
     let theta = units::deg_to_rad(4.0);
     let n = tilt(4.0, 90.0);
     let across = n.cross(fall_line(n));
     let start = at_origin(3.0 * across, 250.0 * across.cross(n));
     let u0 = slip(start.vel, start.spin, n, R).length();
     let c = (1.0 + k) / k * Surface::GREEN.mu_slide * G * theta.cos();
-    let g = plane(n, Surface::GREEN).settle(&start, &BALL, air());
+    let g = plane(n, Surface::GREEN).settle(&start, air());
     let roll = g.points.iter().find(|p| p.phase == Phase::Roll).unwrap();
     let (fastest, slowest) = (u0 / (c + G * theta.sin()), u0 / (c - G * theta.sin()));
     assert!(fastest < roll.time && roll.time < slowest);
@@ -331,7 +335,7 @@ fn spin_about_vertical_kicks_on_a_slope_only() {
     // contact point and kicks the ball. Rigid gripping ground: the kick is
     // Δv = (k/(1+k))·R·ω_y·(ŷ × n), zero on level ground. On a side slope
     // it acts along the line of play; on an up/downhill slope, across it.
-    let k = BALL.inertia_factor;
+    let k = BALL.inertia_factor();
     let rigid = Surface {
         restitution: Restitution::Constant(0.5),
         mu_slide: 10.0,
@@ -373,7 +377,10 @@ fn uphill_landing_checks_up_downhill_releases() {
     let run = |deg: f64| {
         let r = shot(&input, &plane(tilt(deg, 180.0), Surface::FAIRWAY));
         assert_eq!(r.ground.termination, Termination::Rest);
-        (r.flight.carry_m, r.final_pos.x - r.ground.contacts[0].pos.x)
+        (
+            r.flight.carry_m,
+            r.ground.rest.pos.x - r.ground.contacts[0].pos.x,
+        )
     };
     let (up_carry, up_run) = run(2.0);
     let (flat_carry, flat_run) = run(0.0);
@@ -413,7 +420,7 @@ fn elevated_green_shortens_carry_and_lands_on_it() {
     let ground = heightfield(h, grad, surface);
 
     let input = ShotInput::seven_iron();
-    let flat = simulate_flight(&input, &BALL, &Environment::SEA_LEVEL);
+    let flat = simulate_flight(&input, &BALL);
     let r = shot(&input, &ground);
     let landing = r.flight.points.last().unwrap().pos;
     assert!(
@@ -432,7 +439,7 @@ fn elevated_green_shortens_carry_and_lands_on_it() {
     assert_eq!(first.surface, Surface::GREEN);
     assert_eq!(first.normal, Vec3::Y);
     assert_eq!(r.ground.termination, Termination::Rest);
-    assert_eq!(r.final_pos.y, H);
+    assert_eq!(r.ground.rest.pos.y, H);
 }
 
 #[test]
@@ -568,7 +575,7 @@ fn hop_arrivals_on_curved_terrain_with_air() {
     // Drag shortens the hops: the ball comes to rest short of the
     // ballistic run.
     let ballistic = shot(&ShotInput::driver(), &Ballistic(ground));
-    assert!(r.final_pos.x < ballistic.final_pos.x);
+    assert!(r.ground.rest.pos.x < ballistic.ground.rest.pos.x);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -600,8 +607,8 @@ fn mirrored_terrain_and_shot_give_a_mirrored_result() {
         assert!((mirror(ca.pos) - cb.pos).length() < 1e-9);
         assert!((mirror(ca.vel_out) - cb.vel_out).length() < 1e-9);
     }
-    assert!((mirror(a.final_pos) - b.final_pos).length() < 1e-9);
-    assert!(a.final_pos.z.abs() > 1.0);
+    assert!((mirror(a.ground.rest.pos) - b.ground.rest.pos).length() < 1e-9);
+    assert!(a.ground.rest.pos.z.abs() > 1.0);
     assert_eq!(a.ground.termination, b.ground.termination);
 }
 
@@ -625,11 +632,11 @@ fn rotating_shot_and_sloped_plane_rotates_the_result() {
         };
         let r = shot(&turned, &plane(rotate(n, psi), Surface::FAIRWAY));
         assert_eq!(r.ground.contacts.len(), base.ground.contacts.len());
-        let expected = rotate(base.final_pos, psi);
+        let expected = rotate(base.ground.rest.pos, psi);
         assert!(
-            (r.final_pos - expected).length() < 1e-6,
+            (r.ground.rest.pos - expected).length() < 1e-6,
             "{deg}°: {:?} vs {expected:?}",
-            r.final_pos
+            r.ground.rest.pos
         );
         assert_eq!(r.ground.termination, base.ground.termination);
     }
@@ -660,7 +667,7 @@ fn energy_never_increases_on_slopes() {
                 ..plane(n, surface)
             };
             for ((vel, spin), env) in starts.into_iter().flat_map(|s| [(s, VACUUM), (s, air())]) {
-                let g = ground.settle(&at_origin(vel, spin), &BALL, env);
+                let g = ground.settle(&at_origin(vel, spin), env);
                 for c in &g.contacts {
                     let before = energy(c.vel_in, c.spin_in, c.pos.y);
                     let after = energy(c.vel_out, c.spin_out, c.pos.y);
@@ -718,8 +725,8 @@ fn run_on_ground(input: &ShotInput, ground: &dyn GroundModel) -> (f64, f64, Term
     let r = shot(input, ground);
     let landing = r.ground.contacts[0].pos;
     (
-        units::meters_to_yards(r.final_pos.x - landing.x),
-        units::meters_to_yards(r.final_pos.z - landing.z),
+        units::meters_to_yards(r.ground.rest.pos.x - landing.x),
+        units::meters_to_yards(r.ground.rest.pos.z - landing.z),
         r.ground.termination,
     )
 }
@@ -991,11 +998,7 @@ fn hop_finds_a_wall_inside_a_step() {
             move |_, _| rigid,
         )
     };
-    let g = ground.settle(
-        &at_origin(Vec3::new(10.0, -1.0, 0.0), Vec3::ZERO),
-        &BALL,
-        air(),
-    );
+    let g = ground.settle(&at_origin(Vec3::new(10.0, -1.0, 0.0), Vec3::ZERO), air());
     assert!(g.contacts.len() >= 2);
     let hit = &g.contacts[1];
     assert!(
@@ -1047,7 +1050,7 @@ fn rest_is_judged_where_the_ball_stops() {
     let (before, stop) = first_stop(&plane(n, Surface::FAIRWAY), start);
     let boundary = 0.5 * (before.x + stop.x);
     assert!(before.x < boundary && boundary < stop.x);
-    let g = split(Surface::FAIRWAY, Surface::GREEN, boundary).settle(&start, &BALL, air());
+    let g = split(Surface::FAIRWAY, Surface::GREEN, boundary).settle(&start, air());
     assert_eq!(g.termination, Termination::Rest);
     assert!(g.rest.pos.x < boundary, "rested at {:?}", g.rest.pos);
     assert_eq!(g.rest.vel, Vec3::ZERO);
@@ -1055,7 +1058,7 @@ fn rest_is_judged_where_the_ball_stops() {
     // GREEN below, FAIRWAY above: the ball stops on FAIRWAY and stays.
     let (before, stop) = first_stop(&plane(n, Surface::GREEN), start);
     let boundary = 0.5 * (before.x + stop.x);
-    let g = split(Surface::GREEN, Surface::FAIRWAY, boundary).settle(&start, &BALL, air());
+    let g = split(Surface::GREEN, Surface::FAIRWAY, boundary).settle(&start, air());
     assert_eq!(g.termination, Termination::Rest);
     assert!(
         (g.rest.pos - stop).length() < 1e-12,
@@ -1103,7 +1106,7 @@ fn slide_ends_rolling_on_curved_ground_without_flicker() {
     );
 
     // The same in `settle`: one switch from Slide to Roll.
-    let settled = ground.settle(&start, &BALL, air());
+    let settled = ground.settle(&start, air());
     let switches = settled
         .points
         .windows(2)

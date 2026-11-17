@@ -13,9 +13,8 @@
 //! # Example
 //!
 //! ```
-//! use dimple::{
-//!     BallModel, Environment, ShotInput, ShotStats, Surface, simulate_flight, simulate_shot,
-//! };
+//! use dimple::units::meters_to_yards;
+//! use dimple::{ShotInput, Surface, Tour, simulate_flight, simulate_shot};
 //!
 //! // A right-handed fade: starts 1° right, curves further right.
 //! let input = ShotInput {
@@ -26,21 +25,32 @@
 //!     sidespin_rpm: 600.0,
 //! };
 //!
-//! let flight = simulate_flight(&input, &BallModel::TOUR, &Environment::SEA_LEVEL);
-//! assert!(flight.carry_yards > 200.0);
+//! let flight = simulate_flight(&input, &Tour::SEA_LEVEL);
+//! assert!(meters_to_yards(flight.carry_m) > 200.0);
 //! assert!(flight.lateral_m > 0.0); // positive = right of the target line
 //!
-//! let shot = simulate_shot(
-//!     &input,
-//!     &BallModel::TOUR,
-//!     &Environment::SEA_LEVEL,
-//!     &Surface::FAIRWAY,
-//! );
-//! let stats = ShotStats::from_shot(&shot);
-//! assert!(stats.total_yards > stats.carry_yards);
-//! assert!(stats.lateral_yards > 0.0);
-//! assert!(shot.final_pos.z > flight.lateral_m); // keeps running right
+//! let shot = simulate_shot(&input, &Tour::SEA_LEVEL, &Surface::FAIRWAY);
+//! assert!(shot.total_m > shot.flight.carry_m);
+//! assert!(shot.ground.rest.pos.z > flight.lateral_m); // keeps running right
 //! ```
+//!
+//! # The air
+//!
+//! Every shot is flown by one [`AeroModel`]: the ball and the air it flies
+//! through. [`Tour`] is dimple's model of a modern tour ball, built from an
+//! air density and a [`Wind`]:
+//!
+//! | You know | Model |
+//! |---|---|
+//! | nothing (sea level, standard day, still air) | [`Tour::SEA_LEVEL`] |
+//! | altitude and temperature | `Tour::new(standard_air_density(altitude_m, temperature_c), wind)` ([`standard_air_density`]) |
+//! | a measured density (weather station: ρ = p / (287.05 · T)) | `Tour::new(air_density, wind)` |
+//! | a wind | [`Wind::Uniform`], [`Wind::PowerLaw`] (a 10 m reading scaled with height), or [`Wind::custom`] (any function of time, position and height) |
+//! | another ball, air or gravity | implement [`AeroModel`] yourself, or wrap [`Tour`] |
+//!
+//! Measured density and wind are **beta**. A ball model of your own needs
+//! four methods; see [`AeroModel`] for a drag-only ball and for a wrapper
+//! that changes gravity in flight and on the ground alike.
 //!
 //! # Ground
 //!
@@ -65,17 +75,17 @@
 //! lands where the flight crosses the surface;
 //! [`trajectory::simulate_flight`] always lands on the plane y = 0.
 //!
-//! **Parameter structs grow.** [`Surface`], [`BallModel`],
-//! [`ground::GroundPhysics`] and [`Environment`] gain fields in minor
-//! releases, so build them from a preset (or [`ground::GroundPhysics::new`])
-//! with `..`, e.g. `BallModel { mass_kg: 0.046, ..BallModel::TOUR }`.
+//! **Parameter structs grow.** [`Surface`] and [`ground::GroundPhysics`]
+//! gain fields in minor releases, so build them from a preset (or
+//! [`ground::GroundPhysics::new`]) with `..`, e.g.
+//! `Surface { mu_roll: 0.09, ..Surface::FAIRWAY }`.
 //!
 //! # Conventions
 //!
 //! **Units.** All internal computation is SI (meters, seconds, kilograms,
 //! radians, rad/s). [`trajectory::ShotInput`] takes common launch-monitor
-//! units (mph, degrees, rpm); [`stats::ShotStats`] reports yards, feet and
-//! degrees. Conversions live in [`units`].
+//! units (mph, degrees, rpm); results are SI, with the descent angle in
+//! degrees. Conversions to display units live in [`units`].
 //!
 //! **Coordinate frame.** Right-handed, origin at the tee:
 //!
@@ -100,8 +110,7 @@
 //! |---|---|
 //! | [`ShotInput::launch_azimuth_deg`](trajectory::ShotInput::launch_azimuth_deg) | ball starts right of target |
 //! | [`ShotInput::sidespin_rpm`](trajectory::ShotInput::sidespin_rpm) | ball curves right (fade/slice for a right-handed golfer, draw/hook for a left-handed golfer) |
-//! | [`FlightResult::lateral_m`](trajectory::FlightResult::lateral_m), [`ShotStats::lateral_yards`](stats::ShotStats::lateral_yards) | ball lands right of target |
-//! | [`FlightResult::landing_sidespin_rads`](trajectory::FlightResult::landing_sidespin_rads) | same as input sidespin |
+//! | [`FlightResult::lateral_m`](trajectory::FlightResult::lateral_m) | ball lands right of target |
 //! | `pos.z`, `vel.z` of any vector | right of / moving right of the target line |
 //!
 //! **Spin axis.** Backspin and sidespin combine into one angular velocity
@@ -113,17 +122,17 @@
 //! +Z. Equivalently, a spin axis tilted to the right produces a rightward
 //! curve. See [`trajectory::ShotInput::launch_spin_rads`].
 //!
-//! **Integration.** Flight uses fixed-step RK4 at 1 ms with exponential spin
-//! decay; the ground phase uses RK4 at 1 ms within each smooth phase. See
+//! **Integration.** Flight uses fixed-step RK4 at 1 ms, with the spin
+//! advanced by the model once per step ([`Tour`]: exponential decay); the
+//! ground phase uses RK4 at 1 ms within each smooth phase. See
 //! `docs/AERO.md` in the repository for the aerodynamic and ground models,
 //! their sources and their validation.
 
-/// Ball models, Cd/Cl coefficients, and the drag/Magnus/gravity force model.
+/// The [`AeroModel`] trait and dimple's tour-ball model, [`Tour`].
 pub mod aero;
-/// The air a shot flies through ([`environment::Environment`]): density
-/// from altitude and temperature or measured, viscosity, and uniform or
-/// height-dependent wind ([`environment::Wind`]).
-pub mod environment;
+/// Air density from altitude and temperature ([`standard_air_density`]) and
+/// the wind ([`Wind`]).
+pub mod air;
 /// Everything after landing: surfaces, heightfield terrain, 3D impacts,
 /// hops, slide and roll on slopes, with the spin vector carried through
 /// every contact.
@@ -142,17 +151,14 @@ pub mod environment;
 pub mod ground;
 /// Fixed-step fourth-order Runge-Kutta integrators.
 mod rk4;
-/// Per-shot statistics in display units.
-pub mod stats;
 /// Shot input, flight simulation, and full flight + ground shots.
 pub mod trajectory;
 /// Physical constants and unit conversions.
 pub mod units;
 mod vec3;
 
-pub use aero::BallModel;
-pub use environment::Environment;
-pub use ground::Surface;
-pub use stats::ShotStats;
+pub use aero::{AeroModel, Tour};
+pub use air::{Wind, standard_air_density};
+pub use ground::{BallState, Surface};
 pub use trajectory::{ShotInput, simulate_flight, simulate_shot};
 pub use vec3::Vec3;

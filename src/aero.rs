@@ -1,524 +1,460 @@
 use crate::Vec3;
 
-use crate::environment::AIR_DYNAMIC_VISCOSITY;
-use crate::units::G;
+use crate::air::Wind;
+use crate::ground::BallState;
+use crate::units;
 
-/// Physical and aerodynamic properties of a golf ball.
+/// The air's effect on one ball: the right-hand side of the flight
+/// equations, less gravity.
 ///
-/// Bundles the ball's physical dimensions with its aerodynamic character —
-/// the Cd/Cl model constants that characterize how its dimple pattern
-/// interacts with airflow. Together these fully define how the ball moves
-/// through air.
+/// dimple integrates the flight and the hops between bounces with RK4 and
+/// asks the model for the acceleration at every stage; it adds gravity
+/// itself, along −Y with magnitude [`gravity`](Self::gravity). The ground
+/// reads [`radius_m`](Self::radius_m), [`inertia_factor`](Self::inertia_factor)
+/// and [`gravity`](Self::gravity) for the contacts. [`Tour`] is dimple's
+/// model; implement the trait for your own ball, air or wind.
 ///
-/// The Cd/Cl model uses a sigmoid transition at the dimpled-ball drag crisis
-/// (~Re 70k for the TOUR model), with saturating spin-dependent drag and
-/// exponential lift saturation.
+/// Every method is a pure function of its arguments: the integrator calls
+/// [`acceleration`](Self::acceleration) several times per step and must
+/// get the same value for the same arguments, so a model has no interior
+/// mutability. A model that changes with time (a gust) reads
+/// [`BallState::time`], the absolute shot time.
 ///
-/// Sources for the `TOUR` preset:
-/// - Li, Tsubokura & Tsunoda (2017), Flow Turb. Combust. 99(3) — LES, Cd/Cl at Re=1.1e5
-/// - Lyu, Kensrud, Smith & Tosaya (2018), ISEA Proc. — trajectory fit, 13 production balls
-/// - Jenkins, Arellano, Ross & Snell (2018), World J. Mech. 8(6) — wind tunnel
-/// - US6186002B1 (Quintavalla/Acushnet 1997) — wind tunnel, 1990s-era balls (reference)
-#[derive(Debug, Clone, Copy)]
-pub struct BallModel {
-    // ── Physical properties ──
-    /// Ball mass (kg). USGA max: 1.620 oz (0.04593 kg).
-    /// Heavier balls carry more momentum but also experience more gravitational drop.
-    pub mass_kg: f64,
+/// A ball with drag only, `a = −k·|v|·v`:
+///
+/// ```
+/// use dimple::{AeroModel, BallState, ShotInput, Surface, Vec3, simulate_shot};
+///
+/// struct DragOnly {
+///     k: f64,
+/// }
+///
+/// impl AeroModel for DragOnly {
+///     fn acceleration(&self, ball: &BallState, _height: f64) -> Vec3 {
+///         ball.vel * (-self.k * ball.vel.length())
+///     }
+///     fn spin_after(&self, ball: &BallState, _dt: f64) -> Vec3 {
+///         ball.spin
+///     }
+///     fn radius_m(&self) -> f64 {
+///         0.021_335
+///     }
+///     fn inertia_factor(&self) -> f64 {
+///         0.4
+///     }
+/// }
+///
+/// let shot = simulate_shot(&ShotInput::driver(), &DragOnly { k: 0.004 }, &Surface::FAIRWAY);
+/// assert!(shot.flight.carry_m > 100.0);
+/// ```
+///
+/// Another gravity, consistent in flight and on the ground: wrap [`Tour`]
+/// and override [`gravity`](Self::gravity).
+///
+/// ```
+/// use dimple::{AeroModel, BallState, ShotInput, Surface, Tour, Vec3, simulate_shot};
+///
+/// /// The tour ball under a dome on the Moon, in sea-level air.
+/// struct MoonDome(Tour);
+///
+/// impl AeroModel for MoonDome {
+///     fn acceleration(&self, ball: &BallState, height: f64) -> Vec3 {
+///         self.0.acceleration(ball, height)
+///     }
+///     fn spin_after(&self, ball: &BallState, dt: f64) -> Vec3 {
+///         self.0.spin_after(ball, dt)
+///     }
+///     fn radius_m(&self) -> f64 {
+///         self.0.radius_m()
+///     }
+///     fn inertia_factor(&self) -> f64 {
+///         self.0.inertia_factor()
+///     }
+///     fn gravity(&self) -> f64 {
+///         1.62
+///     }
+/// }
+///
+/// let input = ShotInput::seven_iron();
+/// let earth = simulate_shot(&input, &Tour::SEA_LEVEL, &Surface::FAIRWAY);
+/// let moon = simulate_shot(&input, &MoonDome(Tour::SEA_LEVEL), &Surface::FAIRWAY);
+/// assert!(moon.flight.carry_m > earth.flight.carry_m);
+/// ```
+pub trait AeroModel {
+    /// Acceleration (m/s²) the air gives the ball: drag, lift and anything
+    /// else the model has. Gravity is not part of it. `height` is the
+    /// ball's height (m) above the ground beneath it.
+    #[must_use]
+    fn acceleration(&self, ball: &BallState, height: f64) -> Vec3;
 
-    /// Ball diameter (m). USGA min: 1.680 in (0.04267 m).
-    /// Larger diameter increases cross-sectional area (more drag and lift force)
-    /// and increases spin ratio at a given RPM (more Magnus effect).
-    pub diameter_m: f64,
+    /// The ball's spin (rad/s) after `dt` seconds of flight from `ball`.
+    /// dimple calls it once per flight step; the hops between bounces hold
+    /// the spin fixed and do not call it.
+    #[must_use]
+    fn spin_after(&self, ball: &BallState, dt: f64) -> Vec3;
+
+    /// Ball radius (m).
+    #[must_use]
+    fn radius_m(&self) -> f64;
 
     /// Moment-of-inertia factor k, with I = k·m·R². `0.4` (2/5) is a
-    /// uniform solid sphere. Used only on the ground, where it sets how
-    /// friction splits between slowing the ball and changing its spin: a
-    /// ball sliding on flat ground without spin leaves rolling at 1/(1+k) of
-    /// its speed (5/7 for k = 2/5).
-    pub inertia_factor: f64,
+    /// uniform solid sphere. Used on the ground, where it sets how friction
+    /// splits between slowing the ball and changing its spin: a ball sliding
+    /// on flat ground without spin leaves rolling at 1/(1+k) of its speed.
+    #[must_use]
+    fn inertia_factor(&self) -> f64;
 
-    // ── Drag model ──
-    //
-    // Cd = cd_base(Re) + cd_spin × SR / (1 + SR / sr_sat)
-    //   where cd_base = cd_sub + (cd_super - cd_sub) × σ(Re)
-    //   and σ(Re) = sigmoid transition at the drag crisis
-    /// Drag coefficient in the subcritical regime (Re < `re_crit`).
-    /// This is the base Cd before the ball's dimples trigger the drag crisis.
-    /// Lower values mean less drag at low speeds (late in flight, short chips).
-    /// Typical range: 0.18–0.25.
-    pub cd_sub: f64,
-
-    /// Base drag coefficient in the supercritical regime (Re > `re_crit`), at zero spin.
-    /// This is the "cruise" Cd for a non-spinning ball at full flight speed.
-    /// Modern tour balls: ~0.20. 1990s balls: ~0.30. Range balls: ~0.25.
-    /// Lower values = longer carry. This is the single most sensitive constant
-    /// for carry distance.
-    pub cd_super: f64,
-
-    /// Spin-dependent drag slope: Cd += `cd_spin` × SR / (1 + SR / `sr_sat`).
-    /// Spin drag is dominated by induced drag from Magnus lift, so it
-    /// saturates as Cl saturates — the term is near-linear (slope `cd_spin`)
-    /// below SR ≈ `sr_sat` and approaches the cap `cd_spin` × `sr_sat` at high SR.
-    /// At driver SR≈0.08: adds ~0.05. At wedge SR≈0.46: adds ~0.14.
-    pub cd_spin: f64,
-
-    /// Saturation constant for spin drag (dimensionless spin ratio).
-    /// The spin-drag term reaches half its asymptotic cap at SR = `sr_sat` and
-    /// caps at `cd_spin` × `sr_sat`. Set to `f64::INFINITY` for a purely linear
-    /// spin-drag term (1990s patent model).
-    pub sr_sat: f64,
-
-    // ── Lift model ──
-    //
-    // Cl = cl_max(Re) × (1 - exp(-SR / sr_scale))
-    //   where cl_max = cl_sub + (cl_super - cl_sub) × σ(Re)
-    /// Lift coefficient ceiling in the subcritical regime (Re < `re_crit`).
-    /// Controls how much Magnus lift the ball generates at low speeds (late in
-    /// flight). Critical for high-trajectory shots (wedges, high-launch drivers)
-    /// that decelerate through the drag crisis. Too low and these shots fall short.
-    /// Dimpled balls maintain significant lift even at subcritical Re.
-    pub cl_sub: f64,
-
-    /// Asymptotic lift coefficient ceiling in the supercritical regime.
-    /// The maximum Cl the ball can achieve at infinite spin ratio.
-    /// Real balls approach this asymptote for wedge shots (SR > 0.4).
-    /// Higher values = more lift at all spin rates = higher apex and more carry.
-    pub cl_super: f64,
-
-    /// Exponential saturation rate for lift vs spin ratio.
-    /// Controls how quickly Cl approaches `cl_super` as SR increases.
-    /// Smaller values = faster saturation = more lift at low SR (driver).
-    /// Larger values = slower saturation = Cl stays low until high SR (irons).
-    /// TOUR gives Cl ≈ 0.19 at SR=0.1 (Li et al. 2017 LES: 0.135).
-    pub sr_scale: f64,
-
-    // ── Drag crisis transition ──
-    /// Critical Reynolds number where the dimple-triggered drag crisis occurs.
-    /// Below this Re, airflow is subcritical (different Cd/Cl behavior).
-    /// For dimpled golf balls, this is around Re = 100,000 — much lower than
-    /// smooth spheres (~300,000) because dimples trip the boundary layer early.
-    pub re_crit: f64,
-
-    /// Width of the sigmoid transition region around `re_crit`.
-    /// Controls how abruptly the drag crisis transition happens.
-    /// Smaller values = sharper transition. Larger = more gradual blending.
-    pub re_width: f64,
+    /// Magnitude (m/s²) of gravity, which acts along −Y, in flight and on
+    /// the ground. Standard gravity, [`units::G`], unless overridden.
+    #[must_use]
+    fn gravity(&self) -> f64 {
+        units::G
+    }
 }
 
-impl BallModel {
-    /// Modern tour ball (USGA conforming, 2020s-era dimple design).
-    ///
-    /// Jointly calibrated to Trackman 2024 PGA Tour Averages (12 clubs, carry +
-    /// descent angle, 25°C sea level) and a 1,178-shot per-shot validation set
-    /// (carry, peak height, descent, offline across 26–153 mph and
-    /// 0.8k–14k rpm). See docs/AERO.md for the full model documentation.
-    ///
-    /// Key structural feature: **saturating spin drag** (`sr_sat`). Spin drag is
-    /// mostly induced drag from Magnus lift, which saturates in SR as Cl does.
-    /// The high-slope/early-cap form (`cd_spin` = 0.85, `sr_sat` = 0.25) lets high-spin
-    /// irons carry heavy late-flight drag (steep 47-52° descent matching
-    /// Trackman) without collapsing subcritical lift — `cl_sub` sits at a
-    /// physically plausible 0.203 (wind tunnel: 0.15-0.28).
-    ///
-    /// Aerodynamic sources:
-    /// - Li, Tsubokura & Tsunoda (2017), Flow Turb. Combust. 99(3) — LES CFD at
-    ///   Re=1.1e5: Cd=0.217 (static), Cd=0.240 (spinning, G=0.1), Cl=0.135.
-    ///   This model at driver SR≈0.08: Cd≈0.24, Cl≈0.16.
-    /// - Lyu, Kensrud, Smith & Tosaya (2018), ISEA Proc. 2(6):238 — trajectory fit
-    ///   on 13 production balls, Cd~0.20 average at high Re (`cd_super` = 0.186 + spin)
-    /// - Crabill (2019), Sports Eng. 22:1-9 — high-order CFD at Re=1.5e5: Cd=0.247
-    /// - Bearman & Harvey (1976), Aero. Q. 27:112-122 — original wind tunnel study
-    ///
-    /// Spin decay: λ=0.04 s⁻¹ matches Trackman's published ~4%/s (Oct 2010) and
-    /// Lyu et al. (2018) trajectory fits. Tutelman: τ=30s → λ=0.033.
-    ///
-    /// Fit quality: Trackman carry RMSE=2.8y (9/12 clubs within ±3y), DA
-    /// RMSE=1.3°; per-shot set carry RMSE=3.2y, offline RMSE=1.2y, peak
-    /// RMSE=2.6ft. Denver altitude gain +6.9% (published ~6.1%), hot-cold
-    /// delta ~9y (published ~8y).
-    pub const TOUR: Self = Self {
-        mass_kg: 0.04593,    // 1.62 oz (USGA max)
-        diameter_m: 0.04267, // 1.68 in (USGA min)
-        inertia_factor: 0.4, // uniform solid sphere
-        cd_sub: 0.295,
-        cd_super: 0.186,
-        cd_spin: 0.85,
-        sr_sat: 0.25,
-        cl_sub: 0.203,
-        cl_super: 0.324,
-        sr_scale: 0.115,
-        re_crit: 69_600.0,
-        re_width: 106.0,
-    };
+/// dimple's model of a modern tour ball in a given air: its density and its
+/// wind.
+///
+/// Drag and Magnus lift act on the ball's velocity relative to the air, and
+/// spin decays at 4 % per second. The drag and lift coefficients are fitted
+/// constants (see `docs/AERO.md` in the repository for the formulas, the
+/// values, the data they were fitted to and the fit quality); they are
+/// **beta** and may change between releases.
+///
+/// ```
+/// use dimple::air::Wind;
+/// use dimple::{ShotInput, Tour, Vec3, simulate_flight, standard_air_density};
+///
+/// // 1,500 m up on a 25 °C day, into a 4 m/s headwind.
+/// let tour = Tour::new(
+///     standard_air_density(1500.0, 25.0),
+///     Wind::Uniform(Vec3::new(-4.0, 0.0, 0.0)),
+/// );
+/// let flight = simulate_flight(&ShotInput::driver(), &tour);
+/// assert!(flight.carry_m > 200.0);
+/// ```
+#[derive(Debug, Clone)]
+pub struct Tour {
+    air_density: f64,
+    wind: Wind,
+}
 
-    /// 1990s-era tour ball, fitted to US6186002B1 (Quintavalla/Acushnet 1997)
-    /// wind tunnel measurements on production golf balls.
-    ///
-    /// Source: Patent US6186002B1, Table 1 — force-balance wind tunnel data at
-    /// V=100–250 ft/s, spin=19–47 rev/s. 7 data points, RMSE: Cd=0.008, Cl=0.006.
-    ///
-    /// Key differences from modern balls:
-    /// - **Base Cd much higher** (0.29 vs 0.186 + spin term): 1990s dimple patterns
-    ///   created more drag.
-    ///   This is the dominant factor — accounts for ~80% of the carry distance gap.
-    /// - **Cl saturates almost instantly** (`sr_scale` = 0.01 vs 0.115): patent data shows
-    ///   nearly constant Cl≈0.28 across all SR values, meaning lift was independent of
-    ///   spin ratio. Modern balls have spin-sensitive lift (low Cl at low SR, high Cl
-    ///   at high SR), rewarding the "high launch, low spin" strategy.
-    /// - **Lower subcritical Cl** (0.12 vs 0.203): less late-flight lift, so high-arc
-    ///   shots (wedges) lost more carry relative to modern balls.
-    ///
-    /// The 250 ft/s, 23 rev/s data point (Cd=0.315) is a known outlier — it's the
-    /// only case where lower spin produces higher drag. Likely measurement noise.
-    /// Our model gives Cd=0.296 there (within ±0.02 of all other points).
-    pub const PATENT_1997: Self = Self {
-        mass_kg: 0.04593, // same physical ball (USGA limits unchanged since 1990)
-        diameter_m: 0.04267,
-        inertia_factor: 0.4,
-        cd_sub: 0.19,
-        cd_super: 0.29,
-        cd_spin: 0.15,
-        sr_sat: f64::INFINITY, // linear spin drag (patent data fit)
-        cl_sub: 0.12,
-        cl_super: 0.285,
-        sr_scale: 0.01,
-        re_crit: 100_000.0,
-        re_width: 8_000.0,
-    };
+/// Compile-time check: models and winds can be shared across threads.
+const _: () = {
+    const fn send_sync<T: Send + Sync>() {}
+    send_sync::<Tour>();
+    send_sync::<Wind>();
+};
 
-    /// Ball radius (m). Derived from diameter.
+/// Ball mass (kg), the USGA maximum (1.62 oz).
+const MASS_KG: f64 = 0.04593;
+/// Ball radius (m): half the USGA minimum diameter (1.68 in).
+const RADIUS_M: f64 = 0.04267 / 2.0;
+/// Moment-of-inertia factor of a uniform solid sphere.
+const INERTIA_FACTOR: f64 = 0.4;
+/// Drag at zero spin.
+const CD_BASE: f64 = 0.10;
+/// Slope of the spin drag.
+const CD_SPIN: f64 = 1.69;
+/// Spin ratio at which the spin drag reaches half its cap.
+const SR_SAT: f64 = 0.24;
+/// Lift ceiling.
+const CL_MAX: f64 = 0.359;
+/// Lift saturation rate in spin ratio.
+const SR_SCALE: f64 = 0.149;
+/// Height of the low-spin lift term.
+const CL_BUMP: f64 = 0.0185;
+/// Spin ratio at which the low-spin lift term peaks.
+const SR_BUMP: f64 = 0.027;
+/// Spin decay rate (s⁻¹).
+const SPIN_DECAY: f64 = 0.04;
+
+impl Tour {
+    /// Sea level on a standard day (1.225 kg/m³, 15 °C), still air.
+    pub const SEA_LEVEL: Self = Self::new(1.225, Wind::None);
+
+    /// The tour ball in air of density `air_density` (kg/m³) with `wind`.
+    ///
+    /// The density is used as given, so cold dense air flies as dense. It
+    /// must be finite and non-negative; `0.0` is no air at all, under
+    /// gravity alone. [`standard_air_density`](crate::air::standard_air_density)
+    /// gives it from an altitude and a temperature.
     #[must_use]
-    pub fn radius_m(&self) -> f64 {
-        self.diameter_m / 2.0
+    pub const fn new(air_density: f64, wind: Wind) -> Self {
+        Self { air_density, wind }
+    }
+}
+
+impl AeroModel for Tour {
+    fn acceleration(&self, ball: &BallState, height: f64) -> Vec3 {
+        let airspeed = self.wind.airspeed(ball, height);
+        air_acceleration(airspeed, ball.spin, self.air_density)
     }
 
-    /// Cross-sectional area (m²). Derived from diameter.
-    #[must_use]
-    pub fn area_m2(&self) -> f64 {
-        std::f64::consts::PI * self.radius_m() * self.radius_m()
+    fn spin_after(&self, ball: &BallState, dt: f64) -> Vec3 {
+        ball.spin * (-SPIN_DECAY * dt).exp()
     }
 
-    /// Compute Cd and Cl from spin rate, speed, and air density.
-    ///
-    /// Uses a sigmoid transition at the dimpled-ball drag crisis,
-    /// with spin-dependent drag and exponential lift saturation.
-    ///
-    /// - Re = ρ × V × d / μ (Reynolds number)
-    /// - SR = ω × R / V (spin ratio, dimensionless)
-    ///
-    /// μ is the calibrated constant viscosity, 1.81e-5 Pa·s, as an
-    /// [`Environment`](crate::Environment) with `viscosity: None` uses.
-    #[must_use]
-    pub fn cd_cl(&self, spin_rate: f64, speed: f64, air_density: f64) -> (f64, f64) {
-        self.cd_cl_with_viscosity(spin_rate, speed, air_density, AIR_DYNAMIC_VISCOSITY)
+    fn radius_m(&self) -> f64 {
+        RADIUS_M
     }
 
-    /// [`cd_cl`](Self::cd_cl) with the air's dynamic viscosity μ (Pa·s)
-    /// given.
-    #[must_use]
-    pub(crate) fn cd_cl_with_viscosity(
-        &self,
-        spin_rate: f64,
-        speed: f64,
-        air_density: f64,
-        dynamic_viscosity: f64,
-    ) -> (f64, f64) {
-        if speed < 1e-10 {
-            return (self.cd_sub, 0.0);
-        }
-
-        // Reynolds number
-        let re = air_density * speed * self.diameter_m / dynamic_viscosity;
-
-        // Spin ratio
-        let sr = (spin_rate * self.radius_m() / speed).abs();
-
-        // Sigmoid transition at drag crisis
-        let sigma = 1.0 / (1.0 + (-(re - self.re_crit) / self.re_width).exp());
-
-        // Cd: Re-dependent base + saturating spin-dependent increment.
-        // Spin drag is mostly induced drag from Magnus lift, which saturates
-        // in SR as Cl does: near-linear below sr_sat, capped at cd_spin×sr_sat.
-        let cd_base = self.cd_sub + (self.cd_super - self.cd_sub) * sigma;
-        let cd = cd_base + self.cd_spin * sr / (1.0 + sr / self.sr_sat);
-
-        // Cl: Re-dependent ceiling × exponential saturation in SR
-        let cl_max = self.cl_sub + (self.cl_super - self.cl_sub) * sigma;
-        let cl = cl_max * (1.0 - (-sr / self.sr_scale).exp());
-
-        (cd, cl)
+    fn inertia_factor(&self) -> f64 {
+        INERTIA_FACTOR
     }
+}
 
-    /// Compute ball acceleration from gravity + drag + Magnus lift.
-    ///
-    /// Coordinate frame: +X downrange, +Y up, +Z right of the target line
-    /// (right-handed). `vel` and the returned acceleration are in m/s and m/s².
-    /// Uses the calibrated constant viscosity, as [`cd_cl`](Self::cd_cl)
-    /// does.
-    #[must_use]
-    pub fn acceleration(&self, vel: Vec3, aero: &AeroParams, air_density: f64) -> Vec3 {
-        self.acceleration_with_viscosity(vel, aero, air_density, AIR_DYNAMIC_VISCOSITY)
+/// Drag and lift coefficients of the tour ball at angular speed
+/// `spin_rate` (rad/s) and airspeed `speed` (m/s), from the spin ratio
+/// SR = ω·R / V:
+///
+/// - Cd = `CD_BASE` + `CD_SPIN`·SR / (1 + SR / `SR_SAT`)
+/// - Cl = `CL_MAX`·(1 − exp(−SR / `SR_SCALE`)) + `CL_BUMP`·u·exp(1 − u),
+///   u = (SR / `SR_BUMP`)⁴
+fn cd_cl(spin_rate: f64, speed: f64) -> (f64, f64) {
+    if speed < 1e-10 {
+        return (CD_BASE, 0.0);
     }
+    let sr = (spin_rate * RADIUS_M / speed).abs();
+    let cd = CD_BASE + CD_SPIN * sr / (1.0 + sr / SR_SAT);
+    let u = (sr / SR_BUMP).powi(4);
+    let cl = CL_MAX * (1.0 - (-sr / SR_SCALE).exp()) + CL_BUMP * u * (1.0 - u).exp();
+    (cd, cl)
+}
 
-    /// [`acceleration`](Self::acceleration) with the air's dynamic
-    /// viscosity μ (Pa·s) given.
-    #[must_use]
-    pub(crate) fn acceleration_with_viscosity(
-        &self,
-        vel: Vec3,
-        aero: &AeroParams,
-        air_density: f64,
-        dynamic_viscosity: f64,
-    ) -> Vec3 {
-        let speed = vel.length();
-        if speed < 1e-10 {
-            return Vec3::new(0.0, -G, 0.0);
-        }
-
-        let vel_hat = vel / speed;
-        let (cd, cl) =
-            self.cd_cl_with_viscosity(aero.spin_rate, speed, air_density, dynamic_viscosity);
-
-        // Dynamic pressure: q = 0.5 × ρ × v²
-        let q = 0.5 * air_density * speed * speed;
-
-        // Drag: opposes velocity
-        let drag = vel_hat * (-cd * q * self.area_m2() / self.mass_kg);
-
-        // Magnus lift: perpendicular to velocity, in plane defined by spin axis
-        let magnus = if aero.spin_rate.abs() > 1e-10 {
-            let lift_dir = aero.spin_axis.cross(vel_hat);
-            let lift_mag = lift_dir.length();
-            if lift_mag > 1e-10 {
-                let lift_hat = lift_dir / lift_mag;
-                lift_hat * (cl * q * self.area_m2() / self.mass_kg)
-            } else {
-                Vec3::ZERO
-            }
+/// Drag and Magnus lift (m/s²) on the tour ball moving at `vel` relative to
+/// air of density `air_density`, with angular velocity `spin`. Drag opposes
+/// `vel`; lift is along ω̂ × v̂.
+fn air_acceleration(vel: Vec3, spin: Vec3, air_density: f64) -> Vec3 {
+    let speed = vel.length();
+    if speed < 1e-10 {
+        return Vec3::ZERO;
+    }
+    let vel_hat = vel / speed;
+    let rate = spin.length();
+    let (cd, cl) = cd_cl(rate, speed);
+    // Dynamic pressure times area over mass.
+    let area = std::f64::consts::PI * RADIUS_M * RADIUS_M;
+    let scale = 0.5 * air_density * speed * speed * area / MASS_KG;
+    let drag = vel_hat * (-cd * scale);
+    let magnus = if rate > 1e-10 {
+        let lift_dir = (spin / rate).cross(vel_hat);
+        let lift_mag = lift_dir.length();
+        if lift_mag > 1e-10 {
+            (lift_dir / lift_mag) * (cl * scale)
         } else {
             Vec3::ZERO
-        };
-
-        // Gravity
-        let gravity = Vec3::new(0.0, -G, 0.0);
-
-        gravity + drag + magnus
-    }
-}
-
-/// Aerodynamic state for a ball in flight.
-///
-/// Per-shot spin state that evolves over the trajectory. Paired with a
-/// `BallModel` (which is fixed for the flight) to compute forces.
-#[derive(Debug, Clone, Copy)]
-pub struct AeroParams {
-    /// Spin axis (unit vector, right-hand rule). Combined backspin + sidespin
-    /// direction: backspin points along the horizontal axis perpendicular to
-    /// the start line (+Z for a straight launch), sidespin that curves the
-    /// ball right points along -Y. Fixed for the whole flight.
-    pub spin_axis: Vec3,
-    /// Current spin rate (rad/s). Decays over flight.
-    pub spin_rate: f64,
-    /// Spin decay constant (s⁻¹). ω(t) = ω₀ × exp(-λ·t).
-    pub spin_decay: f64,
-}
-
-/// Default spin decay rate (s⁻¹). ~18% loss over 5 seconds, ~21% over 6 seconds.
-/// Source: Trackman (2010) ~4%/s, Lyu et al. (2018) trajectory fits.
-pub const DEFAULT_SPIN_DECAY: f64 = 0.04;
-
-impl AeroParams {
-    /// Create aero params from backspin and sidespin in RPM, for a ball
-    /// launched straight down the target line (0° azimuth).
-    ///
-    /// - `backspin_rpm`: positive = backspin (lift), negative = topspin.
-    ///   Angular velocity along +Z (right-hand rule: the top of the ball moves
-    ///   back toward the golfer).
-    /// - `sidespin_rpm`: positive = the ball curves **right** (fade/slice for a
-    ///   right-handed golfer), negative = curves left (draw/hook). Positive
-    ///   sidespin is a clockwise rotation viewed from above, i.e. angular
-    ///   velocity along -Y.
-    ///
-    /// For other launch directions use
-    /// [`ShotInput::launch_spin_rads`](crate::trajectory::ShotInput::launch_spin_rads)
-    /// with [`from_spin_vector`](Self::from_spin_vector).
-    #[must_use]
-    pub fn from_spin(backspin_rpm: f64, sidespin_rpm: f64) -> Self {
-        let backspin_rads = backspin_rpm * std::f64::consts::PI / 30.0;
-        let sidespin_rads = sidespin_rpm * std::f64::consts::PI / 30.0;
-        Self::from_spin_vector(Vec3::new(0.0, -sidespin_rads, backspin_rads))
-    }
-
-    /// Create aero params from an angular velocity vector (rad/s, crate
-    /// frame, right-hand rule). A zero vector gives zero spin about +Z.
-    #[must_use]
-    pub fn from_spin_vector(omega: Vec3) -> Self {
-        let spin_rate = omega.length();
-        let spin_axis = if spin_rate > 1e-10 {
-            omega / spin_rate
-        } else {
-            Vec3::Z
-        };
-        Self {
-            spin_axis,
-            spin_rate,
-            spin_decay: DEFAULT_SPIN_DECAY,
         }
-    }
-
-    /// Current angular velocity vector (rad/s): `spin_axis · spin_rate`.
-    #[must_use]
-    pub fn spin_vector(&self) -> Vec3 {
-        self.spin_axis * self.spin_rate
-    }
-
-    /// Apply spin decay for a timestep.
-    pub fn decay_spin(&mut self, dt: f64) {
-        self.spin_rate *= (-self.spin_decay * dt).exp();
-    }
+    } else {
+        Vec3::ZERO
+    };
+    drag + magnus
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::environment::Environment;
+    use crate::air::standard_air_density;
+    use crate::units::rpm_to_rads;
 
-    const SEA_LEVEL_RHO: f64 = 1.225;
-    const TOUR: BallModel = BallModel::TOUR;
-    const PATENT: BallModel = BallModel::PATENT_1997;
-
-    // ══════════════════════════════════════════════════════════════════
-    //  FORCE MODEL — structural invariants (any ball)
-    // ══════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn gravity_only_no_spin() {
-        let aero = AeroParams {
-            spin_axis: Vec3::Z,
-            spin_rate: 0.0,
-            spin_decay: 0.0,
-        };
-        let accel = TOUR.acceleration(Vec3::new(50.0, 0.0, 0.0), &aero, SEA_LEVEL_RHO);
-        assert!((accel.y + G).abs() < 5.0, "gravity should dominate y");
-        assert!((accel.z).abs() < 1e-10, "no lateral force without sidespin");
+    fn moving(vel: Vec3, spin: Vec3) -> BallState {
+        BallState {
+            time: 0.0,
+            pos: Vec3::ZERO,
+            vel,
+            spin,
+        }
     }
 
+    /// Backspin and sidespin (rpm) for a straight launch.
+    fn spin(backspin_rpm: f64, sidespin_rpm: f64) -> Vec3 {
+        Vec3::new(0.0, -rpm_to_rads(sidespin_rpm), rpm_to_rads(backspin_rpm))
+    }
+
+    fn accel(vel: Vec3, spin: Vec3) -> Vec3 {
+        Tour::SEA_LEVEL.acceleration(&moving(vel, spin), 0.0)
+    }
+
+    /// Spin rate (rad/s) for spin ratio `sr` at `speed`.
+    fn sr_to_spin(sr: f64, speed: f64) -> f64 {
+        sr * speed / RADIUS_M
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  FORCE MODEL — structural invariants
+    // ══════════════════════════════════════════════════════════════════
+
     #[test]
-    fn drag_opposes_velocity() {
-        let aero = AeroParams {
-            spin_axis: Vec3::Z,
-            spin_rate: 0.0,
-            spin_decay: 0.0,
-        };
-        let vel = Vec3::new(50.0, 0.0, 0.0);
-        let accel = TOUR.acceleration(vel, &aero, SEA_LEVEL_RHO);
-        assert!(accel.x < 0.0, "drag should oppose +X velocity");
+    fn no_spin_gives_drag_only() {
+        let a = accel(Vec3::new(50.0, 0.0, 0.0), Vec3::ZERO);
+        assert!(a.x < 0.0, "drag should oppose +X velocity");
+        assert!(a.y.abs() < 1e-12, "no lift without spin");
+        assert!(a.z.abs() < 1e-12, "no lateral force without spin");
     }
 
     #[test]
     fn positive_sidespin_pushes_right() {
-        let aero = AeroParams::from_spin(3000.0, 1000.0);
-        let vel = Vec3::new(50.0, 0.0, 0.0);
-        let accel = TOUR.acceleration(vel, &aero, SEA_LEVEL_RHO);
-        assert!(
-            accel.z > 0.0,
-            "positive sidespin should push toward +Z (right): az={:.3}",
-            accel.z
-        );
+        let a = accel(Vec3::new(50.0, 0.0, 0.0), spin(3000.0, 1000.0));
+        assert!(a.z > 0.0, "positive sidespin should push toward +Z: {a:?}");
     }
 
     #[test]
     fn negative_sidespin_pushes_left() {
-        let aero = AeroParams::from_spin(3000.0, -1000.0);
-        let vel = Vec3::new(50.0, 0.0, 0.0);
-        let accel = TOUR.acceleration(vel, &aero, SEA_LEVEL_RHO);
-        assert!(
-            accel.z < 0.0,
-            "negative sidespin should push toward -Z (left): az={:.3}",
-            accel.z
-        );
+        let a = accel(Vec3::new(50.0, 0.0, 0.0), spin(3000.0, -1000.0));
+        assert!(a.z < 0.0, "negative sidespin should push toward -Z: {a:?}");
     }
 
     #[test]
     fn backspin_lifts() {
-        let aero = AeroParams::from_spin(3000.0, 0.0);
-        let vel = Vec3::new(50.0, 0.0, 0.0);
-        let accel = TOUR.acceleration(vel, &aero, SEA_LEVEL_RHO);
-        assert!(
-            accel.y > Vec3::new(0.0, -G, 0.0).y,
-            "backspin should add upward force: ay={:.3}",
-            accel.y
-        );
+        let a = accel(Vec3::new(50.0, 0.0, 0.0), spin(3000.0, 0.0));
+        assert!(a.y > 0.0, "backspin should add upward force: {a:?}");
     }
 
     #[test]
+    #[allow(clippy::float_cmp, reason = "no air gives exactly nothing")]
+    fn no_air_no_force() {
+        let vacuum = Tour::new(0.0, Wind::None);
+        let a = vacuum.acceleration(&moving(Vec3::new(50.0, 3.0, 1.0), spin(3000.0, 500.0)), 1.0);
+        assert_eq!(a, Vec3::ZERO);
+    }
+
+    #[test]
+    fn less_drag_in_thinner_air() {
+        let ball = moving(Vec3::new(70.0, 10.0, 0.0), spin(2700.0, 0.0));
+        let sea = Tour::SEA_LEVEL.acceleration(&ball, 0.0);
+        let high =
+            Tour::new(standard_air_density(1609.0, 17.0), Wind::None).acceleration(&ball, 0.0);
+        assert!(high.x > sea.x, "less drag at altitude: {sea:?} {high:?}");
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp, reason = "the default is the constant itself")]
+    fn tour_uses_standard_gravity() {
+        assert_eq!(Tour::SEA_LEVEL.gravity(), units::G);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  Cd / Cl
+    // ══════════════════════════════════════════════════════════════════
+
+    #[test]
     fn cl_zero_without_spin() {
-        // No spin → no Magnus lift. Must hold for any ball model.
-        let (_, cl) = TOUR.cd_cl(0.0, 70.0, SEA_LEVEL_RHO);
+        let (_, cl) = cd_cl(0.0, 70.0);
         assert!(cl.abs() < 1e-10, "Cl should be 0 without spin, got {cl:.6}");
     }
 
     #[test]
     fn cl_increases_with_spin() {
-        // At the same speed, more spin → higher Cl. Must hold for any ball model.
-        let (_, cl_high) = TOUR.cd_cl(400.0, 70.0, SEA_LEVEL_RHO);
-        let (_, cl_low) = TOUR.cd_cl(200.0, 70.0, SEA_LEVEL_RHO);
-        assert!(
-            cl_high > cl_low,
-            "more spin should mean more lift: {cl_high:.3} vs {cl_low:.3}"
-        );
+        let (_, cl_high) = cd_cl(400.0, 70.0);
+        let (_, cl_low) = cd_cl(200.0, 70.0);
+        assert!(cl_high > cl_low, "{cl_high:.3} vs {cl_low:.3}");
+    }
+
+    #[test]
+    fn cl_rises_with_spin_ratio_through_the_low_spin_term() {
+        // The low-spin term must not make lift fall with spin anywhere
+        // below SR 0.06.
+        let speed = 70.0;
+        let mut prev = 0.0;
+        for i in 1..=600 {
+            let sr = f64::from(i) * 1e-4;
+            let (_, cl) = cd_cl(sr_to_spin(sr, speed), speed);
+            assert!(cl > prev, "Cl falls at SR {sr}: {cl} after {prev}");
+            prev = cl;
+        }
+    }
+
+    /// Cl without the low-spin term.
+    fn cl_without_bump(sr: f64) -> f64 {
+        CL_MAX * (1.0 - (-sr / SR_SCALE).exp())
+    }
+
+    #[test]
+    fn low_spin_term_is_zero_at_zero_spin_and_smooth() {
+        let speed = 60.0;
+        let (_, at_zero) = cd_cl(0.0, speed);
+        assert!(at_zero.abs() < 1e-15);
+        // The term is flat at zero (u⁴ starts with zero slope) and has no
+        // step anywhere: its slope stays under 3 per unit of spin ratio.
+        let bump = |sr: f64| cd_cl(sr_to_spin(sr, speed), speed).1 - cl_without_bump(sr);
+        assert!(bump(1e-5) < 1e-14, "{}", bump(1e-5));
+        let h = 1e-6;
+        let mut sr = h;
+        while sr < 0.06 {
+            let slope = (bump(sr + h) - bump(sr)).abs() / h;
+            assert!(slope < 3.0, "slope {slope} at SR {sr}");
+            sr += 1e-4;
+        }
+        // It peaks at SR_BUMP with height CL_BUMP.
+        assert!((bump(SR_BUMP) - CL_BUMP).abs() < 1e-12);
+    }
+
+    #[test]
+    fn low_spin_term_fades_out_above_sr_0_045() {
+        // At SR 0.045 the term adds 1.7e-4 (0.2 % of Cl); from SR 0.06 on,
+        // under 1e-9.
+        let speed = 60.0;
+        for i in 0..=500 {
+            let sr = 0.045 + f64::from(i) * 1e-3;
+            let (_, cl) = cd_cl(sr_to_spin(sr, speed), speed);
+            let diff = (cl - cl_without_bump(sr)).abs();
+            let bound = if sr >= 0.06 { 1e-9 } else { 2e-4 };
+            assert!(diff < bound, "SR {sr}: differs by {diff}");
+        }
     }
 
     #[test]
     fn spin_drag_saturates() {
-        // The spin-drag term is sub-linear: doubling SR from 0.25 to 0.5 must
-        // add less drag than the first 0.25 did (induced drag saturates with
-        // Cl). The patent model (sr_sat=inf) stays linear by construction.
+        // Doubling SR from 0.25 to 0.5 adds less drag than the first 0.25.
         let speed = 70.0;
-        let sr_to_spin = |sr: f64| sr * speed / TOUR.radius_m();
-        let (cd0, _) = TOUR.cd_cl(0.0, speed, SEA_LEVEL_RHO);
-        let (cd1, _) = TOUR.cd_cl(sr_to_spin(0.25), speed, SEA_LEVEL_RHO);
-        let (cd2, _) = TOUR.cd_cl(sr_to_spin(0.50), speed, SEA_LEVEL_RHO);
-        let first = cd1 - cd0;
-        let second = cd2 - cd1;
+        let (cd0, _) = cd_cl(0.0, speed);
+        let (cd1, _) = cd_cl(sr_to_spin(0.25, speed), speed);
+        let (cd2, _) = cd_cl(sr_to_spin(0.50, speed), speed);
+        let (first, second) = (cd1 - cd0, cd2 - cd1);
         assert!(
             second < first * 0.75,
-            "spin drag should saturate: first ΔCd={first:.3}, second ΔCd={second:.3}"
-        );
-
-        let (pd0, _) = PATENT.cd_cl(0.0, speed, SEA_LEVEL_RHO);
-        let (pd1, _) = PATENT.cd_cl(sr_to_spin(0.25), speed, SEA_LEVEL_RHO);
-        let (pd2, _) = PATENT.cd_cl(sr_to_spin(0.50), speed, SEA_LEVEL_RHO);
-        assert!(
-            ((pd2 - pd1) - (pd1 - pd0)).abs() < 1e-9,
-            "patent spin drag should stay linear"
+            "first ΔCd={first:.3}, second ΔCd={second:.3}"
         );
     }
 
     #[test]
     fn cd_increases_with_spin() {
-        // At the same speed, more spin → higher Cd (wider wake).
-        let (cd_high, _) = TOUR.cd_cl(400.0, 70.0, SEA_LEVEL_RHO);
-        let (cd_low, _) = TOUR.cd_cl(200.0, 70.0, SEA_LEVEL_RHO);
+        let (cd_high, _) = cd_cl(400.0, 70.0);
+        let (cd_low, _) = cd_cl(200.0, 70.0);
+        assert!(cd_high > cd_low, "{cd_high:.3} vs {cd_low:.3}");
+    }
+
+    #[test]
+    fn coefficients_do_not_depend_on_speed_at_a_given_spin_ratio() {
+        for sr in [0.0, 0.03, 0.08, 0.3] {
+            let slow = cd_cl(sr_to_spin(sr, 20.0), 20.0);
+            let fast = cd_cl(sr_to_spin(sr, 80.0), 80.0);
+            assert!((slow.0 - fast.0).abs() < 1e-12 && (slow.1 - fast.1).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn driver_and_iron_coefficients() {
+        // Driver, SR 0.074: Cd 0.196, Cl 0.141. 7-iron, SR 0.29: Cd 0.32,
+        // Cl 0.31 (docs/AERO.md).
+        let (cd, cl) = cd_cl(sr_to_spin(0.074, 70.0), 70.0);
         assert!(
-            cd_high > cd_low,
-            "more spin should mean more drag: {cd_high:.3} vs {cd_low:.3}"
+            (cd - 0.196).abs() < 0.001 && (cl - 0.141).abs() < 0.001,
+            "{cd} {cl}"
+        );
+        let (cd, cl) = cd_cl(sr_to_spin(0.29, 50.0), 50.0);
+        assert!(
+            (cd - 0.32).abs() < 0.005 && (cl - 0.31).abs() < 0.005,
+            "{cd} {cl}"
         );
     }
 
     #[test]
-    fn less_drag_at_altitude() {
-        let aero = AeroParams::from_spin(2700.0, 0.0);
-        let vel = Vec3::new(70.0, 10.0, 0.0);
-        let sea = TOUR.acceleration(vel, &aero, Environment::SEA_LEVEL.air_density());
-        let denver = TOUR.acceleration(vel, &aero, Environment::DENVER.air_density());
-        assert!(
-            denver.x > sea.x,
-            "less drag at altitude: sea ax={:.3}, denver ax={:.3}",
-            sea.x,
-            denver.x
-        );
+    fn tour_cl_near_li_2017() {
+        // Li et al. (2017): Cl = 0.135 at Re 1.1e5, SR 0.1 (LES on one
+        // production ball). The fitted model gives about 0.18 there.
+        let (_, cl) = cd_cl(sr_to_spin(0.1, 50.0), 50.0);
+        assert!((cl - 0.135).abs() < 0.08, "Cl at SR 0.1: {cl:.3}");
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -526,277 +462,17 @@ mod tests {
     // ══════════════════════════════════════════════════════════════════
 
     #[test]
-    fn from_spin_produces_valid_axis() {
-        let aero = AeroParams::from_spin(2500.0, 500.0);
-        let axis_len = aero.spin_axis.length();
-        assert!(
-            (axis_len - 1.0).abs() < 1e-10,
-            "spin axis should be unit vector, got length {axis_len}"
-        );
+    fn spin_decays_exponentially_about_a_fixed_axis() {
+        let start = moving(Vec3::new(60.0, 0.0, 0.0), spin(5000.0, 800.0));
+        let after = Tour::SEA_LEVEL.spin_after(&start, 1.0);
+        let expected = start.spin * (-0.04_f64).exp();
+        assert!((after - expected).length() < 1e-9);
+        assert!(after.normalize().dot(start.spin.normalize()) > 1.0 - 1e-12);
     }
-
-    #[test]
-    fn spin_decay_reduces_rate() {
-        let mut aero = AeroParams::from_spin(5000.0, 0.0);
-        let initial = aero.spin_rate;
-        aero.decay_spin(1.0);
-        assert!(aero.spin_rate < initial);
-        let expected = initial * (-DEFAULT_SPIN_DECAY).exp();
-        assert!(
-            (aero.spin_rate - expected).abs() < 1e-6,
-            "decay should be exponential"
-        );
-    }
-
-    // ══════════════════════════════════════════════════════════════════
-    //  BALL MODEL — derived geometry
-    // ══════════════════════════════════════════════════════════════════
 
     #[test]
     fn derived_geometry() {
-        let ball = BallModel::TOUR;
-        let r = ball.radius_m();
-        assert!((r - 0.04267 / 2.0).abs() < 1e-10);
-        let a = ball.area_m2();
-        assert!((a - std::f64::consts::PI * r * r).abs() < 1e-15);
-    }
-
-    #[test]
-    fn patent_and_tour_same_physical_dimensions() {
-        // USGA physical limits haven't changed since 1990 — both eras use the
-        // same mass and diameter. Only the dimple pattern (aero coefficients) differs.
-        assert!((TOUR.mass_kg - PATENT.mass_kg).abs() < 1e-10);
-        assert!((TOUR.diameter_m - PATENT.diameter_m).abs() < 1e-10);
-    }
-
-    // ══════════════════════════════════════════════════════════════════
-    //  PATENT US6186002B1 — wind tunnel Cd/Cl validation (1997 balls)
-    // ══════════════════════════════════════════════════════════════════
-    //
-    // Source: "Method for determining coefficients of lift and drag of a golf ball"
-    // Patent US6186002B1, Table 1 — force-balance wind tunnel measurements on
-    // production golf balls, Titleist/Acushnet (filed 1997, granted 2001).
-    //
-    // Test conditions: sea level air density (1.225 kg/m³), V in ft/s, spin in rev/s.
-    // Tolerance: ±0.02 for both Cd and Cl (accounts for measurement uncertainty and
-    // the fact that we're fitting 7 points with a 4-parameter model).
-    //
-    // These tests validate that BallModel::PATENT_1997 accurately reproduces the
-    // aerodynamic behavior of 1990s golf balls. The constants were fitted by
-    // minimizing RMSE across all 7 data points (RMSE: Cd=0.008, Cl=0.006).
-
-    fn patent_cd_cl(feet_per_s: f64, revs_per_s: f64) -> (f64, f64) {
-        let speed = feet_per_s * 0.3048;
-        let spin_rads = revs_per_s * 2.0 * std::f64::consts::PI;
-        PATENT.cd_cl(spin_rads, speed, SEA_LEVEL_RHO)
-    }
-
-    #[test]
-    fn patent_supercritical_cd_cl() {
-        // Supercritical regime: V=150–250 ft/s (Re ≈ 130k–220k, well above drag crisis).
-        // Patent balls show Cd≈0.30 and Cl≈0.28 with remarkable consistency across
-        // all supercritical conditions — the Cl is essentially saturated even at
-        // the lowest spin ratio tested (SR≈0.04).
-        let cases: &[(f64, f64, f64, f64)] = &[
-            //  V fps  spin rev/s  patent Cd  patent Cl
-            (250.0, 46.0, 0.306, 0.282),
-            (200.0, 36.0, 0.302, 0.276),
-            (150.0, 47.0, 0.303, 0.275),
-            (150.0, 27.0, 0.300, 0.274),
-        ];
-        for &(v, spin, pat_cd, pat_cl) in cases {
-            let (cd, cl) = patent_cd_cl(v, spin);
-            assert!(
-                (cd - pat_cd).abs() < 0.02,
-                "V={v}, spin={spin}: Cd={cd:.3}, patent={pat_cd} (±0.02)"
-            );
-            assert!(
-                (cl - pat_cl).abs() < 0.02,
-                "V={v}, spin={spin}: Cl={cl:.3}, patent={pat_cl} (±0.02)"
-            );
-        }
-    }
-
-    #[test]
-    fn patent_supercritical_outlier() {
-        // V=250 ft/s, spin=23 rev/s → patent Cd=0.315, Cl=0.285.
-        //
-        // This is the only data point where LOWER spin produces HIGHER drag — the
-        // opposite of every other measurement in the table. Likely measurement noise
-        // (wind tunnel force balance at low spin rates has higher uncertainty).
-        //
-        // Our model gives Cd≈0.296 (Δ=-0.019) — just within ±0.02 tolerance.
-        // We intentionally don't widen the tolerance for this point: it serves as a
-        // reminder that real wind tunnel data has measurement uncertainty, and a
-        // model that fits all 7 points perfectly would be overfitting to noise.
-        let (cd, cl) = patent_cd_cl(250.0, 23.0);
-        assert!(
-            (cd - 0.315).abs() < 0.025,
-            "outlier V=250, spin=23: Cd={cd:.3}, patent=0.315 (±0.025)"
-        );
-        assert!(
-            (cl - 0.285).abs() < 0.02,
-            "V=250, spin=23: Cl={cl:.3}, patent=0.285 (±0.02)"
-        );
-    }
-
-    #[test]
-    fn patent_subcritical_cd_cl() {
-        // Subcritical regime: V=100 ft/s (Re ≈ 88k, below drag crisis at Re=100k).
-        //
-        // Both Cd and Cl drop sharply vs supercritical values:
-        //   Cd: 0.30 → 0.22 (27% drop) — dimples haven't triggered turbulent transition
-        //   Cl: 0.28 → 0.15 (46% drop) — weaker Magnus effect in laminar boundary layer
-        //
-        // This transition is the defining aerodynamic feature of dimpled balls.
-        // Smooth spheres have the opposite pattern (high Cd subcritical, low Cd
-        // supercritical at Re≈300k). Dimples shift the crisis to Re≈100k.
-        let cases: &[(f64, f64, f64, f64)] =
-            &[(100.0, 43.0, 0.229, 0.151), (100.0, 19.0, 0.222, 0.148)];
-        for &(v, spin, pat_cd, pat_cl) in cases {
-            let (cd, cl) = patent_cd_cl(v, spin);
-            assert!(
-                (cd - pat_cd).abs() < 0.02,
-                "V={v}, spin={spin}: Cd={cd:.3}, patent={pat_cd} (±0.02)"
-            );
-            assert!(
-                (cl - pat_cl).abs() < 0.02,
-                "V={v}, spin={spin}: Cl={cl:.3}, patent={pat_cl} (±0.02)"
-            );
-        }
-    }
-
-    // ══════════════════════════════════════════════════════════════════
-    //  MODERN TOUR BALL — Cd/Cl range validation
-    // ══════════════════════════════════════════════════════════════════
-    //
-    // Modern tour balls (2020s) have fundamentally different aerodynamics than
-    // 1990s balls due to advances in dimple design, urethane covers, and
-    // multi-layer construction. Direct wind tunnel data for specific modern balls
-    // is proprietary, but published studies bracket the expected range.
-
-    #[test]
-    fn tour_cd_range_supercritical() {
-        // At supercritical Re with moderate spin (driver-like conditions):
-        //   Lyu et al. 2018: Cd≈0.20 non-spinning, trajectory fit on 13 balls
-        //   Li et al. 2017: Cd=0.24 at Re=1.1e5, SR=0.1 (LES on production ball)
-        //   Jenkins et al. 2018: Cd=0.275 at Re≥80k (wind tunnel, non-spinning)
-        //
-        // Our model should produce Cd in the 0.20–0.26 range for driver conditions.
-        let driver_spin = 2700.0_f64 * std::f64::consts::PI / 30.0;
-        let driver_speed = 76.0; // ~170 mph
-        let (cd, _) = TOUR.cd_cl(driver_spin, driver_speed, SEA_LEVEL_RHO);
-        assert!(
-            cd > 0.20 && cd < 0.26,
-            "tour driver Cd should be 0.20–0.26, got {cd:.3}"
-        );
-    }
-
-    #[test]
-    fn tour_cl_matches_li_2017() {
-        // Li et al. (2017): Cl=0.135 at Re=1.1e5, SR=0.1 (LES on production ball).
-        //
-        // This is one of the few published Cl measurements for modern dimpled balls
-        // at conditions relevant to golf. Our model targets this data point via the
-        // sr_scale parameter (controls Cl saturation rate at low SR).
-        //
-        // Note: our model gives Cl≈0.19 here — higher than Li's 0.135. The difference
-        // is that Li measured a single ball model; our constants are fitted to aggregate
-        // carry data across many modern balls. The Cl needs to be this high to produce
-        // realistic carry distances. Tolerance ±0.08 reflects this model-vs-measurement gap.
-        let sr = 0.1;
-        let speed = 50.0; // ~Re 110k at sea level
-        let spin_rate = sr * speed / TOUR.radius_m();
-        let (_, cl) = TOUR.cd_cl(spin_rate, speed, SEA_LEVEL_RHO);
-        assert!(
-            (cl - 0.135).abs() < 0.08,
-            "Cl at SR=0.1 should be near Li et al. 0.135, got {cl:.3}"
-        );
-    }
-
-    // ══════════════════════════════════════════════════════════════════
-    //  ERA COMPARISON — same conditions, different ball technology
-    // ══════════════════════════════════════════════════════════════════
-    //
-    // These tests document how much aerodynamic technology has changed between
-    // 1990s and 2020s balls. Same USGA physical limits (mass, diameter), but
-    // radically different airflow behavior from dimple optimization.
-
-    #[test]
-    fn era_modern_lower_drag_supercritical() {
-        // At supercritical Re (flight speeds above ~35 m/s / Re > 100k), modern balls
-        // have substantially lower Cd than 1990s balls. This is where the ball spends
-        // most of its flight and is the primary reason modern balls carry farther.
-        //
-        // At subcritical Re (low speeds near landing), the tour model may have slightly
-        // higher Cd due to different subcritical fitting — this doesn't affect carry
-        // because the ball has already decelerated past the point where drag matters.
-        for speed in [50.0, 60.0, 70.0, 76.0] {
-            let spin = 300.0; // ~2900 rpm
-            let (cd_tour, _) = TOUR.cd_cl(spin, speed, SEA_LEVEL_RHO);
-            let (cd_patent, _) = PATENT.cd_cl(spin, speed, SEA_LEVEL_RHO);
-            assert!(
-                cd_tour < cd_patent,
-                "at {speed:.0} m/s: tour Cd ({cd_tour:.3}) should be < patent Cd ({cd_patent:.3})"
-            );
-        }
-    }
-
-    #[test]
-    fn era_cd_reduction_magnitude() {
-        // At driver conditions (76 m/s, 2700 rpm), modern balls have ~25-35% less
-        // drag than 1990s balls. This is the single largest contributor to the
-        // ~30 yard carry distance increase over the past 25 years.
-        let spin = 2700.0_f64 * std::f64::consts::PI / 30.0;
-        let speed = 76.0;
-        let (cd_tour, _) = TOUR.cd_cl(spin, speed, SEA_LEVEL_RHO);
-        let (cd_patent, _) = PATENT.cd_cl(spin, speed, SEA_LEVEL_RHO);
-        let reduction_pct = (1.0 - cd_tour / cd_patent) * 100.0;
-        assert!(
-            reduction_pct > 15.0 && reduction_pct < 40.0,
-            "Cd reduction should be 15-40%, got {reduction_pct:.1}% (tour={cd_tour:.3}, patent={cd_patent:.3})"
-        );
-    }
-
-    #[test]
-    fn era_cl_sensitivity_to_spin() {
-        // Key behavioral difference: modern balls have spin-sensitive lift.
-        //
-        // 1990s balls (patent): Cl saturates almost immediately — nearly the same
-        //   Cl≈0.28 whether SR=0.04 (driver) or SR=0.30 (iron). The ball doesn't
-        //   "reward" you for more spin.
-        //
-        // Modern balls (tour): Cl follows an exponential saturation curve — low Cl
-        //   at low SR (driver, ~0.19), high Cl at high SR (iron, ~0.28). This means
-        //   modern balls are more efficient at low spin (less parasitic lift = less
-        //   induced drag on drivers) and more responsive at high spin (more lift on
-        //   irons = higher apex = steeper descent = more stopping power).
-        //
-        // This is the aerodynamic basis for the modern "high launch, low spin"
-        // driver fitting strategy — it only works because modern balls have low Cl
-        // at low SR.
-        let speed = 70.0; // supercritical
-        let low_spin = 200.0; // ~1900 rpm, SR≈0.06
-        let high_spin = 700.0; // ~6700 rpm, SR≈0.21
-
-        let (_, cl_tour_low) = TOUR.cd_cl(low_spin, speed, SEA_LEVEL_RHO);
-        let (_, cl_tour_high) = TOUR.cd_cl(high_spin, speed, SEA_LEVEL_RHO);
-        let tour_ratio = cl_tour_high / cl_tour_low;
-
-        let (_, cl_patent_low) = PATENT.cd_cl(low_spin, speed, SEA_LEVEL_RHO);
-        let (_, cl_patent_high) = PATENT.cd_cl(high_spin, speed, SEA_LEVEL_RHO);
-        let patent_ratio = cl_patent_high / cl_patent_low;
-
-        // Modern balls should show much more Cl variation with spin than patent balls.
-        // Tour: ratio > 1.5 (Cl increases substantially from driver to iron SR).
-        // Patent: ratio < 1.1 (Cl barely changes — already saturated at all SR).
-        assert!(
-            tour_ratio > 1.5,
-            "tour Cl should vary significantly with spin: low={cl_tour_low:.3}, high={cl_tour_high:.3}, ratio={tour_ratio:.2}"
-        );
-        assert!(
-            patent_ratio < 1.2,
-            "patent Cl should be nearly constant: low={cl_patent_low:.3}, high={cl_patent_high:.3}, ratio={patent_ratio:.2}"
-        );
+        assert!((Tour::SEA_LEVEL.radius_m() - 0.04267 / 2.0).abs() < 1e-15);
+        assert!((Tour::SEA_LEVEL.inertia_factor() - 0.4).abs() < 1e-15);
     }
 }

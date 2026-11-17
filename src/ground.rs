@@ -2,8 +2,7 @@ use std::fmt;
 
 use crate::Vec3;
 
-use crate::aero::{AeroParams, BallModel};
-use crate::environment::Environment;
+use crate::aero::AeroModel;
 use crate::rk4;
 use crate::units::G;
 
@@ -33,9 +32,6 @@ const ROOT_TOL: f64 = 1e-12;
 /// Iteration cap of the crossing solves; they converge in a handful.
 const ROOT_MAX_ITER: usize = 200;
 
-/// Gravity vector (m/s²).
-const GRAVITY: Vec3 = Vec3::new(0.0, -G, 0.0);
-
 /// The ground at one horizontal location.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GroundSample {
@@ -57,17 +53,18 @@ impl GroundSample {
     /// Whether a ball at rest here stays put: the slope's pull, `g·sin θ`,
     /// does not exceed the rolling resistance at zero speed,
     /// `mu_roll·g·cos θ`, i.e. `tan θ ≤ mu_roll` (θ the slope angle). Always
-    /// true on level ground.
+    /// true on level ground. The answer does not depend on the strength of
+    /// gravity.
     #[must_use]
     pub fn holds_at_rest(&self) -> bool {
-        holds_at_rest(self.normal.normalize(), &self.surface)
+        holds_at_rest(self.normal.normalize(), &self.surface, G)
     }
 }
 
 /// Whether rolling resistance at zero speed holds a ball against the slope
-/// of ground with unit normal `n`.
-fn holds_at_rest(n: Vec3, surface: &Surface) -> bool {
-    tangential_gravity(n).length() <= surface.mu_roll * G * n.y
+/// of ground with unit normal `n`, under gravity of magnitude `g`.
+fn holds_at_rest(n: Vec3, surface: &Surface, g: f64) -> bool {
+    tangential_gravity(n, g).length() <= surface.mu_roll * g * n.y
 }
 
 /// Layer 1 of the ground API: "what is the ground like here?"
@@ -138,11 +135,9 @@ impl Terrain for Surface {
 /// `height = a·x + b·z` the normal is `(−a, 1, −b)` normalized.
 ///
 /// ```
-/// use dimple::aero::BallModel;
-/// use dimple::environment::Environment;
 /// use dimple::ground::{FnTerrain, GroundPhysics, GroundSample, Surface};
 /// use dimple::trajectory::{ShotInput, simulate_shot};
-/// use dimple::Vec3;
+/// use dimple::{Tour, Vec3};
 ///
 /// let (a, b) = (3.0_f64.to_radians().tan(), -(2.0_f64.to_radians().tan()));
 /// let normal = Vec3::new(-a, 1.0, -b).normalize();
@@ -151,13 +146,8 @@ impl Terrain for Surface {
 ///     normal,
 ///     surface: Surface::FAIRWAY,
 /// }));
-/// let shot = simulate_shot(
-///     &ShotInput::seven_iron(),
-///     &BallModel::TOUR,
-///     &Environment::SEA_LEVEL,
-///     &hill,
-/// );
-/// let rest = shot.final_pos;
+/// let shot = simulate_shot(&ShotInput::seven_iron(), &Tour::SEA_LEVEL, &hill);
+/// let rest = shot.ground.rest.pos;
 /// assert!((rest.y - (a * rest.x + b * rest.z)).abs() < 1e-9); // on the plane
 /// assert!(rest.z > 0.0); // drifted right, down the side slope
 /// ```
@@ -197,8 +187,8 @@ pub struct BallState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Phase {
-    /// In the air between impacts: gravity, plus drag and Magnus lift from
-    /// the ball's aero model when there is air, spin held fixed.
+    /// In the air between impacts: gravity plus the model's
+    /// [`acceleration`](AeroModel::acceleration), spin held fixed.
     Hop,
     /// On the ground with the contact point slipping: sliding friction.
     Slide,
@@ -346,9 +336,10 @@ impl GroundResult {
 /// would rise at least [`min_hop_height`](Self::min_hop_height) and, on a
 /// slope, the hops die out rather than being sustained by the slope (see
 /// `min_hop_height`), then slides and rolls ([`step`](Self::step)) until it
-/// stops. Each hop is RK4 flight under gravity, drag and Magnus lift at the
-/// air density passed to [`settle`](GroundModel::settle), with the
-/// rebound's spin held fixed (ballistic at zero density). The tunables are
+/// stops. Each hop is RK4 flight under gravity and the acceleration of the
+/// model passed to [`settle`](GroundModel::settle), with the rebound's spin
+/// held fixed. Gravity is the model's [`gravity`](AeroModel::gravity) here
+/// and in every contact. The tunables are
 /// public fields; start from [`GroundPhysics::new`] and override with struct
 /// update syntax.
 #[derive(Debug, Clone, Copy)]
@@ -454,19 +445,19 @@ impl<T: Terrain> GroundPhysics<T> {
     /// that velocity. Unlike [`settle`](GroundModel::settle), this does not
     /// apply [`max_time`](Self::max_time).
     #[must_use]
-    pub fn step(&self, state: &BallState, ball: &BallModel) -> (BallState, Phase) {
+    pub fn step(&self, state: &BallState, model: &dyn AeroModel) -> (BallState, Phase) {
         let at = self.sample(state.pos);
         let (next, phase, rolling) = contact_step(
             state,
             &at,
-            ball,
+            model,
             self.dt,
             self.stop_speed,
             self.roll_threshold,
         );
         let under = self.sample(next.pos);
         (
-            onto_surface(&next, &under, at.normal, rolling, ball.radius_m()),
+            onto_surface(&next, &under, at.normal, rolling, model.radius_m()),
             phase,
         )
     }
@@ -485,36 +476,27 @@ impl<T: Terrain> GroundPhysics<T> {
     /// `Ok(arrival)`, or `Err(state)` if the time limit `t_end` comes first.
     /// Sampled points are appended to `points`.
     ///
-    /// RK4 in steps of [`dt`](Self::dt) under gravity, drag and Magnus lift
-    /// through the air of `env` (its density, viscosity and wind, the wind
-    /// sampled at the ball's height above the terrain), with the rebound's
-    /// spin held fixed for the whole hop: its axis and rate set the lift,
-    /// and the arrival carries it unchanged. At zero density the hop is
-    /// ballistic, under gravity alone.
+    /// RK4 in steps of [`dt`](Self::dt) under the model's gravity and
+    /// [`acceleration`](AeroModel::acceleration) (handed the ball's height
+    /// above the terrain), with the rebound's spin held fixed for the whole
+    /// hop: the arrival carries it unchanged.
     fn hop(
         &self,
         start: &BallState,
         t_end: f64,
         points: &mut Vec<GroundPoint>,
-        ball: &BallModel,
-        env: &Environment,
+        model: &dyn AeroModel,
     ) -> Result<BallState, BallState> {
-        // `acceleration` never reads `spin_decay`: the hop holds the spin fixed.
-        let air_density = env.air_density();
-        let viscosity = env.dynamic_viscosity();
-        let wind = env.wind;
-        let aero = AeroParams::from_spin_vector(start.spin);
-        let accel = |pos: Vec3, vel: Vec3| {
-            if air_density > 0.0 {
-                ball.acceleration_with_viscosity(
-                    wind.airspeed(vel, || self.clearance(pos)),
-                    &aero,
-                    air_density,
-                    viscosity,
-                )
-            } else {
-                GRAVITY
-            }
+        let gravity = model.gravity();
+        let down = Vec3::new(0.0, -gravity, 0.0);
+        let accel = |pos: Vec3, vel: Vec3, time: f64| {
+            let ball = BallState {
+                time,
+                pos,
+                vel,
+                spin: start.spin,
+            };
+            down + model.acceleration(&ball, self.clearance(pos))
         };
         let mut s = rk4::State {
             pos: start.pos,
@@ -532,16 +514,11 @@ impl<T: Terrain> GroundPhysics<T> {
                 });
             }
             let h = self.dt.min(t_end - t);
-            let b = rk4::step(s, t, h, |p, v, _| accel(p, v));
+            let b = rk4::step(s, t, h, accel);
             let end = self.clearance(b.pos);
-            let arrival = if air_density > 0.0 {
-                self.hop_arrival(s, t, h, end, start.spin, |tau| hermite(s, b, h, tau))
-            } else {
-                self.hop_arrival(s, t, h, end, start.spin, |tau| rk4::State {
-                    pos: s.pos + s.vel * tau + 0.5 * GRAVITY * tau * tau,
-                    vel: s.vel + GRAVITY * tau,
-                })
-            };
+            let arrival = self.hop_arrival(s, t, h, end, start.spin, gravity, |tau| {
+                hermite(s, b, h, tau)
+            });
             if let Some(arrival) = arrival {
                 return Ok(arrival);
             }
@@ -562,18 +539,23 @@ impl<T: Terrain> GroundPhysics<T> {
 
     /// First ground crossing within a hop step of length `h` from `a` (at
     /// time `t`), if there is one; `end` is the clearance at the end of the
-    /// integrated step and `arc(τ)` the ball's state `τ` into the step.
+    /// integrated step, `g` the magnitude of gravity and `arc(τ)` the ball's
+    /// state `τ` into the step.
     ///
-    /// [`hop`](Self::hop) passes one of two arcs. Without air it is the
-    /// exact parabola that RK4 reproduces under gravity alone; with air it
-    /// is the cubic Hermite interpolant of the step's end states (position
-    /// and velocity at both ends), so `arc(h)` is the integrated step end. The clearance
-    /// `y(τ) − height(x(τ), z(τ))` is checked at [`CROSSING_SUBSTEPS`]
-    /// equal sub-steps for the first at or below the ground, and the
-    /// crossing is the root inside that sub-step, solved by [`find_root`]
-    /// from the ballistic drop time onto the height at the end of the step
-    /// (exact on level ground without air). The arrival is placed exactly
-    /// on the ground, with the arc's velocity there and `spin`.
+    /// [`hop`](Self::hop) passes the cubic Hermite interpolant of the step's
+    /// end states (position and velocity at both ends), so `arc(h)` is the
+    /// integrated step end; under gravity alone it is the exact parabola,
+    /// which RK4 reproduces. The clearance `y(τ) − height(x(τ), z(τ))` is
+    /// checked at [`CROSSING_SUBSTEPS`] equal sub-steps for the first at or
+    /// below the ground, and the crossing is the root inside that sub-step,
+    /// solved by [`find_root`] from the ballistic drop time onto the height
+    /// at the end of the step (exact on level ground without air). The
+    /// arrival is placed exactly on the ground, with the arc's velocity
+    /// there and `spin`.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one private call site; a struct would only rename them"
+    )]
     fn hop_arrival(
         &self,
         a: rk4::State,
@@ -581,6 +563,7 @@ impl<T: Terrain> GroundPhysics<T> {
         h: f64,
         end: f64,
         spin: Vec3,
+        g: f64,
         arc: impl Fn(f64) -> rk4::State,
     ) -> Option<BallState> {
         let clearance = |tau: f64| self.clearance(arc(tau).pos);
@@ -591,7 +574,7 @@ impl<T: Terrain> GroundPhysics<T> {
         )]
         let f_hi = if hi == h { clearance(h).min(0.0) } else { f_hi };
         let end_height = self.sample(arc(h).pos).height;
-        let guess = drop_time(a.pos.y - end_height, a.vel.y).clamp(lo.0, hi);
+        let guess = drop_time(a.pos.y - end_height, a.vel.y, g).clamp(lo.0, hi);
         let tau = find_root(clearance, lo, (hi, f_hi), guess);
         let arrival = arc(tau);
         let mut pos = arrival.pos;
@@ -625,15 +608,15 @@ fn hermite(a: rk4::State, b: rk4::State, h: f64, tau: f64) -> rk4::State {
 }
 
 /// Time (s) for a ball `height` above the ground moving up at `vy` to fall
-/// back to it under gravity alone. The positive root of
+/// back to it under gravity `g` alone. The positive root of
 /// `height + vy·τ − g·τ²/2 = 0`, written to avoid cancellation.
-fn drop_time(height: f64, vy: f64) -> f64 {
+fn drop_time(height: f64, vy: f64, g: f64) -> f64 {
     if height <= 0.0 && vy <= 0.0 {
         return 0.0;
     }
-    let disc = (vy * vy + 2.0 * G * height.max(0.0)).sqrt();
+    let disc = (vy * vy + 2.0 * g * height.max(0.0)).sqrt();
     if vy >= 0.0 {
-        (vy + disc) / G
+        (vy + disc) / g
     } else {
         2.0 * height.max(0.0) / (disc - vy)
     }
@@ -780,17 +763,16 @@ pub trait GroundModel {
 
     /// Everything from the landing state to rest.
     ///
-    /// `env` is the air the ball hops through between impacts
+    /// `model` is the ball and the air it hops through between impacts
     /// ([`simulate_shot`](crate::trajectory::simulate_shot) passes the
-    /// shot's): its [`air_density`](Environment::air_density),
-    /// [`dynamic_viscosity`](Environment::dynamic_viscosity) and
-    /// [`wind`](Environment::wind), with [`Wind::at_height`](crate::environment::Wind::at_height)
-    /// for the wind at a given height above the ground. A model may use as
-    /// much of it as it models; a measured density of zero
-    /// (`measured_air_density: Some(0.0)`) asks for ballistic hops, under
-    /// gravity alone.
+    /// shot's): its [`acceleration`](AeroModel::acceleration) for the hops,
+    /// its [`radius_m`](AeroModel::radius_m) and
+    /// [`inertia_factor`](AeroModel::inertia_factor) for the contacts, and
+    /// its [`gravity`](AeroModel::gravity) throughout. A ground model may
+    /// use as much of it as it models, and may pass it on to [`impact`] and
+    /// [`GroundPhysics::step`].
     #[must_use]
-    fn settle(&self, landing: &BallState, ball: &BallModel, env: &Environment) -> GroundResult;
+    fn settle(&self, landing: &BallState, model: &dyn AeroModel) -> GroundResult;
 }
 
 /// Flat ground with the default [`GroundPhysics`].
@@ -799,8 +781,8 @@ impl GroundModel for Surface {
         0.0
     }
 
-    fn settle(&self, landing: &BallState, ball: &BallModel, env: &Environment) -> GroundResult {
-        GroundPhysics::new(*self).settle(landing, ball, env)
+    fn settle(&self, landing: &BallState, model: &dyn AeroModel) -> GroundResult {
+        GroundPhysics::new(*self).settle(landing, model)
     }
 }
 
@@ -809,9 +791,10 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
         self.terrain.sample(x, z).height
     }
 
-    fn settle(&self, landing: &BallState, ball: &BallModel, env: &Environment) -> GroundResult {
+    fn settle(&self, landing: &BallState, model: &dyn AeroModel) -> GroundResult {
         let t_end = landing.time + self.max_time;
-        let radius = ball.radius_m();
+        let radius = model.radius_m();
+        let g = model.gravity();
         let mut contacts = Vec::new();
         let mut points = Vec::new();
         let mut state = *landing;
@@ -820,14 +803,14 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
         let mut at = loop {
             let at = self.sample(state.pos);
             let n = at.normal.normalize();
-            let out = impact(&state, &at, ball);
+            let out = impact(&state, &at, model);
             let v_n = out.vel.dot(n);
             // A rebound that would clear the transition height flies its
             // hop. The flown hop must also show the train dying out
             // (`hops_die_out`); otherwise it is discarded and the ball stays
             // on the ground here.
             let mut flown = None;
-            if v_n > 0.0 && v_n * v_n >= 2.0 * G * n.y * self.min_hop_height {
+            if v_n > 0.0 && v_n * v_n >= 2.0 * g * n.y * self.min_hop_height {
                 if contacts.len() + 1 >= self.max_impacts {
                     contacts.push(Contact::new(&state, &at, &out));
                     points.push(GroundPoint::new(&out, Phase::Hop));
@@ -835,9 +818,9 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
                 }
                 let mark = points.len();
                 points.push(GroundPoint::new(&out, Phase::Hop));
-                flown = match self.hop(&out, t_end, &mut points, ball, env) {
+                flown = match self.hop(&out, t_end, &mut points, model) {
                     Ok(arrival)
-                        if !hops_die_out(&state, &out, &arrival, ball, self.min_hop_height) =>
+                        if !hops_die_out(&state, &out, &arrival, model, self.min_hop_height) =>
                     {
                         points.truncate(mark);
                         None
@@ -854,7 +837,7 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
                 };
                 if slip(leave.vel, leave.spin, n, radius).length() <= self.roll_threshold {
                     (leave.vel, leave.spin) =
-                        lock_rolling(leave.vel, leave.spin, n, radius, ball.inertia_factor);
+                        lock_rolling(leave.vel, leave.spin, n, radius, model.inertia_factor());
                 }
                 contacts.push(Contact::new(&state, &at, &leave));
                 state = leave;
@@ -881,7 +864,7 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
             }
             let h = self.dt.min(t_end - state.time);
             let (next, phase, rolling) =
-                contact_step(&state, &at, ball, h, self.stop_speed, self.roll_threshold);
+                contact_step(&state, &at, model, h, self.stop_speed, self.roll_threshold);
             if state.time >= next_sample - TIME_EPS || last_phase != Some(phase) {
                 points.push(GroundPoint::new(&state, phase));
                 next_sample = state.time + SAMPLE_INTERVAL;
@@ -889,7 +872,7 @@ impl<T: Terrain> GroundModel for GroundPhysics<T> {
             last_phase = Some(phase);
             let stopped = phase == Phase::Roll && next.vel == Vec3::ZERO;
             let under = self.sample(next.pos);
-            let held = stopped && under.holds_at_rest();
+            let held = stopped && holds_at_rest(under.normal.normalize(), &under.surface, g);
             state = onto_surface(&next, &under, at.normal, rolling, radius);
             at = under;
             if held {
@@ -921,7 +904,7 @@ fn hops_die_out(
     arrival: &BallState,
     rebound: &BallState,
     next: &BallState,
-    ball: &BallModel,
+    model: &dyn AeroModel,
     min_hop_height: f64,
 ) -> bool {
     // The hop keeps its spin, so its net return is all translational.
@@ -931,11 +914,12 @@ fn hops_die_out(
     if returned <= 1e-9 * rebound.vel.length_squared() {
         return true;
     }
-    let spin_inertia = ball.inertia_factor * ball.radius_m() * ball.radius_m();
+    let radius = model.radius_m();
+    let spin_inertia = model.inertia_factor() * radius * radius;
     let energy =
         |s: &BallState| 0.5 * s.vel.length_squared() + 0.5 * spin_inertia * s.spin.length_squared();
     let removed = energy(arrival) - energy(rebound);
-    removed - returned >= G * min_hop_height
+    removed - returned >= model.gravity() * min_hop_height
 }
 
 /// One impact of the ball with the ground: the post-impact state (same time
@@ -971,7 +955,7 @@ fn hops_die_out(
 /// is up to the caller ([`GroundPhysics`] uses the 5 mm hop rule; see
 /// [`GroundPhysics::min_hop_height`]).
 #[must_use]
-pub fn impact(state: &BallState, at: &GroundSample, ball: &BallModel) -> BallState {
+pub fn impact(state: &BallState, at: &GroundSample, model: &dyn AeroModel) -> BallState {
     let n = at.normal.normalize();
     let v = state.vel;
     let v_dot_n = v.dot(n);
@@ -979,8 +963,8 @@ pub fn impact(state: &BallState, at: &GroundSample, ball: &BallModel) -> BallSta
         return *state;
     }
     let surface = &at.surface;
-    let radius = ball.radius_m();
-    let k = ball.inertia_factor;
+    let radius = model.radius_m();
+    let k = model.inertia_factor();
 
     // Penner's effective contact plane.
     let v_t_vec = v - v_dot_n * n;
