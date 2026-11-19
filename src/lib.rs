@@ -140,6 +140,9 @@ pub mod aero;
 /// Air density from altitude and temperature ([`standard_air_density`]) and
 /// the wind ([`Wind`]).
 pub mod air;
+/// The hole: whether a ball rolling up to it drops in, lips out or runs
+/// over ([`cup::Cup`]).
+pub mod cup;
 /// Everything after landing: surfaces, heightfield terrain, 3D impacts,
 /// hops, slide and roll on slopes, with the spin vector carried through
 /// every contact.

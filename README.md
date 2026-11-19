@@ -228,7 +228,7 @@ and land where they first cross the surface; carry is the horizontal
 distance to that point. Each 1 ms flight or hop step is checked for a
 crossing at 8 sub-steps, so a ridge or wall narrower than a sub-step (about
 1 cm at full speed) can be missed. On a slope a ball at rest stays put where `tan θ ≤ mu_roll`
-and rolls downhill otherwise. The heightfield has no walls, lips or cup, and on
+and rolls downhill otherwise. The heightfield has no walls, lips or hole (see [The hole](#the-hole)), and on
 curved ground the ball follows the surface (it never launches off a
 crest). Walls, trunks and overhangs are not terrain: `ground::impact` takes
 any normal, and a custom `GroundModel` places them. See [docs/AERO.md](docs/AERO.md#ground-model) for the contact
@@ -243,6 +243,41 @@ the penetration depth of the USGA firmness meter,
 `Surface::with_stimp(feet)` sets the rolling resistance from a stimpmeter
 reading, and `Surface::stimp_feet()` reads it back. There are no rough or
 bunker presets; see [Rough and sand](#rough-and-sand).
+
+## The hole
+
+`cup::Cup` decides whether a ball rolling up to the hole drops in, lips out on
+the rim or flies over (**beta**):
+
+```rust
+use dimple::cup::{Cup, Outcome};
+use dimple::ground::GroundModel;
+use dimple::{BallState, Surface, Tour, Vec3};
+
+let model = Tour::SEA_LEVEL;
+let cup = Cup::new(0.0, 0.0); // regulation hole, 4¼ in across
+
+// What a ball reaching the edge does: speed (m/s), offset from the center (m).
+assert_eq!(cup.outcome(1.0, 0.0, &model), Outcome::Holed);
+assert_eq!(cup.outcome(2.0, 0.0, &model), Outcome::Over);
+
+// A putt rolled on a green from 1 m short.
+let start = BallState {
+    time: 0.0,
+    pos: Vec3::new(-1.0, 0.0, 0.0),
+    vel: Vec3::new(1.5, 0.0, 0.0),
+    spin: Vec3::ZERO,
+};
+let roll = Surface::GREEN.settle(&start, &model);
+let holed = cup.capture(&roll.points, &model).expect("drops in");
+assert!(holed.time > 0.0);
+```
+
+Slow balls follow Hogan & Antali's (2025) closed-form rim model; faster balls
+fly across and drop if they meet the far edge heading at or below it (Mahoney &
+Connaughton 2017), 1.61 m/s through the center against Holmes's (1991)
+experimentally checked 1.63. The green is level, with no flagstick. See
+[docs/AERO.md](docs/AERO.md#the-hole-beta).
 
 ## Rough and sand
 
@@ -505,6 +540,29 @@ check are in [docs/AERO.md](docs/AERO.md).
 - Whitlark, B. and Pringle, M. (2012), "Can't Stop Your Ball on the Green?",
   *USGA Green Section Record* 50(25).
   - Check: landing shots uphill and downhill on a 1.5% green.
+
+### The hole
+
+- Hogan, S. J. and Antali, M. (2025), "Mechanics of the golf lip out", *Royal
+  Society Open Science* 12, 250907.
+  [doi:10.1098/rsos.250907](https://doi.org/10.1098/rsos.250907) (open access)
+  - The rim model: the boundary curves c1, c2 and c3 between falling in,
+    pitching in and lipping out, and their published boundary points.
+- Holmes, B. W. (1991), "Putting: how a golf ball and hole interact",
+  *American Journal of Physics* 59(2), 129–136.
+  [doi:10.1119/1.16592](https://doi.org/10.1119/1.16592)
+  - The speed above which the ball leaves the rim (c1), and the
+    experimentally checked 1.626 m/s limit through the center.
+- Mahoney, J. F. and Connaughton, D. P. (2017), "Launch velocities in
+  successful golf putting: an analytical analysis", *International Journal
+  of Kinesiology and Sports Science* 5(2), 24–30.
+  [doi:10.7575/aiac.ijkss.v.5n.2p.24](https://doi.org/10.7575/aiac.ijkss.v.5n.2p.24)
+  (open access)
+  - The far-edge geometry and its case with no bounce and no friction:
+    1.607 m/s through the center.
+- The R&A and the USGA, *The Rules of Golf*, Definitions, "Hole".
+  [randa.org](https://www.randa.org/en/rog/the-rules-of-golf)
+  - The hole's diameter, 4¼ in (108 mm).
 
 ### Sand
 

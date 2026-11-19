@@ -1550,6 +1550,72 @@ points of the continued flight are not in the shot's result.
   [Terrain and slopes](#terrain-and-slopes)); a `max_time` set below the
   120 s default can cut such rolls short.
 
+## The hole (beta)
+
+`cup::Cup` is a hole on level ground: its center (x, z) in dimple's frame and
+its radius, the Rules of Golf's 4¼ in (108 mm) across by default
+(`REGULATION_RADIUS_M`, 0.053975 m). `Cup::outcome(speed, offset, model)` says
+what a rolling ball does when its center reaches the hole's edge at horizontal
+speed `v` on a straight path `δ` from the center: `Holed`, `LipOut` or `Over`.
+`Cup::capture(points, model)` walks a ground path (`GroundResult::points`) and
+returns the first edge crossing that drops in: its time, position, speed and
+offset. The ball's radius `r`, inertia factor `k` and gravity `g` come from the
+model; `R` is the hole's radius.
+
+**On the rim (slow balls).** Hogan & Antali (2025) solve the motion of a
+spin-free ball on the rim in closed form, re-deriving Holmes (1991), and split
+the (δ, v) plane by three curves:
+
+```
+c1(δ) = √( g·r / (1 − δ²/R²) )                         (Holmes's eq. 6)
+c2(δ) = √( (2g·r/(1+k)) / (R·δ²/(R−r)³ − 1) )          (∞ while R·δ² ≤ (R−r)³)
+c3:  v² = g·D / ((1+k)·sin β),  δ² = cos β·(R − r cos β)³ / D,
+     D = cos β·(R − r cos β) − 2r·sin β·(1 − sin β),  β ∈ (0, π/2)
+                                                        (∞ for δ ≤ R − r)
+```
+
+Above `c1` the ball leaves the edge at once. At or below it the ball rolls onto
+the rim: below `c2` it falls off the rim into the hole, below the separatrix
+`c3` it pitches into the hole, and between those and `c1` it lips out. dimple
+solves `c3` for β at the given δ by bisection (δ rises from R − r to R as β goes
+from 0 to π/2). Their published boundary points, at their r 0.021 m, R 0.054 m,
+k 0.4, g 9.81: `c2` and `c3` meet at δ/R 0.940, v 0.316 m/s (dimple: 0.320 and
+0.322), and `c3` ends on `c1` at δ/R 0.748, v 0.689 (dimple's `c1` there:
+0.684).
+
+**Across the hole (fast balls).** A ball faster than `c1` flies freely from the
+near edge. Mahoney & Connaughton (2017) give its meeting with the far edge: it
+has travelled `x` along the hole and dropped `y`, and touches the edge at a
+contact angle θ above its equator, with `x = D − r·cos θ`, `y = r·(1 − sin θ)`,
+`v = x·√(g/2y)` and its path descending at `tan φ = 2y/x`. dimple uses their
+case with no bounce and no friction at the far edge: the strike removes the
+velocity along the contact normal and keeps the part along the rim's tangent,
+which points down into the hole when `φ ≥ θ`. So the ball drops in if it is
+heading at or below the edge when it reaches it; a ball that reaches the hole's
+wall with its center below the edge drops in too. Through the center this gives
+θ = 18.41° and a limit of **1.607 m/s** (their 1.607), against Holmes's 1.626
+m/s, which his experiments support. Off center the same geometry is applied in
+the vertical plane of the path, with the chord `2√(R² − δ²)` in place of the
+diameter `D`.
+
+| δ/R | 0 | 0.25 | 0.5 | 0.7 | 0.8 | 0.9 | 0.94 | 0.98 |
+|---|---|---|---|---|---|---|---|---|
+| holed below (m/s) | 1.607 | 1.555 | 1.385 | 1.131 | 0.561 | 0.394 | 0.320 | 0.30 |
+| lips out up to (m/s) | — | — | — | — | 0.762 | 1.049 | 1.341 | 2.3 |
+| holed again up to (m/s) | — | — | — | — | 0.939 | — | — | — |
+
+dimple's ball (r 0.021335 m), regulation hole, `k` 0.4, standard gravity. At
+0.75–0.84 R a ball too fast to stay on the rim can still fly across and drop at
+the far edge, so a lip-out band lies between two holed ones.
+
+**Limitations.** Level ground only (Penner (2002) gives the slope's change to
+the maximum speed; not modeled), no flagstick, no spin about the vertical (Hogan
+& Antali show it changes the rim motion), and the path is judged on the ground
+points' straight segments. A ball that lips out or flies over runs on along the
+path dimple computed, undeflected. A sliding ball is judged as if rolling. A ball
+landing in the hole from the air is not captured. Off center, the far-edge rule
+has no published check.
+
 ## Implementation
 
 The aerodynamic model lives in `src/aero.rs`, the air in `src/air.rs`, the
@@ -1565,6 +1631,7 @@ ground model in `src/ground.rs`. Key types:
   (`Wind::custom`, any `WindField`).
 - **`Surface`**, **`Terrain`**, **`GroundPhysics`**, **`GroundModel`** — the
   ground (above).
+- **`cup::Cup`** — the hole (above), in `src/cup.rs`.
 
 Flight simulation: `simulate_flight(input, model) -> FlightResult`
 
@@ -1614,6 +1681,7 @@ Unit tests live beside the code in each module. Test categories:
 - **Ground: validation against published data** — Brede's (1991) slope correction exact under the constant law without plowing, within 0.4% to 3% and 0.8% to 4% with a green's plowing and within 0.4% to 6% with a fairway's, a 5.5% hold grade at `mu_roll` 0.055 and the plowing terminal speed past it; agreement of the tee constants with their natural-tee fit (δ, Δẏ, normal rebound, spin reversal, lift-off slip sign; a rigid plane and μ = 1 do worse; the presets within 25%); their mat needs a higher constant restitution; their typical driver landing; Whitlark & Pringle's (2012) 1.5% green (uphill/downhill asymmetry, the sand wedge stopping near its pitch mark and behind it uphill, green speed, `compliance` as firmness through the green penetration mapping); Cross's (2024) speed-independent break angle under the constant law; the USGA's 2019 roll-out line on `FAIRWAY` within 3 yd at 20–36° (rms 2 yd); the R&A's 2008 driver landing bouncing and rolling within the five fairways' 4–31 yd; the USGA's 2006 firm-green printed fits on `FIRM_GREEN` (backspin out within 1,250 rpm, first bounce within 7 ft)
 - **Ground: absorption** — the presets absorb nothing; `impact` with `absorption` equals the turf rebound times `(1 − absorption)^(sin θ)` bit for bit; full absorption stops the ball on its mark; on the sand example no landing hops, every landing ends at rest after one contact with no energy gained, steeper landings keep less speed and stop sooner, the sand wedge keeps under 5% of its spin, full shots leave a 0.3–3 m track, and a thin shot leaves faster than 15 m/s
 - **Run-out** — the hop train dies out (at most 10 impacts, each hop after the first at most 0.7× the one before, at most two below 1 cm) from wedges to drives on both presets; `FAIRWAY` roll and total for a lob wedge, a pitch and the PGA Tour average drive; the preset drive's carry, run and total; the drive runs shorter on `FAIRWAY` than on `GREEN`; a topped drive (130 mph, 2°) skims forward on `FAIRWAY` and stays below 0.5 m
+- **The hole** — the regulation radius; Hogan & Antali's (2025) boundary points and figure 5 cases; Mahoney & Connaughton's (2017) centered far-edge limit (1.607 m/s) and the limit falling off center; centered, edge and lip-out outcomes and fast balls flying over; `capture` timed at the edge, never from a hop or from a path that starts inside; putts rolled on `GREEN` that drop, lip out, fly across and drop, or run over
 - **Ground: API** — per-point surfaces (fairway-to-green roll), `MaxTime`/`MaxImpacts` termination, tunables, interpolated landing, `&dyn GroundModel`
 
 Run: `cargo test`
